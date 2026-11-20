@@ -1,4 +1,4 @@
-# Combate y enemigos — v2
+# Combate y enemigos — v3
 
 > Estado: **aprobado**. Lo marcado como **[Supuesto]** son valores o detalles míos para validar al probar.
 
@@ -12,20 +12,20 @@ El combate es **tenso, no arcade**: pocos enemigos, que pegan fuerte y avisan an
 
 **Celular**:
 - Pulgar izquierdo: joystick (como ahora).
-- Pulgar derecho, dos botones:
-  - **Atacar** (grande):
-    - **Toque**: ataque básico. Si el toque llega justo antes de un golpe enemigo, es un **parry**.
-    - **Mantener**: habilidad de la clase. Un aro en el botón muestra la recarga.
-  - **Esquivar**: rueda corta con un instante de invulnerabilidad.
+- Pulgar derecho, tres botones:
+  - **Atacar** (grande): ataque básico. Si el toque llega justo antes de un golpe enemigo, es un **parry**.
+  - **Especial**: la habilidad de la clase. Un aro en el botón muestra cuánto falta para cargarla.
+  - **Esquivar**: tocar hace una rueda corta con un instante de invulnerabilidad. **Mantener** hace correr.
 - Apuntado automático: el ataque va al enemigo más cercano dentro del cono hacia donde mirás. Si no hay ninguno, va hacia donde mirás.
 
-**Compu**: WASD o flechas para moverse, `Espacio` o `J` para atacar (mantener para la habilidad), `Shift` o `K` para esquivar, `Enter` para usar la escalera.
+**Compu**: WASD o flechas para moverse, `Espacio` o `J` para atacar, `L` o `Q` para el especial, `Shift` o `K` para esquivar (mantener para correr), `Enter` para usar la escalera.
 
 ## Costo de pelear (en lugar de estamina)
 
 Como el hambre y la sed cumplen el papel de la estamina:
 - Cada ataque y cada esquiva gasta un poco de **sed**.
 - La habilidad del Cirial gasta **luz**.
+- **Correr** gasta sed y hambre de forma continua y **hace ruido**: los horrores te detectan desde más lejos y te oyen aunque estén de espaldas.
 
 Así, pelear mucho te obliga a volver a buscar agua.
 
@@ -39,15 +39,16 @@ Así, pelear mucho te obliga a volver a buscar agua.
 
 ## Clases
 
-Cada clase tiene un arma, un ataque básico, una habilidad y un rasgo pasivo.
+Cada clase tiene un arma con su propio combo, un especial con su forma de cargarse y una pasiva. Los especiales tienen además un tiempo mínimo entre usos.
 
 | | Verdugo | Saqueador | Cirial |
 |---|---|---|---|
 | Arma | Hacha de dos manos | Dos dagas | Maza y cirio |
-| Ataque básico | Lento, arco amplio, mucho daño, empuja | Rápido, poco daño | Medio |
-| Habilidad (mantener Atacar) | **Tajo cargado**: seguís manteniendo para cargar y al soltar golpeás en círculo | **Paso sombrío**: salto largo hacia donde apunta el joystick que te vuelve invisible un momento | **Llamarada**: quema luz para dañar y espantar a todos alrededor |
-| Pasivo | Más vida; el hambre y la sed bajan un 25 % más rápido | Más velocidad; golpe por la espalda o sin ser detectado ×3 | Su luz delata menos; los horrores dudan antes de entrar en su luz |
-| Debilidad | Lento para esquivar | Poca vida | Sin luz, pierde su habilidad |
+| Ataque básico | Barrido ancho y lento que empuja. El **tercer golpe seguido** es un hachazo vertical que aturde. | Puñaladas rápidas; la **cuarta** del combo es un tajo doble. Golpe ×3 por la espalda o sin ser visto. | Cada golpe deja **cera ardiendo**: el horror queda marcado (se lo ve aunque salga de tu luz) y se va quemando. |
+| Especial | **Ejecución**: mata en el acto a un horror aturdido o con poca vida; si no, golpe muy fuerte. | **Paso sombrío**: salto hacia donde apuntás que te vuelve invisible un momento. | **Llamarada**: quema luz para dañar y espantar a todos alrededor. Los marcados con cera reciben el doble. |
+| Carga del especial | **Furia**: pegando y recibiendo golpes. | **Oportunidad**: con el tiempo; los golpes por la espalda y los parry la aceleran mucho. | **Devoción**: con el tiempo; además gasta luz al usarlo. |
+| Pasiva | **Sed de sangre**: cada horror que mata le devuelve un poco de vida. | **Ojo de rata**: ve los objetos cercanos aunque estén a oscuras, y los horrores le sueltan botín más seguido. | **Llama devota**: su luz dura un 30 % más y los horrores dudan antes de entrar en ella. |
+| Debilidad | Lento; el hambre y la sed bajan un 25 % más rápido. | Poca vida. | Sin luz, no hay especial. |
 
 ## Horrores (enemigos iniciales)
 
@@ -65,7 +66,15 @@ Cuatro tipos, cada uno con un comportamiento claro y una forma de enfrentarlo:
 - **Antes de atacar avisan:** la tinta se junta o el cuerpo se tensa. Siempre hay un instante para esquivar.
 - Ubicación y cantidad salen de la semilla y **se vuelven a sortear en cada vida**, como el loot. La cantidad y la variedad crecen con la profundidad.
 - Por ahora no reaparecen dentro de la misma vida. Eso llegará con la noche.
+- Algunos **deambulan entre salas** en lugar de quedarse en la suya.
+- Cuando uno te detecta, alerta a los que están cerca.
 - Al morir pueden soltar comida, agua o aceite.
+
+## Mazmorra más viva
+
+- Más horrores por nivel.
+- Salas con forma: **cavernas** irregulares y **salas con columnas**. Las columnas tapan la vista y sirven para esconderse.
+- Decorado: huesos, escombros, manchas, cadenas y restos de otros aventureros.
 
 ## Respuesta visual (estilo tinta y papel)
 

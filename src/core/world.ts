@@ -1,5 +1,5 @@
 import { critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight } from './attributes';
-import { CLASSES, type ClassDef, type ClassId } from './classes';
+import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
 import { floorDistances, generateLevel, isFloor, type ItemKind, type Level, type LevelItem, type Point } from './dungeon';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
@@ -12,15 +12,23 @@ export interface ControlInput {
   move: { x: number; y: number };
   attack: boolean;
   dodge: boolean;
+  special: boolean;
 }
 
-export const NO_INPUT: ControlInput = { move: { x: 0, y: 0 }, attack: false, dodge: false };
+export const NO_INPUT: ControlInput = { move: { x: 0, y: 0 }, attack: false, dodge: false, special: false };
 
 export const COMBAT = {
-  /** Holding attack this long triggers the class ability. */
-  holdThreshold: 0.28,
   dodge: { distance: 2.2, duration: 0.28, invulnerable: 0.24, cooldown: 0.7 },
-  thirstCost: { attack: 0.6, dodge: 1, ability: 1.5 },
+  run: {
+    speedMultiplier: 1.6,
+    /** Meter points per second while running. */
+    thirstPerSecond: 1.2,
+    hungerPerSecond: 0.6,
+    /** Running is loud: detection range multiplier and hearing distance from any side. */
+    detection: 1.5,
+    hearing: 3.5,
+  },
+  thirstCost: { attack: 0.6, dodge: 1, special: 1.5 },
   /** Riposte after a parry: guaranteed critical hit within this many seconds. */
   riposteFor: 2,
   critMultiplier: 2,
@@ -34,8 +42,12 @@ export const COMBAT = {
   hearing: 0.9,
   /** Fraction of the light radius within which the flame gives the player away from any side. */
   glow: 0.5,
+  /** A horror that notices the player warns the others within this many tiles. */
+  alertRadius: 4,
   dropChance: 0.3,
   projectile: { speed: 6, radius: 0.25, ttl: 3 },
+  /** Wax burns in ticks of this many seconds. */
+  waxTick: 0.5,
 } as const;
 
 export type EnemyState = 'idle' | 'chase' | 'windup' | 'recover' | 'stunned' | 'flee' | 'dead';
@@ -55,11 +67,18 @@ export interface Enemy {
   /** Direction locked when the attack wind-up starts. */
   strikeDir: Point;
   room: number;
+  roamer: boolean;
   wanderTarget: Point | null;
+  /** Roamers: distance field toward the room they are walking to. */
+  roamField: Int32Array | null;
+  roamRoom: number;
   /** Crawlers circle the player at this angle offset. */
   flank: number;
   /** Whether the player can currently see it. */
   visible: boolean;
+  /** Seconds of burning wax left. */
+  wax: number;
+  waxTick: number;
 }
 
 export interface Projectile {
@@ -72,20 +91,22 @@ export interface Projectile {
 
 export type PlayerAction =
   | { type: 'none' }
-  | { type: 'attack'; phase: 'windup' | 'recovery'; timer: number }
+  | { type: 'attack'; phase: 'windup' | 'recovery'; timer: number; step: ComboStep }
   | { type: 'dodge'; timer: number; dir: Point }
-  | { type: 'charge'; timer: number };
+  | { type: 'special'; timer: number; target: Enemy | null };
 
 export type WorldEvent =
   | { type: 'pickup'; itemId: number; kind: ItemKind }
   | { type: 'revealed'; tiles: number[] }
-  | { type: 'attack'; pos: Point; facing: Point; arc: number; range: number }
-  | { type: 'enemyHit'; id: number; damage: number; crit: boolean; pos: Point }
+  | { type: 'attack'; pos: Point; facing: Point; arc: number; range: number; finisher: boolean }
+  | { type: 'enemyHit'; id: number; damage: number; crit: boolean; burn: boolean; pos: Point }
   | { type: 'enemyDied'; id: number; kind: EnemyKind; pos: Point }
   | { type: 'playerHit'; damage: number; lightStolen: number }
   | { type: 'parry'; id: number; pos: Point }
   | { type: 'dodge'; dir: Point }
-  | { type: 'ability'; kind: ClassDef['ability']['kind']; pos: Point; radius: number }
+  | { type: 'special'; kind: SpecialDef['kind']; pos: Point; radius: number; target?: Point }
+  | { type: 'heal'; amount: number }
+  | { type: 'executed'; pos: Point }
   | { type: 'drop'; item: LevelItem }
   | { type: 'died' };
 
@@ -98,6 +119,7 @@ const angleBetween = (a: Point, b: Point) => {
   const dot = (a.x * b.x + a.y * b.y) / ((length(a) || 1) * (length(b) || 1));
   return Math.acos(Math.max(-1, Math.min(1, dot)));
 };
+const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 
 /**
  * The state of one life inside one level. Pure logic: no rendering, no DOM.
@@ -122,17 +144,20 @@ export class World {
   projectiles: Projectile[] = [];
   dead = false;
   action: PlayerAction = { type: 'none' };
+  running = false;
   /** Seconds left in which an incoming melee hit gets parried. */
   parryTimer = 0;
   riposteTimer = 0;
   invulnerableTimer = 0;
   invisibleTimer = 0;
   dodgeCooldown = 0;
-  abilityCooldown = 0;
-  /** Seconds the attack button has been held, or -1 when it is not being tracked. */
-  pressTime = -1;
-  private prevAttack = false;
-  private prevDodge = false;
+  /** Special meter from 0 to 1, and minimum seconds left before the next use. */
+  specialCharge = 0;
+  specialCooldown = 0;
+  /** Position in the weapon combo and seconds left to continue it. */
+  comboIndex = 0;
+  comboTimer = 0;
+  private prev = { attack: false, dodge: false, special: false };
   private rng!: Rng;
   private nextId = 1;
   private flow: Int32Array | null = null;
@@ -162,25 +187,32 @@ export class World {
     return this.invisibleTimer > 0;
   }
 
-  /** Charge of the headsman's cleave from 0 to 1, or -1 when not charging. */
-  get charge(): number {
-    if (this.action.type !== 'charge') return -1;
-    const ability = this.cls.ability;
-    return ability.kind === 'chargedCleave' ? Math.min(1, this.action.timer / ability.chargeTime) : 0;
-  }
-
   /** True when the player stands close enough to the stairs to go down. */
   get atStairs(): boolean {
     const { stairs } = this.level;
-    return Math.hypot(this.player.x - (stairs.x + 0.5), this.player.y - (stairs.y + 0.5)) <= CONFIG.player.stairsDistance;
+    return dist(this.player, { x: stairs.x + 0.5, y: stairs.y + 0.5 }) <= CONFIG.player.stairsDistance;
+  }
+
+  /** The special can be used right now. */
+  get specialReady(): boolean {
+    if (this.specialCharge < 1 || this.specialCooldown > 0) return false;
+    if (this.action.type !== 'none' && !(this.action.type === 'attack' && this.action.phase === 'recovery')) return false;
+    const special = this.cls.special;
+    return special.kind !== 'flare' || this.survival.light >= special.lightCost;
   }
 
   /** Distance at which horrors notice the player. */
   detectionRange(def: EnemyDef): number {
-    return def.detect + this.lightRadius * 0.8 * this.cls.detectionMultiplier;
+    const run = this.running ? COMBAT.run.detection : 1;
+    return (def.detect + this.lightRadius * 0.8) * run;
   }
 
-  /** Goes one level down, keeping the survival meters. */
+  /** Rat eye: distance at which the plunderer sees items in the dark (0 for other classes). */
+  get itemSight(): number {
+    return this.cls.passive.kind === 'ratEye' ? this.cls.passive.itemSight : 0;
+  }
+
+  /** Goes one level down, keeping the survival meters and the special charge. */
   descend(): void {
     this.enterLevel(this.level.depth + 1);
   }
@@ -193,11 +225,12 @@ export class World {
     this.taken.clear();
     this.projectiles = [];
     this.action = { type: 'none' };
-    this.pressTime = -1;
+    this.running = false;
     this.lastViewTile = -1;
     this.flowTile = -1;
     this.rng = Rng.derive(this.seed, 'combat', this.life, depth);
     const spawnRng = Rng.derive(this.seed, 'enemies', this.life, depth);
+    this.nextId = Math.max(this.nextId, ...this.level.items.map((i) => i.id + 1));
     this.enemies = spawnEnemies(this.level, spawnRng).map((spawn) => ({
       id: this.nextId++,
       kind: spawn.kind,
@@ -211,11 +244,15 @@ export class World {
       facing: { x: 1, y: 0 },
       strikeDir: { x: 1, y: 0 },
       room: spawn.room,
+      roamer: spawn.roamer,
       wanderTarget: null,
+      roamField: null,
+      roamRoom: spawn.room,
       flank: spawnRng.range(-1, 1),
       visible: false,
+      wax: 0,
+      waxTick: 0,
     }));
-    this.nextId = Math.max(this.nextId, ...this.level.items.map((i) => i.id + 1));
   }
 
   update(dt: number, input: ControlInput): WorldEvent[] {
@@ -223,15 +260,25 @@ export class World {
     const events: WorldEvent[] = [];
 
     this.updateTimers(dt);
-    this.handleInput(dt, input, events);
+    this.handleInput(input, events);
     this.movePlayer(dt, input);
     this.updateAction(dt, events);
 
+    const passive = this.cls.passive;
     this.survival = tickSurvival(this.survival, dt, {
       maxHealth: this.maxHealth,
       hungerMultiplier: this.cls.hungerMultiplier,
       thirstMultiplier: this.cls.thirstMultiplier,
+      lightMultiplier: passive.kind === 'devoutFlame' ? passive.lightDrain : 1,
     });
+    if (this.running) {
+      this.survival = {
+        ...this.survival,
+        thirst: Math.max(0, this.survival.thirst - COMBAT.run.thirstPerSecond * dt),
+        hunger: Math.max(0, this.survival.hunger - COMBAT.run.hungerPerSecond * dt),
+      };
+    }
+    this.gainCharge(this.cls.charge.perSecond * dt);
 
     this.pickUp(events);
     const revealed = this.reveal();
@@ -255,46 +302,41 @@ export class World {
     this.invulnerableTimer = Math.max(0, this.invulnerableTimer - dt);
     this.invisibleTimer = Math.max(0, this.invisibleTimer - dt);
     this.dodgeCooldown = Math.max(0, this.dodgeCooldown - dt);
-    this.abilityCooldown = Math.max(0, this.abilityCooldown - dt);
+    this.specialCooldown = Math.max(0, this.specialCooldown - dt);
+    if (this.action.type === 'none') this.comboTimer = Math.max(0, this.comboTimer - dt);
+    if (this.comboTimer <= 0 && this.action.type === 'none') this.comboIndex = 0;
   }
 
-  private handleInput(dt: number, input: ControlInput, events: WorldEvent[]): void {
-    const attackPressed = input.attack && !this.prevAttack;
-    const attackReleased = !input.attack && this.prevAttack;
-    const dodgePressed = input.dodge && !this.prevDodge;
-    this.prevAttack = input.attack;
-    this.prevDodge = input.dodge;
+  private handleInput(input: ControlInput, events: WorldEvent[]): void {
+    const attackPressed = input.attack && !this.prev.attack;
+    const dodgePressed = input.dodge && !this.prev.dodge;
+    const specialPressed = input.special && !this.prev.special;
+    this.prev = { attack: input.attack, dodge: input.dodge, special: input.special };
 
-    const moveLength = length(input.move);
-    if (moveLength > 0.2 && this.action.type !== 'dodge') this.facing = normalize(input.move);
+    const moving = length(input.move) > 0.2;
+    if (moving && this.action.type !== 'dodge') this.facing = normalize(input.move);
 
-    if (attackPressed && this.action.type === 'none') {
-      // A press always opens the parry window; tap or hold is decided later.
+    // Holding dodge runs once the roll is over; letting go or acting stops it.
+    this.running = input.dodge && moving && this.action.type === 'none' && !dodgePressed;
+
+    const free = this.action.type === 'none';
+    const recovering = this.action.type === 'attack' && this.action.phase === 'recovery';
+
+    if (attackPressed && free) {
+      // Every press opens the parry window, and swings.
       this.parryTimer = this.cls.parryWindow + parryBonus(this.cls.attributes);
-      this.pressTime = 0;
+      this.startAttack(events);
     }
 
-    if (this.pressTime >= 0) {
-      this.pressTime += dt;
-      if (attackReleased) {
-        this.pressTime = -1;
-        if (this.action.type === 'none') this.startAttack(events);
-      } else if (this.pressTime >= COMBAT.holdThreshold && this.abilityReady) {
-        // If the ability is not ready, keep holding: releasing still attacks.
-        this.pressTime = -1;
-        this.startAbility(events);
-      }
-    } else if (attackReleased && this.action.type === 'charge') {
-      this.releaseCleave(events);
-    }
+    if (specialPressed && (free || recovering) && this.specialReady) this.startSpecial(events);
 
-    if (dodgePressed && this.dodgeCooldown <= 0 && (this.action.type === 'none' || this.action.type === 'attack')) {
-      const dir = moveLength > 0.2 ? normalize(input.move) : this.facing;
+    if (dodgePressed && this.dodgeCooldown <= 0 && (free || this.action.type === 'attack')) {
+      const dir = moving ? normalize(input.move) : this.facing;
       this.action = { type: 'dodge', timer: COMBAT.dodge.duration, dir };
       this.invulnerableTimer = COMBAT.dodge.invulnerable;
       this.dodgeCooldown = COMBAT.dodge.cooldown * quicknessFactor(this.cls.attributes);
-      this.pressTime = -1;
       this.spendThirst(COMBAT.thirstCost.dodge);
+      this.running = false;
       events.push({ type: 'dodge', dir });
     }
   }
@@ -314,8 +356,9 @@ export class World {
     const l = length(input.move);
     if (l < 0.05) return;
     let speed = CONFIG.player.speed * this.cls.speedMultiplier;
+    if (this.running) speed *= COMBAT.run.speedMultiplier;
     if (this.action.type === 'attack') speed *= 0.35;
-    if (this.action.type === 'charge') speed *= 0.5;
+    if (this.action.type === 'special') speed *= 0.2;
     const scale = (Math.min(1, l) / l) * speed * dt;
     this.player = moveWithCollision(this.level, this.player, input.move.x * scale, input.move.y * scale, CONFIG.player.radius);
   }
@@ -323,34 +366,50 @@ export class World {
   private updateAction(dt: number, events: WorldEvent[]): void {
     const action = this.action;
     if (action.type === 'none') return;
-    // The charge counts up; everything else counts down.
-    action.timer += action.type === 'charge' ? dt : -dt;
-    if (action.type === 'dodge' && action.timer <= 0) this.action = { type: 'none' };
-    if (action.type === 'attack' && action.timer <= 0) {
-      if (action.phase === 'windup') {
-        this.resolveAttack(events);
-        this.action = {
-          type: 'attack',
-          phase: 'recovery',
-          timer: this.cls.weapon.recovery * quicknessFactor(this.cls.attributes),
-        };
-      } else {
+    action.timer -= dt;
+    if (action.timer > 0) return;
+    switch (action.type) {
+      case 'dodge':
         this.action = { type: 'none' };
-      }
+        return;
+      case 'attack':
+        if (action.phase === 'windup') {
+          this.resolveAttack(action.step, events);
+          this.action = {
+            type: 'attack',
+            phase: 'recovery',
+            timer: action.step.recovery * quicknessFactor(this.cls.attributes),
+            step: action.step,
+          };
+        } else {
+          this.action = { type: 'none' };
+        }
+        return;
+      case 'special':
+        this.resolveExecution(action.target, events);
+        this.action = { type: 'none' };
+        return;
     }
   }
 
   private startAttack(events: WorldEvent[]): void {
-    this.aim();
-    this.action = { type: 'attack', phase: 'windup', timer: this.cls.weapon.windup };
+    const combo = this.cls.weapon.combo;
+    const index = this.comboTimer > 0 ? this.comboIndex % combo.length : 0;
+    const step = combo[index];
+    this.comboIndex = index + 1;
+    this.comboTimer = this.cls.weapon.comboWindow;
+    if (this.comboIndex >= combo.length) this.comboIndex = 0;
+    this.aim(step.range);
+    this.action = { type: 'attack', phase: 'windup', timer: step.windup, step };
+    this.running = false;
     this.spendThirst(COMBAT.thirstCost.attack);
-    const { arc, range } = this.cls.weapon;
-    events.push({ type: 'attack', pos: { ...this.player }, facing: { ...this.facing }, arc, range });
+    const finisher = combo.length > 1 && index === combo.length - 1;
+    events.push({ type: 'attack', pos: { ...this.player }, facing: { ...this.facing }, arc: step.arc, range: step.range, finisher });
   }
 
   /** Turns toward the best target: inside the facing cone first, else the closest in reach. */
-  private aim(): void {
-    const reach = this.cls.weapon.range + COMBAT.aimReach;
+  private aim(range: number): Enemy | null {
+    const reach = range + COMBAT.aimReach;
     let best: Enemy | null = null;
     let bestScore = Infinity;
     for (const enemy of this.enemies) {
@@ -366,17 +425,27 @@ export class World {
       }
     }
     if (best) this.facing = normalize({ x: best.pos.x - this.player.x, y: best.pos.y - this.player.y });
+    return best;
   }
 
-  private resolveAttack(events: WorldEvent[]): void {
+  private resolveAttack(step: ComboStep, events: WorldEvent[]): void {
     const { weapon } = this.cls;
     for (const enemy of this.enemies) {
       if (enemy.state === 'dead') continue;
       const to = { x: enemy.pos.x - this.player.x, y: enemy.pos.y - this.player.y };
-      if (length(to) > weapon.range + enemy.def.radius) continue;
-      if (angleBetween(this.facing, to) > weapon.arc / 2) continue;
+      if (length(to) > step.range + enemy.def.radius) continue;
+      if (angleBetween(this.facing, to) > step.arc / 2) continue;
       if (!hasLineOfSight(this.level, this.player, enemy.pos)) continue;
-      this.damageEnemy(enemy, weapon.damage, weapon.knockback, events);
+      this.damageEnemy(enemy, weapon.damage * step.damage, step.knockback, events);
+      if (enemy.health <= 0) continue;
+      if (step.stun) {
+        enemy.state = 'stunned';
+        enemy.timer = step.stun;
+      }
+      if (weapon.wax) {
+        enemy.wax = weapon.wax.duration;
+        enemy.waxTick = COMBAT.waxTick;
+      }
     }
   }
 
@@ -395,101 +464,115 @@ export class World {
       if (!enemy.alerted || behind) {
         damage *= this.cls.backstabMultiplier;
         crit = true;
+        this.gainCharge(this.cls.charge.perBackstab);
       }
     }
-    damage = Math.round(damage);
-    enemy.health -= damage;
-    enemy.alerted = true;
-    enemy.forgetTimer = 0;
-    events.push({ type: 'enemyHit', id: enemy.id, damage, crit, pos: { ...enemy.pos } });
-    if (knockback > 0) {
+    this.gainCharge(this.cls.charge.perHitDealt);
+    this.applyDamage(enemy, Math.round(damage), crit, false, events);
+    if (knockback > 0 && enemy.health > 0) {
       const dir = normalize({ x: enemy.pos.x - this.player.x, y: enemy.pos.y - this.player.y });
       enemy.pos = moveWithCollision(this.level, enemy.pos, dir.x * knockback, dir.y * knockback, enemy.def.radius);
     }
-    if (enemy.health <= 0) {
-      enemy.state = 'dead';
-      events.push({ type: 'enemyDied', id: enemy.id, kind: enemy.kind, pos: { ...enemy.pos } });
-      if (this.rng.chance(COMBAT.dropChance)) {
-        const kind = this.rng.pick<ItemKind>(['food', 'water', 'oil']);
-        const item: LevelItem = { id: this.nextId++, kind, x: Math.floor(enemy.pos.x), y: Math.floor(enemy.pos.y) };
-        if (isFloor(this.level, item.x, item.y)) {
-          this.level.items.push(item);
-          events.push({ type: 'drop', item });
-        }
+  }
+
+  /** Lowers a horror's health, handling death, drops and the bloodthirst passive. */
+  private applyDamage(enemy: Enemy, damage: number, crit: boolean, burn: boolean, events: WorldEvent[]): void {
+    enemy.health -= damage;
+    events.push({ type: 'enemyHit', id: enemy.id, damage, crit, burn, pos: { ...enemy.pos } });
+    if (!burn) {
+      enemy.alerted = true;
+      enemy.forgetTimer = 0;
+      if (enemy.state === 'idle') enemy.state = 'chase';
+    }
+    if (enemy.health > 0) return;
+    enemy.state = 'dead';
+    enemy.wax = 0;
+    events.push({ type: 'enemyDied', id: enemy.id, kind: enemy.kind, pos: { ...enemy.pos } });
+    const passive = this.cls.passive;
+    if (passive.kind === 'bloodthirst') {
+      const amount = Math.round(this.maxHealth * passive.healFraction);
+      this.survival = { ...this.survival, health: Math.min(this.maxHealth, this.survival.health + amount) };
+      events.push({ type: 'heal', amount });
+    }
+    const dropChance = passive.kind === 'ratEye' ? passive.dropChance : COMBAT.dropChance;
+    if (this.rng.chance(dropChance)) {
+      const kind = this.rng.pick<ItemKind>(['food', 'water', 'oil']);
+      const item: LevelItem = { id: this.nextId++, kind, x: Math.floor(enemy.pos.x), y: Math.floor(enemy.pos.y) };
+      if (isFloor(this.level, item.x, item.y)) {
+        this.level.items.push(item);
+        events.push({ type: 'drop', item });
       }
-    } else if (enemy.state === 'idle') {
-      enemy.state = 'chase';
     }
   }
 
-  /** The class ability can be used right now. */
-  get abilityReady(): boolean {
-    if (this.abilityCooldown > 0 || this.action.type !== 'none') return false;
-    const ability = this.cls.ability;
-    return ability.kind !== 'flare' || this.survival.light >= ability.lightCost;
-  }
-
-  private startAbility(events: WorldEvent[]): void {
-    const ability = this.cls.ability;
-    switch (ability.kind) {
-      case 'chargedCleave':
-        this.action = { type: 'charge', timer: 0 };
+  private startSpecial(events: WorldEvent[]): void {
+    const special = this.cls.special;
+    switch (special.kind) {
+      case 'execution': {
+        const target = this.aim(special.reach);
+        if (!target) return; // Nothing to execute: keep the charge.
+        this.action = { type: 'special', timer: special.windup, target };
+        this.consumeSpecial();
+        events.push({ type: 'special', kind: 'execution', pos: { ...this.player }, radius: 0, target: { ...target.pos } });
         return;
+      }
       case 'shadowStep': {
         const dir = this.facing;
-        this.player = moveWithCollision(
-          this.level,
-          this.player,
-          dir.x * ability.distance,
-          dir.y * ability.distance,
-          CONFIG.player.radius,
-        );
-        this.invisibleTimer = ability.invisibleFor;
+        this.player = moveWithCollision(this.level, this.player, dir.x * special.distance, dir.y * special.distance, CONFIG.player.radius);
+        this.invisibleTimer = special.invisibleFor;
         this.invulnerableTimer = 0.3;
+        this.action = { type: 'none' };
         for (const enemy of this.enemies) {
           if (enemy.state === 'dead') continue;
           enemy.alerted = false;
           if (enemy.state === 'chase') enemy.state = 'idle';
         }
-        this.finishAbility(events, 0);
+        this.consumeSpecial();
+        events.push({ type: 'special', kind: 'shadowStep', pos: { ...this.player }, radius: 0 });
         return;
       }
       case 'flare': {
-        this.survival = { ...this.survival, light: this.survival.light - ability.lightCost };
+        this.survival = { ...this.survival, light: this.survival.light - special.lightCost };
+        this.action = { type: 'none' };
         for (const enemy of this.enemies) {
           if (enemy.state === 'dead') continue;
-          if (Math.hypot(enemy.pos.x - this.player.x, enemy.pos.y - this.player.y) > ability.radius) continue;
-          this.damageEnemy(enemy, ability.damage, 0.8, events, false);
+          if (dist(enemy.pos, this.player) > special.radius) continue;
+          const multiplier = enemy.wax > 0 ? special.waxMultiplier : 1;
+          this.damageEnemy(enemy, special.damage * multiplier, 0.8, events, false);
           if (enemy.health > 0) {
             enemy.state = 'flee';
-            enemy.timer = ability.fearFor;
+            enemy.timer = special.fearFor;
           }
         }
-        this.finishAbility(events, ability.radius);
+        this.consumeSpecial();
+        events.push({ type: 'special', kind: 'flare', pos: { ...this.player }, radius: special.radius });
         return;
       }
     }
   }
 
-  private releaseCleave(events: WorldEvent[]): void {
-    const ability = this.cls.ability;
-    if (ability.kind !== 'chargedCleave') return;
-    const t = this.charge;
-    const multiplier = ability.minMultiplier + (ability.maxMultiplier - ability.minMultiplier) * t;
-    this.action = { type: 'none' };
-    for (const enemy of this.enemies) {
-      if (enemy.state === 'dead') continue;
-      if (Math.hypot(enemy.pos.x - this.player.x, enemy.pos.y - this.player.y) > ability.radius + enemy.def.radius) continue;
-      if (!hasLineOfSight(this.level, this.player, enemy.pos)) continue;
-      this.damageEnemy(enemy, this.cls.weapon.damage * multiplier, 1 + t, events);
+  private resolveExecution(target: Enemy | null, events: WorldEvent[]): void {
+    const special = this.cls.special;
+    if (special.kind !== 'execution' || !target || target.state === 'dead') return;
+    if (dist(target.pos, this.player) > special.reach + target.def.radius + 0.4) return;
+    const executes = target.state === 'stunned' || target.health <= target.def.health * special.threshold;
+    if (executes) {
+      events.push({ type: 'executed', pos: { ...target.pos } });
+      this.applyDamage(target, target.health, true, false, events);
+    } else {
+      this.damageEnemy(target, this.cls.weapon.damage * special.multiplier, 1, events, false);
     }
-    this.finishAbility(events, ability.radius);
   }
 
-  private finishAbility(events: WorldEvent[], radius: number): void {
-    this.abilityCooldown = this.cls.ability.cooldown;
-    this.spendThirst(COMBAT.thirstCost.ability);
-    events.push({ type: 'ability', kind: this.cls.ability.kind, pos: { ...this.player }, radius });
+  private consumeSpecial(): void {
+    this.specialCharge = 0;
+    this.specialCooldown = this.cls.charge.cooldown;
+    this.running = false;
+    this.spendThirst(COMBAT.thirstCost.special);
+  }
+
+  private gainCharge(amount: number): void {
+    if (amount > 0) this.specialCharge = Math.min(1, this.specialCharge + amount);
   }
 
   private spendThirst(amount: number): void {
@@ -502,14 +585,14 @@ export class World {
       health: Math.max(0, this.survival.health - damage),
       light: Math.max(0, this.survival.light - lightStolen),
     };
-    if (this.action.type === 'charge') this.action = { type: 'none' };
+    this.gainCharge(this.cls.charge.perHitTaken);
     events.push({ type: 'playerHit', damage, lightStolen });
   }
 
   private pickUp(events: WorldEvent[]): void {
     for (const item of this.level.items) {
       if (this.taken.has(item.id)) continue;
-      if (Math.hypot(this.player.x - (item.x + 0.5), this.player.y - (item.y + 0.5)) > CONFIG.player.pickupDistance) continue;
+      if (dist(this.player, { x: item.x + 0.5, y: item.y + 0.5 }) > CONFIG.player.pickupDistance) continue;
       this.taken.add(item.id);
       this.survival = consume(this.survival, item.kind);
       events.push({ type: 'pickup', itemId: item.id, kind: item.kind });
@@ -540,31 +623,44 @@ export class World {
     const sight = stealthSight(this.cls.attributes) + this.lightRadius * 0.35;
     for (const enemy of this.enemies) {
       if (enemy.state === 'dead') continue;
-      const dist = Math.hypot(enemy.pos.x - this.player.x, enemy.pos.y - this.player.y);
+      this.burn(enemy, dt, events);
+      if (enemy.health <= 0) continue;
+      const d = dist(enemy.pos, this.player);
       const tile = Math.floor(enemy.pos.y) * this.level.width + Math.floor(enemy.pos.x);
-      enemy.visible = this.visibleNow.has(tile) && (!enemy.def.stealthy || dist <= sight);
-      this.perceive(enemy, dt, dist);
-      this.think(enemy, dt, dist, events);
+      const seen = this.visibleNow.has(tile) && (!enemy.def.stealthy || d <= sight);
+      // Burning wax keeps a horror visible even outside the light.
+      enemy.visible = seen || enemy.wax > 0;
+      this.perceive(enemy, dt, d);
+      this.think(enemy, dt, d, events);
     }
     this.separate();
   }
 
-  private perceive(enemy: Enemy, dt: number, dist: number): void {
+  private burn(enemy: Enemy, dt: number, events: WorldEvent[]): void {
+    const wax = this.cls.weapon.wax;
+    if (enemy.wax <= 0 || !wax) return;
+    enemy.wax -= dt;
+    enemy.waxTick -= dt;
+    if (enemy.waxTick > 0) return;
+    enemy.waxTick += COMBAT.waxTick;
+    this.applyDamage(enemy, Math.max(1, Math.round(wax.damagePerSecond * COMBAT.waxTick)), false, true, events);
+  }
+
+  private perceive(enemy: Enemy, dt: number, d: number): void {
     if (this.invisible) {
       enemy.alerted = false;
       return;
     }
     const range = this.detectionRange(enemy.def);
-    // Unaware horrors only see ahead of them, but they notice anyone right next to them
-    // and the glow of a flame that is close enough, whichever way they face.
+    // Unaware horrors only see ahead of them, but they notice anyone right next to them,
+    // the glow of a flame that is close enough, and the noise of running.
     const toPlayer = { x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y };
-    const glow = this.lightRadius * COMBAT.glow * this.cls.detectionMultiplier;
-    const inView =
-      enemy.alerted ||
-      dist <= Math.max(COMBAT.hearing, glow) ||
-      angleBetween(enemy.facing, toPlayer) <= COMBAT.viewCone;
-    const sees = inView && dist <= range * (enemy.alerted ? 1.6 : 1) && hasLineOfSight(this.level, enemy.pos, this.player);
+    const glow = this.lightRadius * COMBAT.glow;
+    const hearing = this.running ? COMBAT.run.hearing : COMBAT.hearing;
+    const inView = enemy.alerted || d <= Math.max(hearing, glow) || angleBetween(enemy.facing, toPlayer) <= COMBAT.viewCone;
+    const sees = inView && d <= range * (enemy.alerted ? 1.6 : 1) && hasLineOfSight(this.level, enemy.pos, this.player);
     if (sees) {
+      if (!enemy.alerted) this.alertNearby(enemy);
       enemy.alerted = true;
       enemy.forgetTimer = 0;
     } else if (enemy.alerted) {
@@ -573,7 +669,17 @@ export class World {
     }
   }
 
-  private think(enemy: Enemy, dt: number, dist: number, events: WorldEvent[]): void {
+  private alertNearby(source: Enemy): void {
+    for (const other of this.enemies) {
+      if (other === source || other.state === 'dead' || other.alerted) continue;
+      if (dist(other.pos, source.pos) > COMBAT.alertRadius) continue;
+      if (!hasLineOfSight(this.level, other.pos, source.pos)) continue;
+      other.alerted = true;
+      other.forgetTimer = 0;
+    }
+  }
+
+  private think(enemy: Enemy, dt: number, d: number, events: WorldEvent[]): void {
     const def = enemy.def;
     enemy.timer -= dt;
     const toPlayer = normalize({ x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y });
@@ -584,15 +690,15 @@ export class World {
           enemy.state = 'chase';
           return;
         }
-        this.wander(enemy, dt);
+        if (enemy.roamer) this.roam(enemy, dt);
+        else this.wander(enemy, dt);
         return;
       case 'stunned':
       case 'recover':
         if (enemy.timer <= 0) enemy.state = enemy.alerted ? 'chase' : 'idle';
         return;
       case 'flee': {
-        const away = { x: -toPlayer.x, y: -toPlayer.y };
-        this.step(enemy, away, def.speed * 0.9 * dt);
+        this.step(enemy, { x: -toPlayer.x, y: -toPlayer.y }, def.speed * 0.9 * dt);
         if (enemy.timer <= 0) enemy.state = enemy.alerted ? 'chase' : 'idle';
         return;
       }
@@ -614,23 +720,23 @@ export class World {
         enemy.facing = toPlayer;
         const sees = hasLineOfSight(this.level, enemy.pos, this.player);
         if (def.ranged) {
-          if (dist < 2.3) {
+          if (d < 2.3) {
             enemy.state = 'flee';
             enemy.timer = 0.8;
             return;
           }
-          if (dist <= def.range + 1 && sees) {
+          if (d <= def.range + 1 && sees) {
             this.beginWindup(enemy, toPlayer);
             return;
           }
-          this.chaseStep(enemy, dt, dist, sees);
+          this.chaseStep(enemy, dt, d, sees);
           return;
         }
-        if (dist <= def.range + 0.1 && sees) {
+        if (d <= def.range + 0.1 && sees) {
           this.beginWindup(enemy, toPlayer);
           return;
         }
-        this.chaseStep(enemy, dt, dist, sees);
+        this.chaseStep(enemy, dt, d, sees);
         return;
       }
     }
@@ -647,14 +753,14 @@ export class World {
     const def = enemy.def;
     const to = { x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y };
     const arc = def.kind === 'husk' ? Math.PI / 1.5 : Math.PI / 2.4;
-    const reach = def.range + 0.35;
-    if (length(to) > reach || angleBetween(enemy.strikeDir, to) > arc) return;
+    if (length(to) > def.range + 0.35 || angleBetween(enemy.strikeDir, to) > arc) return;
     if (this.invulnerableTimer > 0) return;
     if (def.parryable && this.parryTimer > 0) {
       enemy.state = 'stunned';
       enemy.timer = this.cls.parryStun;
       this.riposteTimer = COMBAT.riposteFor;
       this.parryTimer = 0;
+      this.gainCharge(this.cls.charge.perParry);
       events.push({ type: 'parry', id: enemy.id, pos: { ...enemy.pos } });
       return;
     }
@@ -677,8 +783,7 @@ export class World {
       p.ttl -= dt;
       p.pos = { x: p.pos.x + p.vel.x * dt, y: p.pos.y + p.vel.y * dt };
       if (p.ttl <= 0 || !isFloor(this.level, Math.floor(p.pos.x), Math.floor(p.pos.y))) return false;
-      const hit = Math.hypot(p.pos.x - this.player.x, p.pos.y - this.player.y) <= COMBAT.projectile.radius + CONFIG.player.radius;
-      if (!hit) return true;
+      if (dist(p.pos, this.player) > COMBAT.projectile.radius + CONFIG.player.radius) return true;
       if (this.invulnerableTimer > 0) return true;
       this.hurtPlayer(p.damage, 0, events);
       return false;
@@ -695,7 +800,7 @@ export class World {
       };
     }
     const to = { x: enemy.wanderTarget.x - enemy.pos.x, y: enemy.wanderTarget.y - enemy.pos.y };
-    if (length(to) < 0.2) {
+    if (length(to) < 0.2 || enemy.timer < -6) {
       enemy.wanderTarget = null;
       enemy.timer = this.rng.range(1, 3.5);
       return;
@@ -704,19 +809,44 @@ export class World {
     this.step(enemy, enemy.facing, enemy.def.speed * 0.35 * dt);
   }
 
-  private chaseStep(enemy: Enemy, dt: number, dist: number, sees: boolean): void {
+  /** Roamers walk from room to room along the floor. */
+  private roam(enemy: Enemy, dt: number): void {
+    if (enemy.timer > 0 && !enemy.roamField) return;
+    if (!enemy.roamField) {
+      const rooms = this.level.rooms;
+      if (rooms.length < 2) return;
+      let next = this.rng.int(0, rooms.length - 1);
+      if (next === enemy.room) next = (next + 1) % rooms.length;
+      const r = rooms[next];
+      const center = { x: r.x + Math.floor(r.w / 2), y: r.y + Math.floor(r.h / 2) };
+      enemy.roamRoom = next;
+      enemy.roamField = floorDistances(this.level, center);
+    }
+    const dir = this.fieldDirection(enemy.roamField, enemy.pos);
+    if (!dir) {
+      enemy.room = enemy.roamRoom;
+      enemy.roamField = null;
+      enemy.timer = this.rng.range(2, 5);
+      return;
+    }
+    enemy.facing = normalize(dir);
+    this.step(enemy, enemy.facing, enemy.def.speed * 0.4 * dt);
+  }
+
+  private chaseStep(enemy: Enemy, dt: number, d: number, sees: boolean): void {
     let speed = enemy.def.speed;
-    if (this.cls.lightHesitation < 1 && dist <= this.lightRadius) speed *= this.cls.lightHesitation;
+    const passive = this.cls.passive;
+    if (passive.kind === 'devoutFlame' && d <= this.lightRadius) speed *= passive.hesitation;
     let dir: Point;
-    if (sees && dist < 7) {
+    if (sees && d < 7) {
       dir = { x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y };
-      if (enemy.kind === 'crawler' && dist > 1.4) {
+      if (enemy.kind === 'crawler' && d > 1.4) {
         // Circle around to come from the sides.
         const perp = { x: -dir.y, y: dir.x };
         dir = { x: dir.x + perp.x * enemy.flank * 0.8, y: dir.y + perp.y * enemy.flank * 0.8 };
       }
     } else {
-      dir = this.flowDirection(enemy.pos) ?? { x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y };
+      dir = (this.flow && this.fieldDirection(this.flow, enemy.pos)) ?? { x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y };
     }
     this.step(enemy, normalize(dir), speed * dt);
   }
@@ -733,13 +863,13 @@ export class World {
     this.flow = floorDistances(this.level, { x: Math.floor(this.player.x), y: Math.floor(this.player.y) });
   }
 
-  private flowDirection(pos: Point): Point | null {
-    if (!this.flow) return null;
+  /** Direction toward the neighbor tile closer to the field's origin, or null when already there. */
+  private fieldDirection(field: Int32Array, pos: Point): Point | null {
     const { width } = this.level;
     const x = Math.floor(pos.x);
     const y = Math.floor(pos.y);
-    const here = this.flow[y * width + x];
-    if (here < 0) return null;
+    const here = field[y * width + x];
+    if (here <= 0) return null;
     let best: Point | null = null;
     let bestValue = here;
     for (const [dx, dy] of [
@@ -748,7 +878,7 @@ export class World {
       [0, 1],
       [0, -1],
     ]) {
-      const value = this.flow[(y + dy) * width + (x + dx)];
+      const value = field[(y + dy) * width + (x + dx)];
       if (value >= 0 && value < bestValue) {
         bestValue = value;
         best = { x: x + dx + 0.5 - pos.x, y: y + dy + 0.5 - pos.y };

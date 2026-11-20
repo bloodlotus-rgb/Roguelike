@@ -3,7 +3,7 @@ import type { ClassId } from './core/classes';
 import { NO_INPUT, World, type ControlInput, type WorldEvent } from './core/world';
 import { PAPER } from './game/art';
 import { DungeonScene, type SceneHost } from './game/DungeonScene';
-import { getLang, setLang, t, type StringKey } from './i18n/i18n';
+import { t, type StringKey } from './i18n/i18n';
 import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
 import './ui/styles.css';
@@ -46,7 +46,12 @@ class Session implements SceneHost {
       onChooseAgain: () => this.chooseAgain(),
       onResume: () => this.setPaused(false),
     });
-    this.controls = new Controls(document.getElementById('touch-zone')!, this.hud.attackButton, this.hud.dodgeButton);
+    this.controls = new Controls(
+      document.getElementById('touch-zone')!,
+      this.hud.attackButton,
+      this.hud.dodgeButton,
+      this.hud.specialButton,
+    );
     this.hud.showClassSelect(true);
 
     // Leaving the app pauses it: the game never runs while nobody is looking.
@@ -57,7 +62,6 @@ class Session implements SceneHost {
       if (!this.playing) return;
       if (e.code === 'Escape') this.setPaused(!this.paused);
       if (e.code === 'Enter' && this.world.atStairs && !this.paused) this.descend();
-      if (e.code === 'KeyL') setLang(getLang() === 'es' ? 'en' : 'es');
     });
   }
 
@@ -78,8 +82,7 @@ class Session implements SceneHost {
     if (this.hudTimer % 3 === 0 || events.length > 0) {
       this.hud.setSurvival(world.survival, world.maxHealth);
       this.hud.setStairsAvailable(world.atStairs);
-      const ability = world.cls.ability;
-      this.hud.setAbility(world.abilityReady ? 1 : 1 - world.abilityCooldown / ability.cooldown, world.charge);
+      this.hud.setSpecial(world.specialCharge, world.specialReady);
       this.hud.setDodgeReady(world.dodgeCooldown <= 0);
     }
   }

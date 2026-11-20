@@ -17,6 +17,7 @@ export interface HudHandlers {
 export class Hud {
   readonly attackButton: HTMLButtonElement;
   readonly dodgeButton: HTMLButtonElement;
+  readonly specialButton: HTMLButtonElement;
   private readonly meterFills = new Map<Meter, HTMLElement>();
   private readonly descendButton: HTMLButtonElement;
   private readonly deathScreen: HTMLElement;
@@ -24,7 +25,7 @@ export class Hud {
   private readonly classScreen: HTMLElement;
   private readonly toasts: HTMLElement;
   private readonly depthLabel: HTMLElement;
-  private readonly abilityRing: HTMLElement;
+  private readonly specialRing: HTMLElement;
   private readonly root: HTMLElement;
   private depth = 1;
   private deathDepth = 1;
@@ -50,11 +51,12 @@ export class Hud {
       <div class="seed"><span data-i18n="seed"></span>: <span class="seed-value"></span></div>
       <div class="actions">
         <button class="paper-button descend" type="button" data-i18n="descend" hidden></button>
-        <button class="action-button dodge" type="button"><span data-i18n="dodge"></span></button>
-        <button class="action-button attack" type="button">
-          <span class="ability-ring"></span>
-          <span data-i18n="attack"></span>
+        <button class="action-button special" type="button">
+          <span class="special-ring"></span>
+          <span data-i18n="special"></span>
         </button>
+        <button class="action-button dodge" type="button"><span data-i18n="dodge"></span></button>
+        <button class="action-button attack" type="button"><span data-i18n="attack"></span></button>
       </div>
       <section class="screen pause-screen" hidden>
         <h2 data-i18n="paused"></h2>
@@ -73,7 +75,9 @@ export class Hud {
             (id) => `<button class="class-card" type="button" data-class="${id}">
               <span class="class-name" data-i18n="className_${id}"></span>
               <span class="class-desc" data-i18n="classDesc_${id}"></span>
-              <span class="class-ability" data-i18n="abilityDesc_${id}"></span>
+              <span class="class-line"><b data-i18n="labelAttack"></b> <span data-i18n="classAttack_${id}"></span></span>
+              <span class="class-line special-line"><b data-i18n="labelSpecial"></b> <span data-i18n="classSpecial_${id}"></span></span>
+              <span class="class-line"><b data-i18n="labelPassive"></b> <span data-i18n="classPassive_${id}"></span></span>
               <span class="class-attrs">
                 ${ATTRIBUTE_IDS.map(
                   (a) => `<span class="attr"><span data-i18n="attr_${a}"></span> <b>${CLASSES[id].attributes[a]}</b></span>`,
@@ -93,7 +97,8 @@ export class Hud {
     this.descendButton = root.querySelector('.descend')!;
     this.attackButton = root.querySelector('.attack')!;
     this.dodgeButton = root.querySelector('.dodge')!;
-    this.abilityRing = root.querySelector('.ability-ring')!;
+    this.specialButton = root.querySelector('.special')!;
+    this.specialRing = root.querySelector('.special-ring')!;
     this.deathScreen = root.querySelector('.death-screen')!;
     this.pauseScreen = root.querySelector('.pause-screen')!;
     this.classScreen = root.querySelector('.class-screen')!;
@@ -130,12 +135,11 @@ export class Hud {
     }
   }
 
-  /** `ready` from 0 (just used) to 1 (available); `charge` from 0 to 1 while charging, else -1. */
-  setAbility(ready: number, charge: number): void {
-    const value = charge >= 0 ? charge : ready;
-    this.abilityRing.style.setProperty('--fill', `${Math.round(value * 360)}deg`);
-    this.abilityRing.classList.toggle('ready', ready >= 1 && charge < 0);
-    this.abilityRing.classList.toggle('charging', charge >= 0);
+  /** `charge` from 0 to 1; `ready` when it can be used right now. */
+  setSpecial(charge: number, ready: boolean): void {
+    this.specialRing.style.setProperty('--fill', `${Math.round(charge * 360)}deg`);
+    this.specialRing.classList.toggle('ready', ready);
+    this.specialButton.classList.toggle('cooling', !ready);
   }
 
   setDodgeReady(ready: boolean): void {

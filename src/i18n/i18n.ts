@@ -18,45 +18,74 @@ const strings = {
   pickupWater: { es: 'Odre de agua', en: 'Waterskin' },
   pickupOil: { es: 'Frasco de aceite', en: 'Oil flask' },
   controlsHint: {
-    es: 'Mové con el pulgar. Tocá Atacar para golpear o desviar; mantenelo para la habilidad.',
-    en: 'Move with your thumb. Tap Attack to strike or parry; hold it for your ability.',
+    es: 'Mové con el pulgar. Atacar golpea o desvía; Especial cuando el aro se llena; mantené Esquivar para correr.',
+    en: 'Move with your thumb. Attack strikes or parries; Special when the ring fills; hold Dodge to run.',
   },
   controlsHintKeys: {
-    es: 'WASD / flechas para moverte · Espacio para atacar (mantener: habilidad) · Shift para esquivar',
-    en: 'WASD / arrows to move · Space to attack (hold: ability) · Shift to dodge',
+    es: 'WASD / flechas · Espacio: atacar · Q: especial · Shift: esquivar (mantener: correr) · Enter: bajar',
+    en: 'WASD / arrows · Space: attack · Q: special · Shift: dodge (hold: run) · Enter: descend',
   },
   attack: { es: 'Atacar', en: 'Attack' },
   dodge: { es: 'Esquivar', en: 'Dodge' },
+  special: { es: 'Especial', en: 'Special' },
   chooseClass: { es: 'Elegí quién baja', en: 'Choose who descends' },
   chooseAgain: { es: 'Elegir otra clase', en: 'Choose another class' },
   parry: { es: '¡Desviado!', en: 'Parried!' },
+  executed: { es: '¡Ejecutado!', en: 'Executed!' },
   lightStolen: { es: 'Te robaron luz', en: 'Your light was stolen' },
+  labelAttack: { es: 'Ataque', en: 'Attack' },
+  labelSpecial: { es: 'Especial', en: 'Special' },
+  labelPassive: { es: 'Pasiva', en: 'Passive' },
   className_headsman: { es: 'Verdugo', en: 'Headsman' },
   className_plunderer: { es: 'Saqueador', en: 'Plunderer' },
   className_candlebearer: { es: 'Cirial', en: 'Candlebearer' },
   classDesc_headsman: {
-    es: 'Hacha de dos manos. Golpes lentos y anchos que empujan. Aguanta mucho, pero pasa más hambre y sed.',
-    en: 'Two-handed axe. Slow, wide, pushing blows. Tough, but gets hungry and thirsty faster.',
+    es: 'Hacha de dos manos. Lento y duro; pasa más hambre y sed.',
+    en: 'Two-handed axe. Slow and tough; gets hungry and thirsty faster.',
   },
   classDesc_plunderer: {
-    es: 'Dos dagas. Rápido y frágil. Golpea triple por la espalda o sin ser visto.',
-    en: 'Twin daggers. Quick and frail. Triple damage from behind or unseen.',
+    es: 'Dos dagas. Rápido y frágil.',
+    en: 'Twin daggers. Quick and frail.',
   },
   classDesc_candlebearer: {
-    es: 'Maza y cirio. Su luz lo delata menos y hace dudar a los horrores.',
-    en: 'Mace and taper. His light gives him away less and makes horrors hesitate.',
+    es: 'Maza y cirio. Sin luz, no hay especial.',
+    en: 'Mace and taper. No light, no special.',
   },
-  abilityDesc_headsman: {
-    es: 'Mantener Atacar: tajo cargado en círculo.',
-    en: 'Hold Attack: charged cleave all around.',
+  classAttack_headsman: {
+    es: 'Barridos que empujan; el tercer golpe seguido es un hachazo que aturde.',
+    en: 'Pushing sweeps; every third blow in a row is a stunning overhead chop.',
   },
-  abilityDesc_plunderer: {
-    es: 'Mantener Atacar: paso sombrío, un salto que te vuelve invisible.',
-    en: 'Hold Attack: shadow step, a leap that makes you invisible.',
+  classAttack_plunderer: {
+    es: 'Puñaladas rápidas; la cuarta es un tajo doble. ×3 por la espalda o sin ser visto.',
+    en: 'Quick stabs; the fourth is a double slash. ×3 from behind or unseen.',
   },
-  abilityDesc_candlebearer: {
-    es: 'Mantener Atacar: llamarada que quema luz, daña y espanta.',
-    en: 'Hold Attack: a flare that burns light, harms and scares.',
+  classAttack_candlebearer: {
+    es: 'Cada golpe deja cera ardiendo: el horror se quema y se lo ve aunque salga de tu luz.',
+    en: 'Each blow leaves burning wax: the horror burns and stays visible outside your light.',
+  },
+  classSpecial_headsman: {
+    es: 'Ejecución: mata a un horror aturdido o malherido. Se carga pegando y recibiendo golpes.',
+    en: 'Execution: kills a stunned or badly hurt horror. Charges by hitting and being hit.',
+  },
+  classSpecial_plunderer: {
+    es: 'Paso sombrío: salto que te vuelve invisible. Se carga con el tiempo, y rápido con golpes por la espalda y parry.',
+    en: 'Shadow step: a leap that makes you invisible. Charges over time, fast with backstabs and parries.',
+  },
+  classSpecial_candlebearer: {
+    es: 'Llamarada: quema luz, daña y espanta; doble daño a los encerados. Se carga con el tiempo.',
+    en: 'Flare: burns light, harms and scares; double damage to waxed horrors. Charges over time.',
+  },
+  classPassive_headsman: {
+    es: 'Sed de sangre: cada horror que matás te devuelve vida.',
+    en: 'Bloodthirst: every horror you kill gives you health back.',
+  },
+  classPassive_plunderer: {
+    es: 'Ojo de rata: ves los objetos cercanos en la oscuridad y los horrores sueltan más botín.',
+    en: 'Rat eye: you see nearby items in the dark and horrors drop more loot.',
+  },
+  classPassive_candlebearer: {
+    es: 'Llama devota: tu luz dura más y los horrores dudan antes de entrar en ella.',
+    en: 'Devout flame: your light lasts longer and horrors hesitate to step into it.',
   },
   attr_str: { es: 'Fuerza', en: 'Strength' },
   attr_agi: { es: 'Agilidad', en: 'Agility' },

@@ -21,11 +21,12 @@ describe('survival', () => {
   });
 
   it('scales hunger and thirst with class multipliers', () => {
-    const mods = { maxHealth: 100, hungerMultiplier: 1.25, thirstMultiplier: 1.25 };
+    const mods = { maxHealth: 100, hungerMultiplier: 1.25, thirstMultiplier: 1.25, lightMultiplier: 0.7 };
     const normal = tickSurvival(freshSurvival(), 60);
     const hungry = tickSurvival(freshSurvival(), 60, mods);
     expect(100 - hungry.hunger).toBeCloseTo((100 - normal.hunger) * 1.25);
     expect(100 - hungry.thirst).toBeCloseTo((100 - normal.thirst) * 1.25);
+    expect(100 - hungry.light).toBeCloseTo((100 - normal.light) * 0.7);
   });
 
   it('restores the matching meter without going over 100', () => {

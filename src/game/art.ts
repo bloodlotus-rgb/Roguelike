@@ -147,23 +147,169 @@ export function drawLevel(level: Level, tile: number): HTMLCanvasElement {
     }
   }
 
-  // Outline every floor/wall boundary with a bold ink stroke.
+  // Columns: a wall tile with floor on all four sides.
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (isColumn(level, x, y)) drawColumn(ctx, rng, x * tile, y * tile, tile);
+    }
+  }
+
+  drawDecor(level, ctx, rng, tile);
+
+  // Outline every floor/wall boundary with a bold ink stroke (columns draw their own).
   ctx.strokeStyle = INK;
   ctx.lineWidth = 2.4 * s;
+  const solid = (x: number, y: number) => !isFloor(level, x, y) && !isColumn(level, x, y);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (!isFloor(level, x, y)) continue;
       const l = x * tile;
       const t = y * tile;
-      if (!isFloor(level, x, y - 1)) inkLine(ctx, rng, l, t, l + tile, t, 1 * s);
-      if (!isFloor(level, x, y + 1)) inkLine(ctx, rng, l, t + tile, l + tile, t + tile, 1 * s);
-      if (!isFloor(level, x - 1, y)) inkLine(ctx, rng, l, t, l, t + tile, 1 * s);
-      if (!isFloor(level, x + 1, y)) inkLine(ctx, rng, l + tile, t, l + tile, t + tile, 1 * s);
+      if (solid(x, y - 1)) inkLine(ctx, rng, l, t, l + tile, t, 1 * s);
+      if (solid(x, y + 1)) inkLine(ctx, rng, l, t + tile, l + tile, t + tile, 1 * s);
+      if (solid(x - 1, y)) inkLine(ctx, rng, l, t, l, t + tile, 1 * s);
+      if (solid(x + 1, y)) inkLine(ctx, rng, l + tile, t, l + tile, t + tile, 1 * s);
     }
   }
 
   drawStairs(ctx, rng, level.stairs.x * tile, level.stairs.y * tile, tile);
   return c;
+}
+
+/** A lone wall tile with floor on all four sides is drawn as a column. */
+function isColumn(level: Level, x: number, y: number): boolean {
+  return (
+    !isFloor(level, x, y) &&
+    isFloor(level, x - 1, y) &&
+    isFloor(level, x + 1, y) &&
+    isFloor(level, x, y - 1) &&
+    isFloor(level, x, y + 1)
+  );
+}
+
+function drawColumn(ctx: CanvasRenderingContext2D, rng: Rng, x: number, y: number, tile: number): void {
+  const s = tile / 32;
+  const cx = x + tile / 2;
+  ctx.save();
+  // Clear the hatching under it, then a round shaft seen from above at 3/4.
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(x - 1, y - 1, tile + 2, tile + 2);
+  ctx.fillStyle = 'rgba(33, 27, 23, 0.18)';
+  ctx.beginPath();
+  ctx.ellipse(cx + 3 * s, y + tile - 3 * s, 13 * s, 5 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(236, 226, 203, 1)';
+  ctx.fillRect(cx - 10 * s, y - 6 * s, 20 * s, tile);
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1 * s;
+  for (const ox of [-6, -2, 3, 7]) inkLine(ctx, rng, cx + ox * s, y - 2 * s, cx + ox * s, y + tile - 6 * s, 0.4 * s);
+  ctx.lineWidth = 2.2 * s;
+  inkLine(ctx, rng, cx - 10 * s, y - 6 * s, cx - 10 * s, y + tile - 5 * s, 0.6 * s);
+  inkLine(ctx, rng, cx + 10 * s, y - 6 * s, cx + 10 * s, y + tile - 5 * s, 0.6 * s);
+  ctx.fillStyle = PAPER;
+  ctx.beginPath();
+  ctx.ellipse(cx, y - 6 * s, 10 * s, 4 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(cx, y + tile - 5 * s, 10 * s, 4 * s, 0, 0, Math.PI);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Bones, rubble, stains, chains and the remains of earlier delvers. Purely decorative. */
+function drawDecor(level: Level, ctx: CanvasRenderingContext2D, rng: Rng, tile: number): void {
+  const s = tile / 32;
+  const { width, height } = level;
+  const start = level.start;
+  ctx.save();
+  ctx.strokeStyle = INK;
+  ctx.lineCap = 'round';
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!isFloor(level, x, y)) {
+        // Chains and rings hanging from wall faces.
+        if (isFloor(level, x, y + 1) && rng.chance(0.06)) {
+          const cx = (x + rng.range(0.3, 0.7)) * tile;
+          ctx.lineWidth = 1.2 * s;
+          for (let i = 0; i < 4; i++) {
+            ctx.beginPath();
+            ctx.ellipse(cx, y * tile + tile * 0.4 + i * 4 * s, 1.6 * s, 2.4 * s, 0, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+        continue;
+      }
+      if (Math.abs(x - start.x) + Math.abs(y - start.y) < 2) continue;
+      if ((x === level.stairs.x && y === level.stairs.y) || !rng.chance(0.11)) continue;
+      const px = (x + rng.range(0.2, 0.8)) * tile;
+      const py = (y + rng.range(0.25, 0.8)) * tile;
+      const roll = rng.next();
+      if (roll < 0.3) {
+        // Scattered bones.
+        ctx.lineWidth = 2 * s;
+        for (let i = 0; i < rng.int(1, 3); i++) {
+          const a = rng.range(0, Math.PI);
+          const l = rng.range(4, 8) * s;
+          const bx = px + rng.range(-5, 5) * s;
+          const by = py + rng.range(-4, 4) * s;
+          inkLine(ctx, rng, bx - Math.cos(a) * l, by - Math.sin(a) * l, bx + Math.cos(a) * l, by + Math.sin(a) * l, 0.3 * s);
+          ctx.beginPath();
+          ctx.arc(bx + Math.cos(a) * l, by + Math.sin(a) * l, 1.6 * s, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      } else if (roll < 0.55) {
+        // Rubble.
+        ctx.lineWidth = 1.2 * s;
+        ctx.fillStyle = PAPER;
+        for (let i = 0; i < rng.int(2, 5); i++) {
+          const r = rng.range(1.5, 3.5) * s;
+          const rx = px + rng.range(-7, 7) * s;
+          const ry = py + rng.range(-5, 5) * s;
+          ctx.beginPath();
+          ctx.moveTo(rx - r, ry);
+          ctx.lineTo(rx - r * 0.3, ry - r);
+          ctx.lineTo(rx + r, ry - r * 0.4);
+          ctx.lineTo(rx + r * 0.6, ry + r * 0.7);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        }
+      } else if (roll < 0.78) {
+        // An old stain.
+        ctx.fillStyle = rng.chance(0.5) ? 'rgba(110, 35, 25, 0.18)' : 'rgba(33, 27, 23, 0.14)';
+        ctx.beginPath();
+        ctx.ellipse(px, py, rng.range(5, 11) * s, rng.range(3, 7) * s, rng.range(0, Math.PI), 0, Math.PI * 2);
+        ctx.fill();
+      } else if (roll < 0.9) {
+        // A skull.
+        ctx.lineWidth = 1.4 * s;
+        ctx.fillStyle = PAPER;
+        ctx.beginPath();
+        ctx.arc(px, py, 4.5 * s, Math.PI, 0);
+        ctx.lineTo(px + 3 * s, py + 4 * s);
+        ctx.lineTo(px - 3 * s, py + 4 * s);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = INK;
+        ctx.fillRect(px - 2.6 * s, py - 1 * s, 1.8 * s, 1.8 * s);
+        ctx.fillRect(px + 0.8 * s, py - 1 * s, 1.8 * s, 1.8 * s);
+      } else {
+        // What is left of another delver: a broken sword and a torn pack.
+        ctx.lineWidth = 2 * s;
+        inkLine(ctx, rng, px - 8 * s, py + 3 * s, px + 6 * s, py - 4 * s, 0.3 * s);
+        inkLine(ctx, rng, px - 4 * s, py - 1 * s, px - 2 * s, py + 4 * s, 0.3 * s);
+        ctx.lineWidth = 1.2 * s;
+        ctx.fillStyle = 'rgba(33, 27, 23, 0.12)';
+        ctx.beginPath();
+        ctx.ellipse(px + 6 * s, py + 5 * s, 5 * s, 3.5 * s, 0.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
 }
 
 function drawStairs(ctx: CanvasRenderingContext2D, rng: Rng, x: number, y: number, tile: number): void {

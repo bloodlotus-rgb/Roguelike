@@ -105,6 +105,8 @@ export interface EnemySpawn {
   pos: Point;
   /** Index of the room it lives in. */
   room: number;
+  /** Roamers wander from room to room instead of staying in theirs. */
+  roamer: boolean;
 }
 
 /** Spawn weights by depth: deeper levels bring more ranged and stealthy horrors. */
@@ -133,7 +135,7 @@ function pickKind(rng: Rng, depth: number): EnemyKind {
 export function spawnEnemies(level: Level, rng: Rng): EnemySpawn[] {
   const spawns: EnemySpawn[] = [];
   const taken = new Set<string>([`${level.stairs.x},${level.stairs.y}`]);
-  let budget = 4 + level.depth * 2.5;
+  let budget = 12 + level.depth * 4;
   const rooms = level.rooms.map((_, i) => i).filter((i) => i !== 0);
   if (rooms.length === 0) return spawns;
   let guard = 0;
@@ -145,6 +147,7 @@ export function spawnEnemies(level: Level, rng: Rng): EnemySpawn[] {
     const roomIndex = rng.pick(rooms);
     const room = level.rooms[roomIndex];
     const count = rng.int(def.group[0], def.group[1]);
+    const roamer = def.kind !== 'mourner' && rng.chance(0.3);
     for (let i = 0; i < count; i++) {
       for (let attempt = 0; attempt < 20; attempt++) {
         const x = rng.int(room.x, room.x + room.w - 1);
@@ -152,7 +155,7 @@ export function spawnEnemies(level: Level, rng: Rng): EnemySpawn[] {
         const key = `${x},${y}`;
         if (taken.has(key) || !isFloor(level, x, y)) continue;
         taken.add(key);
-        spawns.push({ kind, pos: { x: x + 0.5, y: y + 0.5 }, room: roomIndex });
+        spawns.push({ kind, pos: { x: x + 0.5, y: y + 0.5 }, room: roomIndex, roamer });
         break;
       }
     }
