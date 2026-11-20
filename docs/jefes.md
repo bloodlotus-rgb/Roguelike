@@ -1,6 +1,6 @@
 # Héroes caídos — Etapa B (propuesta v1)
 
-> Estado: **propuesta para revisar**. Lo marcado **[Propuesta]** son decisiones mías para validar; las **Preguntas** del final necesitan tu respuesta antes de arrancar.
+> Estado: **aprobado** (todas las propuestas). Se implementa en dos PR: **B1** y **B2** (ver Decisiones).
 
 ## Idea
 
@@ -19,9 +19,9 @@ Cada integrante que muere queda abajo, reclamado por la maldición. La próxima 
 
 ### Dónde está
 
-- **Guarida**: la sala donde murió (si murió en un pasillo, la sala más cercana). **[Propuesta]**
+- **Guarida**: la sala donde murió (si murió en un pasillo, la sala más cercana).
 - Está **dormido** hasta que entrás a su guarida o lo despertás haciendo ruido cerca. Al despertar aparece su nombre arriba de la pantalla.
-- Te persigue hasta unas **10 casillas** de su guarida; si te alejás más, vuelve a su sala. Podés huir por la escalera. **[Propuesta]**
+- Te persigue hasta unas **10 casillas** de su guarida; si te alejás más, vuelve a su sala. Podés huir por la escalera.
 - Excepciones por rasgos: *Cuentapasos* patrulla el nivel, *Memoria vieja* y *Memorioso* te cortan el paso por atajos, *Lector de runas* se teletransporta.
 
 ### Cómo pelea
@@ -31,12 +31,12 @@ Cada integrante que muere queda abajo, reclamado por la maldición. La próxima 
   - **Saqueador**: ráfagas de puñaladas rápidas; paso sombrío (desaparece y reaparece a tu espalda).
   - **Cirial**: golpes que te dejan cera (te marca y te quema); llamarada que te quema luz.
 - Avisa antes de pegar, igual que los horrores, pero con amagues propios de su clase.
-- **Fuerza por profundidad** **[Propuesta]**: vida base 70 + 18 por nivel de profundidad, daño base 10 + 2 por nivel. Se ajusta jugando.
+- **Fuerza por profundidad**: vida base 70 + 18 por nivel de profundidad, daño base 10 + 2 por nivel. Se ajusta jugando.
 - **Un poder por rasgo** (ver abajo). Un jefe con cinco rasgos es temible; uno con defectos tiene puntos débiles.
 
 ### Sus heridas
 
-- **[Propuesta]** Las heridas **no cierran del todo**: entre vidas recupera la mitad de la vida que le quitaste. La familia lo va desgastando generación tras generación. Dentro de una misma vida, si te alejás, se regenera lento.
+- Las heridas **no cierran del todo**: entre vidas recupera la mitad de la vida que le quitaste. La familia lo va desgastando generación tras generación. Dentro de una misma vida, si te alejás, se regenera lento.
 
 ### Cómo se ve y se oye
 
@@ -72,12 +72,12 @@ Cada integrante que muere queda abajo, reclamado por la maldición. La próxima 
 - Al derrotarlo se deshace en tinta y suelta **su oro**.
 - La crónica lo cuenta: *"Mirta liberó a su abuela Brenna, que descansa en paz en la profundidad 7."*
 - En el árbol su retrato **se restaura** (deja de estar tachado) y dice quién lo liberó.
-- **[Propuesta]** **Herencia del muerto**: quien lo libera puede tomar **uno de sus rasgos** (no de vejez), elegido en una pantalla, respetando el tope de 5. Es la otra forma de heredar: ganándosela.
-- **[Propuesta]** El nivel vuelve a la normalidad y **puede volver a tener un jefe** si alguien muere ahí después.
+- **Herencia del muerto**: quien lo libera puede tomar **uno de sus rasgos** (no de vejez), elegido en una pantalla, respetando el tope de 5. Es la otra forma de heredar: ganándosela.
+- El nivel vuelve a la normalidad y **puede volver a tener un jefe** si alguien muere ahí después.
 
 ## Oro
 
-Hoy el juego no tiene oro ni equipo. **[Propuesta]** Lo sumo en esta etapa, solo el oro:
+Hoy el juego no tiene oro ni equipo. Lo sumo en esta etapa, solo el oro:
 
 - Se encuentra en la mazmorra (montoncitos en salas, más hondo, más oro) y algunos horrores lo sueltan.
 - Se ve en el HUD. Todavía no se gasta: la tienda llega con la mansión.
@@ -112,10 +112,10 @@ Cada rasgo ya tiene su poder en `rasgos.md`. Para implementarlos los agrupo en f
 - La dinastía registra jefes, ecos, liberaciones y oro; la crónica suma las entradas nuevas.
 - Dibujo: el héroe invertido, llama negra, cartel con nombre y vida, presencia (sonido y viñeta).
 
-## Preguntas
+## Decisiones
 
-1. **Los 100 poderes**: ¿todos en esta etapa, o la parto en dos PR? **B1**: jefe, escolta, oro, nivel maldito y las familias simples (números, al golpearte, defensa, debilidades; unos 65). **B2**: las complejas (invocaciones, teletransporte, atajos, objetos falsos, amagues). Te recomiendo partirla.
-2. **Heridas entre vidas**: ¿se recupera la mitad (mi propuesta), se cura entero, o no se cura nunca?
-3. **Herencia del muerto** (tomar un rasgo al liberarlo): ¿va?
-4. **Nivel liberado**: ¿puede volver a tener jefe?
-5. **Oro ahora**, aunque todavía no se pueda gastar: ¿va?
+1. **Dos PR**. **B1**: jefe, escolta, oro, nivel maldito y las familias simples (números, al golpearte, defensa, debilidades). **B2**: las complejas (invocaciones, teletransporte, atajos, objetos falsos, amagues, ataques extra que falten).
+2. **Heridas entre vidas**: recupera la mitad de lo que le quitaron.
+3. **Herencia del muerto**: sí, quien lo libera puede tomar uno de sus rasgos.
+4. **Nivel liberado**: puede volver a tener jefe.
+5. **Oro**: entra ahora, aunque todavía no se pueda gastar.
