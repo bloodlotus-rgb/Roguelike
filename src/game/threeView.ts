@@ -60,7 +60,15 @@ function canvasTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
 }
 
 /** Shared by the wall materials: whether to cut walls away, and where the hero stands. */
-const cutaway = { fade: { value: 0 }, player: { value: new THREE.Vector3() }, night: { value: 0 } };
+const cutaway = {
+  fade: { value: 0 },
+  player: { value: new THREE.Vector3() },
+  night: { value: 0 },
+  /** Space between hatch lines on screen, in device pixels. */
+  lineSpacing: { value: 7 },
+};
+/** Hatch lines per tile at the coarsest level of detail used up close. */
+const HATCH_BASE = 7;
 /** Radius of the plunderer's sight in the dark, in tiles. */
 const NIGHT_RADIUS = 6.5;
 
@@ -130,6 +138,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
     shader.uniforms.uFade = cutaway.fade;
     shader.uniforms.uPlayer = cutaway.player;
     shader.uniforms.uNight = cutaway.night;
+    shader.uniforms.uLineSpacing = cutaway.lineSpacing;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;')
       .replace(
@@ -151,7 +160,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
       .replace('#include <lights_fragment_begin>', LIGHTS_WITH_INK_SHADOW)
       .replace(
         '#include <common>',
-        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
+        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
       )
       .replace(
         '#include <map_fragment>',
@@ -203,13 +212,23 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           float w1 = smoothstep(0.18, 0.24, tone) * 0.08;
           float w2 = smoothstep(0.4, 0.46, tone) * 0.09;
           float w3 = smoothstep(0.58, 0.64, tone) * 0.1 + smoothstep(0.64, 0.76, tone) * 0.14;
+          // Like a hand on paper, lines keep about the same spacing on the page wherever
+          // they are: a near surface takes up more of the page and so gets more lines, a far
+          // one fewer. Density changes in steps of two, the new lines growing in between the
+          // old ones, so nothing jumps or swims.
+          vec2 pw = hp / 7.0;
+          float worldPerPixel = max(length(fwidth(pw)), 1e-5);
+          float level = clamp(log2(1.0 / (uLineSpacing * worldPerPixel * ${HATCH_BASE.toFixed(1)})), -2.0, 3.0);
+          float lod = floor(level);
+          float grow = level - lod;
+          float freq = ${HATCH_BASE.toFixed(1)} * exp2(lod + 1.0);
           // Drawn by hand: each line wavers, presses harder or lighter, and the pen lifts now
           // and then, less so as the shade deepens and the lines close up.
           float lift = 1.0 - smoothstep(0.5, 0.75, tone);
           float ink = max(
-            inkPen(hp.x + hp.y, hp.x - hp.y, w1, aa, 0.0, lift),
-            inkPen(hp.x - hp.y, hp.x + hp.y, w2, aa, 17.0, lift));
-          ink = max(ink, inkPen(hp.x * 1.3 + 0.25, hp.y, w3, aa, 41.0, lift * 0.5));
+            inkPen(pw.x + pw.y, pw.x - pw.y, freq, grow, w1, 0.0, lift),
+            inkPen(pw.x - pw.y, pw.x + pw.y, freq, grow, w2, 17.0, lift));
+          ink = max(ink, inkPen(pw.x * 1.3, pw.y, freq, grow, w3, 41.0, lift * 0.5));
           ink = max(ink, smoothstep(0.74, 0.78, tone));
           ink = max(ink, smoothstep(0.82, 0.92, shadowed));
           float edge = 0.0;
@@ -325,16 +344,22 @@ float inkNoise(vec2 p) {
   vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(inkHash(i), inkHash(i + vec2(1.0, 0.0)), u.x), mix(inkHash(i + vec2(0.0, 1.0)), inkHash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
-// One family of pen lines: 'across' counts lines, 'along' runs down each line. Each line
-// has its own waver, pressure and lifts; 'lift' scales how often the pen leaves the paper.
-float inkPen(float across, float along, float width, float aa, float seed, float lift) {
+// One family of pen lines across 'u' (world units), 'freq' lines per unit, where every
+// other line is new at this level of detail and drawn at 'grow' of its width. 'along'
+// runs down each line. Each line keeps its own waver, pressure and pen lifts at every
+// level, keyed to where it lies in the world; 'lift' scales how often the pen lifts.
+float inkPen(float u, float along, float freq, float grow, float width, float seed, float lift) {
   if (width <= 0.001) return 0.0;
-  float id = floor(across);
-  float waver = (inkNoise(vec2(along * 0.7, id * 3.7 + seed)) - 0.5) * 0.3;
-  float d = abs(fract(across + waver) - 0.5);
-  float w = width * (0.65 + 0.7 * inkNoise(vec2(along * 1.1, id * 1.3 + seed + 7.0)));
-  float line = 1.0 - smoothstep(w - aa, w + aa, d);
-  float gap = step(inkNoise(vec2(along * 0.5, id * 5.1 + seed + 3.0)), 0.22 * lift);
+  float x = u * freq;
+  float id = floor(x + 0.5);
+  float key = id / freq;
+  float waver = (inkNoise(vec2(along * 4.0, key * 23.0 + seed)) - 0.5) * 0.3;
+  float d = abs(x + waver - id);
+  float w = width * (0.65 + 0.7 * inkNoise(vec2(along * 7.0, key * 9.0 + seed + 7.0)));
+  w *= mix(1.0, grow, mod(id, 2.0));
+  float aa = clamp(fwidth(x) * 0.6, 0.002, 0.25);
+  float line = (1.0 - smoothstep(w - aa, w + aa, d)) * step(0.001, w);
+  float gap = step(inkNoise(vec2(along * 3.5, key * 31.0 + seed + 3.0)), 0.22 * lift);
   return line * (1.0 - gap);
 }`;
 
@@ -899,6 +924,8 @@ export class ThreeView {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const ratio = this.mode === 'first' ? Math.min(dpr, (portrait ? 520 : 960) / w) : dpr;
     this.renderer.setPixelRatio(ratio);
+    // Hatch lines about 6 CSS pixels apart, whatever the screen.
+    cutaway.lineSpacing.value = 6 * ratio;
     this.renderer.setSize(w, h, true);
     this.renderer.domElement.classList.toggle('pixelated', false);
     this.hands.width = Math.round(w * (this.mode === 'first' ? ratio : 0.5));
