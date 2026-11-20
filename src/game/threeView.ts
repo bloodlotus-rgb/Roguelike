@@ -35,6 +35,8 @@ const TOP_TILES = 9.5;
 /** In the top view the light hangs above everyone's heads so tall cut-outs are lit whole. */
 const FLAME_HEIGHT = 2.3;
 const UP = new THREE.Vector3(0, 1, 0);
+/** `?walls=flat` brings back the painted walls instead of real bricks. */
+const FLAT_WALLS = typeof window !== 'undefined' && new URL(window.location.href).searchParams.get('walls') === 'flat';
 
 /** Eye designs per horror: height above the feet and dots (design units, 32 per tile). */
 const EYES: Record<EnemyKind, { h: number; dots: Array<[number, number, number]> }> = {
@@ -599,10 +601,21 @@ export class ThreeView {
     }
     // Behind the bricks, a bed of dark mortar. Both sides are drawn so a wall sliced by the
     // cut-away shows a solid ink section; shadows still come from the back faces.
-    const side = inkMaterial(
-      new THREE.MeshLambertMaterial({ color: 0x6b5d4d, side: THREE.DoubleSide, shadowSide: THREE.BackSide }),
-      { cut: true, grime: true },
-    );
+    const side = FLAT_WALLS
+      ? inkMaterial(
+          new THREE.MeshLambertMaterial({
+            map: this.textures.wall,
+            bumpMap: this.wallRelief,
+            bumpScale: 3,
+            side: THREE.DoubleSide,
+            shadowSide: THREE.BackSide,
+          }),
+          { cut: true, worldUv: 'box', grime: true },
+        )
+      : inkMaterial(new THREE.MeshLambertMaterial({ color: 0x6b5d4d, side: THREE.DoubleSide, shadowSide: THREE.BackSide }), {
+          cut: true,
+          grime: true,
+        });
     this.brickMaterial = inkMaterial(new THREE.MeshLambertMaterial({ map: this.stone }), {
       cut: true,
       worldUv: 'box',
@@ -618,7 +631,7 @@ export class ThreeView {
       { cut: true, worldUv: 'column', grime: true },
     );
     // One mesh with only the faces that look onto a floor, so no inner faces exist.
-    this.walls = new THREE.Mesh(wallGeometry(level, this.wallTiles, BRICK_DEPTH), [side, top]);
+    this.walls = new THREE.Mesh(wallGeometry(level, this.wallTiles, FLAT_WALLS ? 0 : BRICK_DEPTH), [side, top]);
     this.walls.castShadow = true;
     this.walls.receiveShadow = true;
     this.levelGroup.add(this.walls);
@@ -736,7 +749,7 @@ export class ThreeView {
     }
     this.bricks = [];
     const level = this.level;
-    if (!level || !this.brickMaterial) return;
+    if (!level || !this.brickMaterial || FLAT_WALLS) return;
     const columns = new Set(this.columnTiles.map(([x, y]) => y * level.width + x));
     const all = layBricks(level, height, (x, y) => columns.has(y * level.width + x));
     const CHUNK = 12;
