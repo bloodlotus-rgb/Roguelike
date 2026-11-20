@@ -14,8 +14,8 @@ Etapas 1 (prototipo), 2 (combate) y atmósfera, con arte provisorio:
 - Personajes animados por código, con silueta propia por clase y por horror; la llama del héroe con chispas.
 - Atmósfera oscura: solo ves en un cono hacia adelante, dentro de tu luz, recortado por las paredes. Los horrores que te miran desde la oscuridad (o desde atrás) muestran los ojos.
 - Mapa desplegable con lo explorado (botón Mapa o tecla `M`); no pausa el juego.
-- **Prototipo de primera persona** (botón Vista o tecla `V`): raycaster en baja resolución con texturas de tinta, controles de tanque (joystick arriba/abajo camina, a los costados gira). La vista cenital sigue siendo la principal.
-- **Prueba de motor 3D** (`?engine=three`): la misma mazmorra en 3D con three.js y dos cámaras (cenital inclinada y primera persona), luz de llama con sombras reales y personajes planos. El botón Vista cambia de cámara.
+- **Motor 3D** (three.js): una sola mazmorra con dos cámaras, cenital inclinada y primera persona (botón Vista o tecla `V`; en primera persona, joystick arriba/abajo camina y a los costados gira). Luz de llama con sombras, paredes que se cortan a la rodilla del lado de la cámara, columnas redondas, decorado en el piso, tramas de tinta donde la luz se apaga y efectos de combate.
+- `?engine=classic` vuelve al motor anterior (vista dibujada en Phaser y raycaster).
 - Sonido generado por código: ambiente, pasos, la llama, latido con poca vida, avisos de cada ataque y horrores que se oyen antes de verse. Botón ♪ para silenciar.
 - Viñeta que se cierra cuando te cazan y se tiñe de rojo con poca vida.
 - Hambre, sed y luz bajan con el tiempo; atacar y esquivar gastan sed.

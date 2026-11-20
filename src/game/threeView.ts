@@ -14,7 +14,8 @@ import type { Level, Point } from '../core/dungeon';
 import { isFloor } from '../core/dungeon';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
-import { drawItem, drawProjectile } from './art';
+import { drawFloorDecor, drawItem, drawProjectile } from './art';
+import { Effects } from './threeEffects';
 import { drawHands, inkTexture } from './firstPerson';
 import { drawEnemySheet, drawHeroSheet, ENEMY_SIZE, FLAME_ANCHOR, HERO_SIZE, type SpriteSheet } from './sprites';
 
@@ -50,35 +51,68 @@ function canvasTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
 const cutaway = { fade: { value: 0 }, player: { value: new THREE.Vector3() } };
 
 /**
- * Cut-away for the top view: walls on the camera's side of the hero (south of them) are
- * cut at knee height, like a scale model, so rooms and corridors stay readable and their
- * outline still shows. Shadows are unaffected.
+ * Our ink look on lit surfaces, plus the cut-away for the top view.
+ *
+ * Hatching: where the flame's light thins out, diagonal ink lines appear, then cross-
+ * hatching, like a hand-shaded drawing. Lines live in world space so they stay put when
+ * the camera moves; floors use the ground plane, walls their own face.
+ *
+ * Cut-away (walls only): walls on the camera's side of the hero (south of them) are cut
+ * at knee height, like a scale model, so rooms and corridors stay readable. Shadows are
+ * unaffected.
  */
-function withCutaway(material: THREE.MeshLambertMaterial): THREE.MeshLambertMaterial {
+function inkMaterial(material: THREE.MeshLambertMaterial, cut = false): THREE.MeshLambertMaterial {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uFade = cutaway.fade;
     shader.uniforms.uPlayer = cutaway.player;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vCutawayPos;')
+      .replace('#include <common>', '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;')
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-        vec4 cutawayWorld = vec4(transformed, 1.0);
+        vec4 inkWorld = vec4(transformed, 1.0);
+        mat3 inkBasis = mat3(1.0);
         #ifdef USE_INSTANCING
-          cutawayWorld = instanceMatrix * cutawayWorld;
+          inkWorld = instanceMatrix * inkWorld;
+          inkBasis = mat3(instanceMatrix);
         #endif
-        vCutawayPos = (modelMatrix * cutawayWorld).xyz;`,
+        vInkPos = (modelMatrix * inkWorld).xyz;
+        vInkNormal = normalize(mat3(modelMatrix) * inkBasis * objectNormal);`,
       );
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uFade;\nuniform vec3 uPlayer;\nvarying vec3 vCutawayPos;')
+      .replace(
+        '#include <common>',
+        '#include <common>\nuniform float uFade;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;',
+      )
       .replace(
         '#include <clipping_planes_fragment>',
-        `#include <clipping_planes_fragment>
+        cut
+          ? `#include <clipping_planes_fragment>
         if (uFade > 0.5) {
-          float south = vCutawayPos.z - uPlayer.z;
-          float side = abs(vCutawayPos.x - uPlayer.x);
-          if (south > -0.15 && vCutawayPos.y > 0.3 && side < 7.0) discard;
-        }`,
+          float south = vInkPos.z - uPlayer.z;
+          float side = abs(vInkPos.x - uPlayer.x);
+          if (south > -0.15 && vInkPos.y > 0.3 && side < 7.0) discard;
+        }`
+          : '#include <clipping_planes_fragment>',
+      )
+      .replace(
+        '#include <opaque_fragment>',
+        `{
+          vec3 irradiance = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;
+          float base = max(dot(diffuseColor.rgb, vec3(0.3333)), 0.05);
+          // Lambert divides by pi; undo it so 1.0 means fully lit.
+          float lit = dot(irradiance, vec3(0.3333)) / base * 3.14159;
+          vec3 n = normalize(vInkNormal);
+          vec2 hp = abs(n.y) > 0.5 ? vInkPos.xz : vec2(abs(n.x) > 0.5 ? vInkPos.z : vInkPos.x, vInkPos.y);
+          hp *= 7.0;
+          float d1 = abs(fract(hp.x + hp.y) - 0.5);
+          float d2 = abs(fract(hp.x - hp.y) - 0.5);
+          float tone = clamp(1.0 - lit, 0.0, 1.0);
+          float ink = max(step(d1, smoothstep(0.35, 1.0, tone) * 0.22), step(d2, smoothstep(0.7, 1.0, tone) * 0.16));
+          ink *= step(0.015, lit);
+          outgoingLight = mix(outgoingLight, outgoingLight * 0.2, ink);
+        }
+        #include <opaque_fragment>`,
       );
   };
   return material;
@@ -215,6 +249,10 @@ export class ThreeView {
   private levelGroup = new THREE.Group();
   private walls: THREE.InstancedMesh | null = null;
   private wallTiles: Array<[number, number]> = [];
+  private columns: THREE.InstancedMesh | null = null;
+  private columnTiles: Array<[number, number]> = [];
+  private readonly effects: Effects;
+  private lastNow = 0;
   private ceiling: THREE.Mesh | null = null;
   private readonly textures: Record<'wall' | 'floor' | 'ceiling' | 'stairs', THREE.CanvasTexture>;
   private readonly enemySheets = new Map<EnemyKind, { sheet: SpriteSheet; texture: THREE.CanvasTexture }>();
@@ -251,6 +289,7 @@ export class ThreeView {
     this.handsCtx = this.hands.getContext('2d')!;
 
     this.scene.add(this.levelGroup);
+    this.effects = new Effects(this.scene);
     this.light = new THREE.SpotLight(0xffd6a0, 6, 8, COMBAT.visionCone, 0.06, 1.4);
     this.light.castShadow = true;
     this.light.shadow.mapSize.set(1024, 1024);
@@ -301,9 +340,14 @@ export class ThreeView {
     this.lastPos = { ...world.player };
     this.walked += moved;
 
+    const dt = this.lastNow ? Math.min(0.1, (now - this.lastNow) / 1000) : 0;
+    this.lastNow = now;
+    this.effects.onEvents(world, events, now, this.mode);
+
     this.placeCamera(world, fpAngle);
     this.placeLight(world, now, fpAngle);
     this.syncHero(world, now, moved);
+    this.effects.update(world, dt, this.camera, this.flame.visible ? this.flame.position : null, this.mode);
     this.syncEnemies(world, now);
     this.syncItems(world);
     this.syncProjectiles(world);
@@ -333,35 +377,60 @@ export class ThreeView {
 
     // Floor and ceiling quads, one per floor tile.
     const floor = this.tileQuads(level, 0, true);
-    const floorMesh = new THREE.Mesh(floor, new THREE.MeshLambertMaterial({ map: this.textures.floor }));
+    const floorMesh = new THREE.Mesh(floor, inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.floor })));
     floorMesh.receiveShadow = true;
     this.levelGroup.add(floorMesh);
-    const stairs = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshLambertMaterial({ map: this.textures.stairs }));
+    const stairs = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.stairs })));
     stairs.rotation.x = -Math.PI / 2;
     stairs.position.set(level.stairs.x + 0.5, 0.002, level.stairs.y + 0.5);
     stairs.receiveShadow = true;
     this.levelGroup.add(stairs);
-    this.ceiling = new THREE.Mesh(this.tileQuads(level, WALL_FIRST, false), new THREE.MeshLambertMaterial({ map: this.textures.ceiling }));
+    this.ceiling = new THREE.Mesh(
+      this.tileQuads(level, WALL_FIRST, false),
+      inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling })),
+    );
     this.levelGroup.add(this.ceiling);
 
     // Walls: only the blocks that touch a floor tile.
     this.wallTiles = [];
+    this.columnTiles = [];
     for (let y = 0; y < level.height; y++) {
       for (let x = 0; x < level.width; x++) {
         if (isFloor(level, x, y)) continue;
         let touches = false;
         for (let dy = -1; dy <= 1 && !touches; dy++) for (let dx = -1; dx <= 1; dx++) if (isFloor(level, x + dx, y + dy)) touches = true;
-        if (touches) this.wallTiles.push([x, y]);
+        if (!touches) continue;
+        const column = isFloor(level, x - 1, y) && isFloor(level, x + 1, y) && isFloor(level, x, y - 1) && isFloor(level, x, y + 1);
+        (column ? this.columnTiles : this.wallTiles).push([x, y]);
       }
     }
-    const side = withCutaway(new THREE.MeshLambertMaterial({ map: this.textures.wall }));
-    const top = withCutaway(new THREE.MeshLambertMaterial({ map: this.textures.ceiling }));
+    const side = inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.wall }), true);
+    const top = inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling }), true);
     // Box faces: +x, -x, +y (top), -y, +z, -z.
     this.walls = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), [side, side, top, top, side, side], this.wallTiles.length);
     this.walls.castShadow = true;
     this.walls.receiveShadow = true;
     this.levelGroup.add(this.walls);
+    // Lone wall tiles inside halls are round columns.
+    this.columns = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.33, 0.36, 1, 14), [side, top, top], this.columnTiles.length);
+    this.columns.castShadow = true;
+    this.columns.receiveShadow = true;
+    this.levelGroup.add(this.columns);
     this.applyWallHeight();
+
+    // Decoration painted on the floor: ink at the foot of the walls, bones, rubble, stains.
+    const decorTexture = new THREE.CanvasTexture(drawFloorDecor(level, 32));
+    decorTexture.colorSpace = THREE.SRGBColorSpace;
+    decorTexture.anisotropy = 8;
+    const decor = new THREE.Mesh(
+      new THREE.PlaneGeometry(level.width, level.height),
+      new THREE.MeshLambertMaterial({ map: decorTexture, transparent: true, depthWrite: false }),
+    );
+    decor.rotation.x = -Math.PI / 2;
+    decor.position.set(level.width / 2, 0.004, level.height / 2);
+    decor.receiveShadow = true;
+    this.levelGroup.add(decor);
+    this.effects.reset();
   }
 
   private applyWallHeight(): void {
@@ -375,6 +444,15 @@ export class ThreeView {
     });
     this.walls.instanceMatrix.needsUpdate = true;
     this.walls.computeBoundingSphere();
+    if (this.columns) {
+      this.columnTiles.forEach(([x, y], i) => {
+        m.makeScale(1, h, 1);
+        m.setPosition(x + 0.5, h / 2, y + 0.5);
+        this.columns!.setMatrixAt(i, m);
+      });
+      this.columns.instanceMatrix.needsUpdate = true;
+      this.columns.computeBoundingSphere();
+    }
     if (this.ceiling) this.ceiling.visible = this.mode === 'first';
   }
 
@@ -435,6 +513,18 @@ export class ThreeView {
   }
 
   private placeCamera(world: World, fpAngle: number): void {
+    this.positionCamera(world, fpAngle);
+    // Shake on heavy blows.
+    const shake = this.effects.shake;
+    if (shake > 0) {
+      const t = performance.now() / 1000;
+      this.camera.position.x += Math.sin(t * 71) * shake;
+      this.camera.position.y += Math.sin(t * 53) * shake * 0.6;
+      this.camera.position.z += Math.cos(t * 67) * shake;
+    }
+  }
+
+  private positionCamera(world: World, fpAngle: number): void {
     const p = world.player;
     cutaway.fade.value = this.mode === 'top' ? 1 : 0;
     cutaway.player.value.set(p.x, 0, p.y);
@@ -505,7 +595,10 @@ export class ThreeView {
     else if (moved > 0.002) frame = `walk${Math.floor(this.walked / 0.32) % 4}`;
     else frame = `idle${Math.floor(now / 600) % 2}`;
     hero.setFrame(Math.max(0, this.heroSheetFrames().indexOf(frame)));
-    (hero.mesh.material as THREE.MeshBasicMaterial).opacity = world.invisible ? 0.35 : 1;
+    const heroMaterial = hero.mesh.material as THREE.MeshBasicMaterial;
+    heroMaterial.opacity = world.invisible ? 0.35 : 1;
+    if (now < this.effects.heroFlashUntil) heroMaterial.color.setRGB(1, 0.35, 0.3);
+    else heroMaterial.color.setRGB(1, 1, 1);
     // The flame at the hero's hand.
     const anchor = FLAME_ANCHOR[world.classId];
     const side = flip ? -1 : 1;
