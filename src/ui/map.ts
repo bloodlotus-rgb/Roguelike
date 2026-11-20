@@ -156,6 +156,34 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     ctx.stroke();
   }
 
+  // The family's camps on this level: known to all, seen or not.
+  for (const camp of world.camps) {
+    if (camp.depth !== world.depth) continue;
+    const p = at(camp.x + 0.5, camp.y + 0.5);
+    const r = Math.max(4, size * 0.42);
+    ctx.fillStyle = '#d9822b';
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = Math.max(1, size / 12);
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y - r);
+    ctx.lineTo(p.x + r * 0.8, p.y + r * 0.6);
+    ctx.lineTo(p.x - r * 0.8, p.y + r * 0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Drips, once seen: turbid water.
+  for (const f of level.features) {
+    if (f.kind !== 'drip' || !seen(f.x, f.y)) continue;
+    const p = at(f.x + 0.5, f.y + 0.5);
+    ctx.strokeStyle = '#5d6f7d';
+    ctx.lineWidth = Math.max(1, size / 10);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, Math.max(2.5, size * 0.25), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
   // Where the family's heroes fell: a cross and a name.
   for (const death of extras.deaths ?? []) {
     const p = at(death.x, death.y);

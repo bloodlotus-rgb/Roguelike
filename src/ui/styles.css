@@ -1014,3 +1014,151 @@ body.booting #hud {
   font-style: italic;
   color: var(--ink-soft);
 }
+
+/* Clock */
+
+.clock {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--paper);
+}
+
+.clock-bar {
+  display: block;
+  width: 72px;
+  height: 4px;
+  background: rgba(236, 226, 203, 0.25);
+}
+
+.clock-bar span {
+  display: block;
+  height: 100%;
+  background: #e2b866;
+  transform-origin: left;
+}
+
+.clock.night .clock-bar span {
+  background: #8fa2c4;
+}
+
+/* Camp */
+
+.screen.camp-screen {
+  justify-content: flex-start;
+  overflow-y: auto;
+  padding: calc(20px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+  background: rgba(17, 12, 8, 0.94);
+  touch-action: pan-y;
+}
+
+.camp-page {
+  padding: 16px 14px;
+  color: var(--ink);
+  background: var(--paper);
+  border-radius: 3px 6px 4px 5px;
+  box-shadow: 0 0 60px rgba(217, 130, 43, 0.35);
+}
+
+.camp-page h2 {
+  color: var(--ink);
+  font-size: 30px;
+}
+
+.screen .camp-sub {
+  margin: 0;
+  font-size: 14px;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+.camp-meters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 14px;
+  width: 100%;
+  font-size: 13px;
+}
+
+.camp-meter {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+}
+
+.camp-bar {
+  height: 6px;
+  background: var(--paper-dark);
+  border: 1px solid var(--ink);
+}
+
+.camp-bar span {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transform-origin: left;
+}
+
+.camp-items {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.camp-item {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid rgba(33, 27, 23, 0.15);
+}
+
+.camp-item img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.camp-item-name {
+  font-size: 15px;
+}
+
+.camp-item-name i {
+  font-size: 12px;
+  color: var(--blood);
+}
+
+.camp-item-acts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.screen .camp-item-acts .paper-button,
+.screen .camp-page .confirm-buttons .paper-button:not(.danger) {
+  color: var(--paper);
+  background: var(--ink);
+}
+
+.camp-empty {
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+.screen .camp-note {
+  min-height: 1.4em;
+  margin: 4px 0;
+  font-size: 15px;
+  font-style: italic;
+  color: var(--blood);
+}

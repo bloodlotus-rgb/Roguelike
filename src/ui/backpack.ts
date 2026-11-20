@@ -41,7 +41,11 @@ export class BackpackUi {
     this.el.addEventListener('click', (e) => this.onClick(e));
   }
 
-  show(inventory: Inventory, gold: number): void {
+  /** Whether the hero can tell poisonous mushrooms (Wits). */
+  private knowsMushrooms = false;
+
+  show(inventory: Inventory, gold: number, knowsMushrooms = false): void {
+    this.knowsMushrooms = knowsMushrooms;
     this.inventory = inventory;
     this.selected = null;
     this.gold = gold;
@@ -98,7 +102,7 @@ export class BackpackUi {
     const detail = chosen
       ? `<div class="pack-detail">
           <b>${t(`item_${chosen.kind}` as StringKey)}</b>
-          <span>${t(`itemDesc_${chosen.kind}` as StringKey)}${chosen.kind === 'waterskin' ? ` (${t('sips', { n: chosen.charges ?? 0 })})` : ''}</span>
+          <span>${t(`itemDesc_${chosen.kind}` as StringKey)}${chosen.kind === 'waterskin' ? ` (${t('sips', { n: chosen.charges ?? 0 })}${chosen.turbid ? `, ${t('turbid')}` : ''})` : ''}${chosen.kind === 'mushroom' && chosen.poison && this.knowsMushrooms ? ` (${t('poisonous')})` : ''}</span>
           <span class="pack-actions">
             <button type="button" class="paper-button small" data-act="use">${t('act_use')}</button>
             <button type="button" class="paper-button small" data-act="turn">${t('act_turn')}</button>
