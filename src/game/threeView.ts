@@ -12,9 +12,12 @@
 import * as THREE from 'three';
 import type { Level, Point } from '../core/dungeon';
 import { isFloor } from '../core/dungeon';
+import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
 import { drawFloorDecor, drawItem, drawProjectile } from './art';
+import { wallColor, wallRelief } from './inkTextures3d';
+import { easeInOut, easeOut, swingPhase } from './swing';
 import { Effects } from './threeEffects';
 import { drawHands, inkTexture } from './firstPerson';
 import { drawEnemySheet, drawHeroSheet, ENEMY_SIZE, FLAME_ANCHOR, HERO_SIZE, type SpriteSheet } from './sprites';
@@ -40,6 +43,12 @@ const EYES: Record<EnemyKind, { h: number; dots: Array<[number, number, number]>
   snuffer: { h: 42.3, dots: [[-1.5, 0, 0.7], [1.5, 0, 0.7]] },
 };
 
+function repeating(texture: THREE.Texture): THREE.Texture & THREE.CanvasTexture {
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  return texture as THREE.CanvasTexture;
+}
+
 function canvasTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -61,7 +70,40 @@ const cutaway = { fade: { value: 0 }, player: { value: new THREE.Vector3() } };
  * at knee height, like a scale model, so rooms and corridors stay readable. Shadows are
  * unaffected.
  */
-function inkMaterial(material: THREE.MeshLambertMaterial, cut = false): THREE.MeshLambertMaterial {
+interface InkOptions {
+  /** Cut away walls between the camera and the hero (top view). */
+  cut?: boolean;
+  /**
+   * Texture coordinates from the world instead of the mesh, so walls tile seamlessly
+   * across blocks: 'box' for block faces, 'column' for round columns.
+   */
+  worldUv?: 'box' | 'column';
+  /** Darken toward the floor, where grime gathers. */
+  grime?: boolean;
+}
+
+function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = {}): THREE.MeshLambertMaterial {
+  const { cut = false, worldUv, grime = false } = options;
+  const uvCode =
+    worldUv === 'box'
+      ? `vec2 inkUv = abs(vInkNormal.y) > 0.5 ? vInkPos.xz : vec2(abs(vInkNormal.x) > 0.5 ? vInkPos.z : vInkPos.x, vInkPos.y);`
+      : worldUv === 'column'
+        ? `vec3 inkCenter = vec3(0.0);
+           #ifdef USE_INSTANCING
+             inkCenter = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+           #endif
+           vec2 inkUv = vec2(atan(vInkPos.z - inkCenter.z, vInkPos.x - inkCenter.x) * 0.36, vInkPos.y);`
+        : '';
+  const uvAssign = worldUv
+    ? `${uvCode}
+        inkUv.y = -inkUv.y;
+        #ifdef USE_MAP
+          vMapUv = inkUv;
+        #endif
+        #ifdef USE_BUMPMAP
+          vBumpMapUv = inkUv;
+        #endif`
+    : '';
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uFade = cutaway.fade;
     shader.uniforms.uPlayer = cutaway.player;
@@ -77,12 +119,20 @@ function inkMaterial(material: THREE.MeshLambertMaterial, cut = false): THREE.Me
           inkBasis = mat3(instanceMatrix);
         #endif
         vInkPos = (modelMatrix * inkWorld).xyz;
-        vInkNormal = normalize(mat3(modelMatrix) * inkBasis * objectNormal);`,
+        vInkNormal = normalize(mat3(modelMatrix) * inkBasis * objectNormal);
+        ${uvAssign}`,
       );
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
         '#include <common>\nuniform float uFade;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;',
+      )
+      .replace(
+        '#include <map_fragment>',
+        grime
+          ? `#include <map_fragment>
+        diffuseColor.rgb *= 1.0 - 0.45 * smoothstep(0.7, 0.0, vInkPos.y);`
+          : '#include <map_fragment>',
       )
       .replace(
         '#include <clipping_planes_fragment>',
@@ -255,6 +305,7 @@ export class ThreeView {
   private lastNow = 0;
   private ceiling: THREE.Mesh | null = null;
   private readonly textures: Record<'wall' | 'floor' | 'ceiling' | 'stairs', THREE.CanvasTexture>;
+  private readonly wallRelief = repeating(new THREE.CanvasTexture(wallRelief(512)));
   private readonly enemySheets = new Map<EnemyKind, { sheet: SpriteSheet; texture: THREE.CanvasTexture }>();
   private readonly itemTextures = new Map<string, { sheet: SpriteSheet; texture: THREE.CanvasTexture }>();
   private readonly projectileTexture: { sheet: SpriteSheet; texture: THREE.CanvasTexture };
@@ -279,7 +330,7 @@ export class ThreeView {
     // Pure black: unlit geometry is black too, so nothing outside the light shows a silhouette.
     this.renderer.setClearColor(0x000000, 1);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.domElement.className = 'three-canvas';
     container.appendChild(this.renderer.domElement);
@@ -299,7 +350,7 @@ export class ThreeView {
     this.scene.add(this.light.target);
 
     this.textures = {
-      wall: canvasTexture(inkTexture('wall', 512)),
+      wall: repeating(canvasTexture(wallColor(512))),
       floor: canvasTexture(inkTexture('floor', 256)),
       ceiling: canvasTexture(inkTexture('ceiling', 256)),
       stairs: canvasTexture(inkTexture('stairs', 256)),
@@ -404,15 +455,18 @@ export class ThreeView {
         (column ? this.columnTiles : this.wallTiles).push([x, y]);
       }
     }
-    const side = inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.wall }), true);
-    const top = inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling }), true);
+    const wallMaterial = () =>
+      new THREE.MeshLambertMaterial({ map: this.textures.wall, bumpMap: this.wallRelief, bumpScale: 3 });
+    const side = inkMaterial(wallMaterial(), { cut: true, worldUv: 'box', grime: true });
+    const top = inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling }), { cut: true, worldUv: 'box' });
+    const shaft = inkMaterial(wallMaterial(), { cut: true, worldUv: 'column', grime: true });
     // Box faces: +x, -x, +y (top), -y, +z, -z.
     this.walls = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), [side, side, top, top, side, side], this.wallTiles.length);
     this.walls.castShadow = true;
     this.walls.receiveShadow = true;
     this.levelGroup.add(this.walls);
     // Lone wall tiles inside halls are round columns.
-    this.columns = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.33, 0.36, 1, 14), [side, top, top], this.columnTiles.length);
+    this.columns = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.33, 0.36, 1, 18), [shaft, top, top], this.columnTiles.length);
     this.columns.castShadow = true;
     this.columns.receiveShadow = true;
     this.levelGroup.add(this.columns);
@@ -430,7 +484,72 @@ export class ThreeView {
     decor.position.set(level.width / 2, 0.004, level.height / 2);
     decor.receiveShadow = true;
     this.levelGroup.add(decor);
+    this.buildDebris(level);
     this.effects.reset();
+  }
+
+  /**
+   * Rubble, bones and skulls with real volume, so the flame throws their shadows and the
+   * hatching shades them. Placement comes from the level seed, on its own stream.
+   */
+  private buildDebris(level: Level): void {
+    const rng = Rng.derive(level.seed, 'debris', level.depth);
+    const rocks: THREE.Matrix4[] = [];
+    const bones: THREE.Matrix4[] = [];
+    const skulls: THREE.Matrix4[] = [];
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const v = new THREE.Vector3();
+    const sc = new THREE.Vector3();
+    const start = level.start;
+    for (let y = 0; y < level.height; y++) {
+      for (let x = 0; x < level.width; x++) {
+        if (!isFloor(level, x, y)) continue;
+        if (Math.abs(x - start.x) + Math.abs(y - start.y) < 2) continue;
+        if (x === level.stairs.x && y === level.stairs.y) continue;
+        const nearWall = !isFloor(level, x - 1, y) || !isFloor(level, x + 1, y) || !isFloor(level, x, y - 1) || !isFloor(level, x, y + 1);
+        // Rubble gathers against the walls.
+        if (rng.chance(nearWall ? 0.16 : 0.05)) {
+          const count = rng.int(3, 7);
+          const cx = x + rng.range(0.2, 0.8);
+          const cz = y + rng.range(0.2, 0.8);
+          for (let i = 0; i < count; i++) {
+            const size = rng.range(0.03, 0.1);
+            e.set(rng.range(0, Math.PI), rng.range(0, Math.PI), rng.range(0, Math.PI));
+            v.set(cx + rng.range(-0.22, 0.22), size * 0.6, cz + rng.range(-0.22, 0.22));
+            sc.set(size, size * rng.range(0.6, 1), size);
+            rocks.push(new THREE.Matrix4().compose(v, q.setFromEuler(e), sc));
+          }
+        }
+        if (rng.chance(0.04)) {
+          for (let i = 0; i < rng.int(1, 3); i++) {
+            e.set(Math.PI / 2, rng.range(0, Math.PI), 0, 'YXZ');
+            v.set(x + rng.range(0.2, 0.8), 0.02, y + rng.range(0.2, 0.8));
+            sc.set(0.02, rng.range(0.14, 0.26), 0.02);
+            bones.push(new THREE.Matrix4().compose(v, q.setFromEuler(e), sc));
+          }
+        }
+        if (rng.chance(0.012)) {
+          e.set(rng.range(-0.3, 0.3), rng.range(0, Math.PI * 2), 0);
+          v.set(x + rng.range(0.25, 0.75), 0.055, y + rng.range(0.25, 0.75));
+          sc.set(0.075, 0.065, 0.085);
+          skulls.push(new THREE.Matrix4().compose(v, q.setFromEuler(e), sc));
+        }
+      }
+    }
+    const stone = inkMaterial(new THREE.MeshLambertMaterial({ color: 0xcdbf9f, flatShading: true }));
+    const bone = inkMaterial(new THREE.MeshLambertMaterial({ color: 0xe6dcc4 }));
+    const add = (geometry: THREE.BufferGeometry, material: THREE.Material, list: THREE.Matrix4[]) => {
+      if (list.length === 0) return;
+      const mesh = new THREE.InstancedMesh(geometry, material, list.length);
+      list.forEach((m, i) => mesh.setMatrixAt(i, m));
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.levelGroup.add(mesh);
+    };
+    add(new THREE.IcosahedronGeometry(1, 0), stone, rocks);
+    add(new THREE.CylinderGeometry(1, 0.8, 1, 6), bone, bones);
+    add(new THREE.SphereGeometry(1, 10, 8), bone, skulls);
   }
 
   private applyWallHeight(): void {
@@ -554,15 +673,29 @@ export class ThreeView {
     while (delta > Math.PI) delta -= Math.PI * 2;
     while (delta < -Math.PI) delta += Math.PI * 2;
     this.lightAngle += this.mode === 'first' ? delta : delta * 0.2;
-    const flicker = 1 + Math.sin(now / 110) * 0.012 + Math.sin(now / 42) * 0.008;
-    const radius = world.lightRadius * flicker;
+    // A living flame: brightness, reach and color waver on several rhythms at once, the
+    // flame itself sways a little (so shadows dance), and it gutters when oil runs low.
+    const t = now / 1000;
+    const wave = Math.sin(t * 7.3) * 0.5 + Math.sin(t * 13.1 + 1.3) * 0.3 + Math.sin(t * 23.7 + 2.1) * 0.2;
+    const gust = Math.max(0, Math.sin(t * 1.7) * Math.sin(t * 0.63)) * Math.sin(t * 31) * 0.5;
+    const low = world.survival.light < 20 ? 1 - world.survival.light / 20 : 0;
+    const flicker = 1 + wave * (0.05 + low * 0.12) + gust * 0.08;
+    const radius = world.lightRadius * (1 + wave * 0.025);
     const height = this.mode === 'first' ? EYE - 0.05 : FLAME_HEIGHT;
+    const swayX = Math.sin(t * 2.9) * 0.04 + Math.sin(t * 7.7) * 0.02;
+    const swayZ = Math.cos(t * 3.3) * 0.04 + Math.sin(t * 6.1) * 0.02;
     // Start the cone a little behind the hero so the floor at their feet is lit too.
     const back = this.mode === 'first' ? 0 : 0.35;
-    this.light.position.set(p.x - Math.cos(this.lightAngle) * back, height, p.y - Math.sin(this.lightAngle) * back);
+    this.light.position.set(
+      p.x - Math.cos(this.lightAngle) * back + swayX,
+      height + Math.sin(t * 5.1) * 0.03,
+      p.y - Math.sin(this.lightAngle) * back + swayZ,
+    );
     this.light.target.position.set(p.x + Math.cos(this.lightAngle) * 3, 0.2, p.y + Math.sin(this.lightAngle) * 3);
     this.light.distance = radius + back;
-    this.light.intensity = world.survival.light > 0 && !world.invisible ? 6 * (0.75 + 0.25 * flicker) : 0;
+    this.light.intensity = world.survival.light > 0 && !world.invisible ? 6 * flicker : 0;
+    // Warmer and redder when it dips.
+    this.light.color.setRGB(1, 0.8 + 0.06 * wave, 0.56 + 0.1 * wave - low * 0.12);
     this.light.shadow.camera.far = radius + 2;
   }
 
@@ -587,13 +720,24 @@ export class ThreeView {
     if (this.mode !== 'top') return;
     const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
     const flip = world.facing.x * right.x + world.facing.y * right.z < 0;
-    hero.place(world.player, this.camera, flip, this.mode);
-    const action = world.action;
+    // The blow as one motion: lean back while winding up, lunge into the strike, settle
+    // back to rest early instead of freezing on the last pose.
+    const swing = swingPhase(world);
+    let lunge = 0;
     let frame: string;
-    if (action.type === 'attack') frame = action.phase === 'windup' ? 'attack0' : 'attack1';
-    else if (action.type === 'special') frame = 'attack0';
-    else if (moved > 0.002) frame = `walk${Math.floor(this.walked / 0.32) % 4}`;
+    if (swing >= 0 && swing < 1) {
+      frame = 'attack0';
+      lunge = -0.08 * easeOut(swing);
+    } else if (swing >= 1 && swing < 2) {
+      frame = 'attack1';
+      lunge = -0.08 + 0.3 * easeOut(swing - 1);
+    } else if (swing >= 2) {
+      const back = swing - 2;
+      frame = back < 0.35 ? 'attack1' : `idle${Math.floor(now / 600) % 2}`;
+      lunge = 0.22 * (1 - easeInOut(back));
+    } else if (moved > 0.002) frame = `walk${Math.floor(this.walked / 0.32) % 4}`;
     else frame = `idle${Math.floor(now / 600) % 2}`;
+    hero.place({ x: world.player.x + world.facing.x * lunge, y: world.player.y + world.facing.y * lunge }, this.camera, flip, this.mode);
     hero.setFrame(Math.max(0, this.heroSheetFrames().indexOf(frame)));
     const heroMaterial = hero.mesh.material as THREE.MeshBasicMaterial;
     heroMaterial.opacity = world.invisible ? 0.35 : 1;

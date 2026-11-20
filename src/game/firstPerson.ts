@@ -13,6 +13,7 @@ import { Rng } from '../core/rng';
 import type { Enemy, World, WorldEvent } from '../core/world';
 import { drawItem, drawProjectile } from './art';
 import { drawEnemySheet, ENEMY_SIZE, type SpriteSheet } from './sprites';
+import { easeIn, easeInOut, easeOut, swingPhase } from './swing';
 
 const TEX = 64;
 /** Wall height and eye height, in tiles. */
@@ -497,14 +498,23 @@ export function drawHands(ctx: CanvasRenderingContext2D, W: number, H: number, w
     drawLightSource(ctx, world.classId, lx, ly, u, now, world.survival.light);
   }
 
-  // Weapon, posed by the current action.
-  const action = world.action;
-  let pose: 'rest' | 'raise' | 'strike' = 'rest';
-  if (action.type === 'attack') pose = action.phase === 'windup' ? 'raise' : 'strike';
-  else if (action.type === 'special') pose = 'raise';
+  // Weapon: wound up, swung through and brought back in one continuous motion.
+  const s = swingPhase(world);
+  const REST = { a: -0.35, dx: 0, dy: 0 };
+  const RAISE = { a: -1.0, dx: u * 2, dy: -u * 6 };
+  const STRIKE = { a: 0.55, dx: -u * 18, dy: -u * 10 };
+  const mix = (a: typeof REST, b: typeof REST, k: number) => ({
+    a: a.a + (b.a - a.a) * k,
+    dx: a.dx + (b.dx - a.dx) * k,
+    dy: a.dy + (b.dy - a.dy) * k,
+  });
+  let pose = REST;
+  if (s >= 0 && s < 1) pose = mix(REST, RAISE, easeOut(s));
+  else if (s >= 1 && s < 2) pose = mix(RAISE, STRIKE, easeIn(s - 1));
+  else if (s >= 2) pose = mix(STRIKE, REST, easeInOut(s - 2));
   const wx = W * 0.74 - sway;
   const wy = H - u * 4 + lift;
-  drawWeapon(ctx, world.classId, wx, wy, u, pose);
+  drawWeapon(ctx, world.classId, wx + pose.dx, wy + pose.dy, u, pose.a);
 }
 
 function drawLightSource(ctx: CanvasRenderingContext2D, classId: ClassId, x: number, y: number, u: number, now: number, light: number): void {
@@ -555,12 +565,9 @@ function drawLightSource(ctx: CanvasRenderingContext2D, classId: ClassId, x: num
   ctx.fill();
 }
 
-function drawWeapon(ctx: CanvasRenderingContext2D, classId: ClassId, x: number, y: number, u: number, pose: 'rest' | 'raise' | 'strike'): void {
-  const angle = pose === 'rest' ? -0.35 : pose === 'raise' ? -1.0 : 0.55;
-  const dx = pose === 'strike' ? -u * 18 : 0;
-  const dy = pose === 'raise' ? -u * 6 : pose === 'strike' ? -u * 10 : 0;
+function drawWeapon(ctx: CanvasRenderingContext2D, classId: ClassId, x: number, y: number, u: number, angle: number): void {
   ctx.save();
-  ctx.translate(x + dx, y + dy);
+  ctx.translate(x, y);
   ctx.rotate(angle);
   ctx.strokeStyle = INK;
   ctx.lineWidth = Math.max(1, u * 0.9);
