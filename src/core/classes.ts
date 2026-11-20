@@ -96,7 +96,7 @@ export const CLASSES: Record<ClassId, ClassDef> = {
     },
     special: { kind: 'execution', reach: 1.9, windup: 0.3, threshold: 0.3, multiplier: 3 },
     charge: { kind: 'fury', perSecond: 0, perHitDealt: 0.12, perHitTaken: 0.2, perBackstab: 0, perParry: 0.15, cooldown: 1 },
-    passive: { kind: 'bloodthirst', healFraction: 0.08 },
+    passive: { kind: 'bloodthirst', healFraction: 0.5 },
     parryWindow: 0.16,
     parryStun: 1.6,
     speedMultiplier: 0.95,
