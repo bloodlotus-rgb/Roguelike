@@ -32,6 +32,8 @@ const VISION_PER_TILE = 48;
 const VISION_SPAN = 18;
 /** Height of a wall's front face inside its tile, in tiles (3/4 view). */
 const WALL_FACE = 0.7;
+/** Height of the flame above the hero's feet, in tiles: where light and sight start from. */
+const LIGHT_HEIGHT = 0.45;
 /** Warm tint of the flame over everything it lights. */
 const LIGHT_TINT = 0xf6d6a6;
 /** The pale of the horrors' eyes, as drawn in their sprites. */
@@ -395,9 +397,11 @@ export class DungeonScene extends Phaser.Scene {
     this.flickerTime += dt;
     const t = this.flickerTime;
     const flicker = 1 + Math.sin(t * 9.1) * 0.012 + Math.sin(t * 23.7) * 0.008;
-    const radius = this.host.world.lightRadius * TILE * flicker;
+    // One radius for everything: the mask, the cone and its walls all breathe together.
+    const radiusTiles = this.host.world.lightRadius * flicker;
+    const radius = radiusTiles * TILE;
     const lx = this.player.x;
-    const ly = this.player.y - TILE * 0.3;
+    const ly = this.player.y - TILE * LIGHT_HEIGHT;
     // The mask is fully dark at LIGHT_EDGE of its half-size: size it so that is the light radius.
     const half = radius / LIGHT_EDGE;
     this.lightMask.setPosition(lx, ly).setScale((half * 2) / LIGHT_MASK_SIZE);
@@ -423,7 +427,7 @@ export class DungeonScene extends Phaser.Scene {
     g.fillRect(left, y0, Math.max(0, x0 - left), y1 - y0);
     g.fillRect(x1, y0, Math.max(0, right - x1), y1 - y0);
 
-    this.updateVision(dt);
+    this.updateVision(dt, radiusTiles);
   }
 
   /**
@@ -431,11 +435,10 @@ export class DungeonScene extends Phaser.Scene {
    * at the wall they meet; only a wall's front face (seen from below) and columns show
    * inside their tile. Everything else is darkness, and the lit part takes the flame's tint.
    */
-  private updateVision(dt: number): void {
+  private updateVision(dt: number, reach: number): void {
     const world = this.host.world;
     const level = world.level;
-    const origin = { x: world.player.x, y: world.player.y - 0.45 };
-    const reach = world.lightRadius;
+    const origin = { x: world.player.x, y: world.player.y - LIGHT_HEIGHT };
 
     // The cone turns smoothly toward where the hero faces.
     const target = Math.atan2(world.facing.y, world.facing.x);
@@ -444,28 +447,26 @@ export class DungeonScene extends Phaser.Scene {
     while (delta < -Math.PI) delta += Math.PI * 2;
     this.visionAngle += delta * Math.min(1, dt * 12 || 1);
 
+    // Rays stop exactly where the wall begins. Walls seen from below show their whole
+    // front face, and columns their whole shaft, as clean rectangles added afterwards.
     const points: Point[] = [origin];
+    const faces = new Map<number, { x: number; y: number; w: number; h: number }>();
     const steps = 96;
     const half = COMBAT.visionCone;
     for (let i = 0; i <= steps; i++) {
       const a = this.visionAngle - half + (2 * half * i) / steps;
       const hit = castWallRay(level, origin, a, reach);
-      let d = hit.enter;
       if (hit.hit) {
+        const { tileX: tx, tileY: ty } = hit;
+        const key = ty * level.width + tx;
         const column =
-          isFloor(level, hit.tileX - 1, hit.tileY) &&
-          isFloor(level, hit.tileX + 1, hit.tileY) &&
-          isFloor(level, hit.tileX, hit.tileY - 1) &&
-          isFloor(level, hit.tileX, hit.tileY + 1);
-        const sin = Math.sin(a);
-        if (column) d = hit.exit;
-        else if (hit.horizontal && sin < 0 && isFloor(level, hit.tileX, hit.tileY + 1)) {
-          // Looking up at a wall: its front face shows, the rock above it does not.
-          d = Math.min(hit.exit, hit.enter + WALL_FACE / Math.abs(sin));
+          isFloor(level, tx - 1, ty) && isFloor(level, tx + 1, ty) && isFloor(level, tx, ty - 1) && isFloor(level, tx, ty + 1);
+        if (column) faces.set(key, { x: tx + 0.17, y: ty - 0.22, w: 0.66, h: 1.22 });
+        else if (hit.horizontal && Math.sin(a) < 0 && isFloor(level, tx, ty + 1)) {
+          faces.set(key, { x: tx, y: ty + 1 - WALL_FACE, w: 1, h: WALL_FACE });
         }
-        d = Math.min(d, reach);
       }
-      points.push({ x: origin.x + Math.cos(a) * d, y: origin.y + Math.sin(a) * d });
+      points.push({ x: origin.x + Math.cos(a) * hit.enter, y: origin.y + Math.sin(a) * hit.enter });
     }
 
     const ox = world.player.x - VISION_SPAN / 2;
@@ -478,6 +479,7 @@ export class DungeonScene extends Phaser.Scene {
     points.forEach((p, i) => (i === 0 ? g.moveTo((p.x - ox) * k, (p.y - oy) * k) : g.lineTo((p.x - ox) * k, (p.y - oy) * k)));
     g.closePath();
     g.fillPath();
+    for (const f of faces.values()) g.fillRect((f.x - ox) * k, (f.y - oy) * k, f.w * k, f.h * k);
     this.vision.setPosition(px(ox), px(oy));
     this.vision.clear();
     this.vision.fill(DARK_HEX, 1);
@@ -491,6 +493,7 @@ export class DungeonScene extends Phaser.Scene {
     points.forEach((p, i) => (i === 0 ? tint.moveTo(px(p.x), px(p.y)) : tint.lineTo(px(p.x), px(p.y))));
     tint.closePath();
     tint.fillPath();
+    for (const f of faces.values()) tint.fillRect(px(f.x), px(f.y), px(f.w), px(f.h));
   }
 
   /** Soft shadows under everyone, and the hero's living flame with rising embers. */
