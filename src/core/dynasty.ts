@@ -245,3 +245,25 @@ export function unpackTiles(packed: string | undefined, size: number): Uint8Arra
   }
   return tiles;
 }
+
+/** A trait earned during a life: it joins the member's traits and the chronicle. */
+export function recordAcquired(dynasty: Dynasty, memberId: number, trait: string, depth: number): void {
+  const member = memberById(dynasty, memberId);
+  if (member.traits.includes(trait)) return;
+  if (!addTrait(member, trait)) return;
+  dynasty.chronicle.push({ type: 'acquired', generation: dynasty.generation, memberId, trait, depth });
+}
+
+export type AgeStage = 'young' | 'adult' | 'old';
+
+/** Young in the generation they were born, old in their last one. */
+export function ageStage(dynasty: Dynasty, member: Member): AgeStage {
+  const age = ageOf(dynasty, member);
+  if (age === 0) return 'young';
+  return age >= member.lifespan - 1 ? 'old' : 'adult';
+}
+
+/** Ancestors of a member, parent first. */
+export function ancestorsOf(dynasty: Dynasty, member: Member): Member[] {
+  return lineage(dynasty, member).map((l) => l.member);
+}

@@ -3,7 +3,7 @@ import type { Point } from '../core/dungeon';
 import type { EnemyKind } from '../core/enemies';
 import { isFloor } from '../core/dungeon';
 import { castWallRay } from '../core/geometry';
-import { COMBAT, NO_INPUT, type ControlInput, type Enemy, type World, type WorldEvent } from '../core/world';
+import { NO_INPUT, type ControlInput, type Enemy, type World, type WorldEvent } from '../core/world';
 import {
   drawItem,
   drawLevel,
@@ -445,7 +445,7 @@ export class DungeonScene extends Phaser.Scene {
     const points: Point[] = [origin];
     const faces = new Map<number, { x: number; y: number; w: number; h: number }>();
     const steps = 96;
-    const half = COMBAT.visionCone;
+    const half = this.host.world.visionCone;
     for (let i = 0; i <= steps; i++) {
       const a = this.visionAngle - half + (2 * half * i) / steps;
       const hit = castWallRay(level, origin, a, reach);

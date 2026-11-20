@@ -766,8 +766,10 @@ export class ThreeView {
   private positionCamera(world: World, fpAngle: number): void {
     const p = world.player;
     cutaway.fade.value = this.mode === 'top' ? 1 : 0;
-    // The plunderer's shadow step snuffs the light, but lets them see the world in chalk.
-    cutaway.night.value = world.invisible && world.cls.special.kind === 'shadowStep' ? 1 : 0;
+    // The plunderer's shadow step snuffs the light, but lets them see the world in chalk;
+    // so do Dark Dwellers once their oil runs out.
+    const shadowStep = world.invisible && world.cls.special.kind === 'shadowStep';
+    cutaway.night.value = shadowStep || (world.fx.darkSight && world.survival.light <= 0) ? 1 : 0;
     cutaway.player.value.set(p.x, 0, p.y);
     if (this.mode === 'first') {
       this.camera.position.set(p.x, EYE, p.y);
@@ -815,6 +817,7 @@ export class ThreeView {
     );
     this.light.target.position.set(p.x + Math.cos(this.lightAngle) * 3, 0.2, p.y + Math.sin(this.lightAngle) * 3);
     this.light.distance = radius + back;
+    this.light.angle = world.visionCone;
     this.light.intensity = world.survival.light > 0 && !world.invisible ? 6 * flicker : 0;
     // Warmer and redder when it dips.
     this.light.color.setRGB(1, 0.8 + 0.06 * wave, 0.56 + 0.1 * wave - low * 0.12);

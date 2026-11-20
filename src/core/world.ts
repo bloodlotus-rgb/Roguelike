@@ -174,7 +174,8 @@ export interface WorldSnapshot {
   survival: Survival;
   taken: number[];
   drops: LevelItem[];
-  enemies: Array<Omit<Enemy, 'def' | 'roamField'>>;
+  /** `roaming`: on its way to `roamRoom` (its path is rebuilt on restore). */
+  enemies: Array<Omit<Enemy, 'def' | 'roamField'> & { roaming?: boolean }>;
   specialCharge: number;
   specialCooldown: number;
   comboIndex: number;
@@ -182,6 +183,26 @@ export interface WorldSnapshot {
   hardToKillUsed: boolean;
   nextId: number;
   time: number;
+  rng: [number, number, number, number];
+  /** This level's explored tiles, packed. */
+  explored: string;
+  path: number[];
+  projectiles: Projectile[];
+  /** The hero's action; a special's target is kept by id. */
+  action: Omit<PlayerAction, 'target'> & { targetId?: number };
+  timers: {
+    parry: number;
+    riposte: number;
+    invulnerable: number;
+    invisible: number;
+    dodge: number;
+    attackBuffer: number;
+    combo: number;
+    lastHurtAt: number;
+  };
+  running: boolean;
+  hurtBonusReady: boolean;
+  lastCause: DeathCause;
 }
 
 const length = (v: Point) => Math.hypot(v.x, v.y);
@@ -275,7 +296,11 @@ export class World {
     world.survival = { ...snapshot.survival };
     world.taken = new Set(snapshot.taken);
     world.level.items.push(...snapshot.drops);
-    world.enemies = snapshot.enemies.map((e) => ({ ...e, def: ENEMIES[e.kind], roamField: null, wanderTarget: e.wanderTarget }));
+    world.enemies = snapshot.enemies.map(({ roaming, ...e }) => {
+      const room = world.level.rooms[e.roamRoom];
+      const roamField = roaming && room ? floorDistances(world.level, { x: room.x + Math.floor(room.w / 2), y: room.y + Math.floor(room.h / 2) }) : null;
+      return { ...e, pos: { ...e.pos }, def: ENEMIES[e.kind], roamField };
+    });
     world.specialCharge = snapshot.specialCharge;
     world.specialCooldown = snapshot.specialCooldown;
     world.comboIndex = snapshot.comboIndex;
@@ -283,6 +308,24 @@ export class World {
     world.hardToKillUsed = snapshot.hardToKillUsed;
     world.nextId = snapshot.nextId;
     world.time = snapshot.time;
+    world.rng.state = snapshot.rng;
+    world.explored = unpackTiles(snapshot.explored, world.level.width * world.level.height);
+    world.path = new Set(snapshot.path);
+    world.projectiles = snapshot.projectiles.map((p) => ({ ...p, pos: { ...p.pos }, vel: { ...p.vel } }));
+    const { targetId, ...action } = snapshot.action;
+    world.action = (action.type === 'special' ? { ...action, target: world.enemies.find((e) => e.id === targetId) ?? null } : action) as PlayerAction;
+    const t = snapshot.timers;
+    world.parryTimer = t.parry;
+    world.riposteTimer = t.riposte;
+    world.invulnerableTimer = t.invulnerable;
+    world.invisibleTimer = t.invisible;
+    world.dodgeCooldown = t.dodge;
+    world.attackBuffer = t.attackBuffer;
+    world.comboTimer = t.combo;
+    world.lastHurtAt = t.lastHurtAt;
+    world.running = snapshot.running;
+    world.hurtBonusReady = snapshot.hurtBonusReady;
+    world.lastCause = snapshot.lastCause;
     world.lastViewTile = -1;
     return world;
   }
@@ -301,7 +344,7 @@ export class World {
       survival: { ...this.survival },
       taken: [...this.taken],
       drops: this.level.items.slice(generated).map((i) => ({ ...i })),
-      enemies: this.enemies.map(({ def: _def, roamField: _field, ...rest }) => ({ ...rest, pos: { ...rest.pos } })),
+      enemies: this.enemies.map(({ def: _def, roamField, ...rest }) => ({ ...rest, pos: { ...rest.pos }, roaming: roamField !== null })),
       specialCharge: this.specialCharge,
       specialCooldown: this.specialCooldown,
       comboIndex: this.comboIndex,
@@ -309,6 +352,27 @@ export class World {
       hardToKillUsed: this.hardToKillUsed,
       nextId: this.nextId,
       time: this.time,
+      rng: this.rng.state,
+      explored: packTiles(this.explored),
+      path: [...this.path],
+      projectiles: this.projectiles.map((p) => ({ ...p, pos: { ...p.pos }, vel: { ...p.vel } })),
+      action:
+        this.action.type === 'special'
+          ? { type: 'special', timer: this.action.timer, targetId: this.action.target?.id }
+          : JSON.parse(JSON.stringify(this.action)),
+      timers: {
+        parry: this.parryTimer,
+        riposte: this.riposteTimer,
+        invulnerable: this.invulnerableTimer,
+        invisible: this.invisibleTimer,
+        dodge: this.dodgeCooldown,
+        attackBuffer: this.attackBuffer,
+        combo: this.comboTimer,
+        lastHurtAt: this.lastHurtAt,
+      },
+      running: this.running,
+      hurtBonusReady: this.hurtBonusReady,
+      lastCause: this.lastCause,
     };
   }
 
@@ -886,14 +950,14 @@ export class World {
     const c = this.counters;
     if (this.survival.light < 25) c.lowLight += dt;
     if (this.survival.light <= 0) c.dark += dt;
+    // Scars are for surviving: dropping below a tenth of your health and climbing back.
     const fraction = this.hpFraction;
-    if (fraction > 0 && fraction < 0.1 && !c.belowTenth) {
-      c.belowTenth = true;
+    if (fraction > 0 && fraction < 0.1) c.belowTenth = true;
+    else if (c.belowTenth && fraction > 0.3) {
+      c.belowTenth = false;
       c.nearDeaths++;
       this.gainTrait('scar', events);
       if (c.nearDeaths >= 2) this.gainTrait('badLeg', events);
-    } else if (fraction > 0.3) {
-      c.belowTenth = false;
     }
     if (c.kills >= 20) this.gainTrait('hardened', events);
     if (c.crawlerKills >= 15) this.gainTrait('crawlerBane', events);

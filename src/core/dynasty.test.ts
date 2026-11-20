@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addTrait, ageOf, createDynasty, livingMembers, memberById, packTiles, recordDeath, unpackTiles } from './dynasty';
+import { addTrait, ageOf, ageStage, createDynasty, livingMembers, memberById, packTiles, recordAcquired, recordDeath, unpackTiles } from './dynasty';
 import { TRAIT_CAP, traitDef } from './traits';
 
 const death = { depth: 3, cause: { type: 'horror' as const, kind: 'husk' as const }, x: 10, y: 12 };
@@ -78,5 +78,27 @@ describe('dynasty', () => {
     tiles[99] = 1;
     expect(unpackTiles(packTiles(tiles), 100)).toEqual(tiles);
     expect(unpackTiles(undefined, 5)).toEqual(new Uint8Array(5));
+  });
+});
+
+describe('acquired traits and ages', () => {
+  it('an acquired trait joins the member and the chronicle once', () => {
+    const d = createDynasty('estirpe');
+    const m = d.members[0];
+    recordAcquired(d, m.id, 'scar', 3);
+    recordAcquired(d, m.id, 'scar', 4);
+    expect(m.traits.filter((t) => t === 'scar').length).toBe(1);
+    expect(d.chronicle.filter((e) => e.type === 'acquired').length).toBe(1);
+  });
+
+  it('members are young, then adult, then old', () => {
+    const d = createDynasty('estirpe');
+    const m = d.members[0];
+    m.lifespan = 3;
+    expect(ageStage(d, m)).toBe('young');
+    d.generation = 2;
+    expect(ageStage(d, m)).toBe('adult');
+    d.generation = 3;
+    expect(ageStage(d, m)).toBe('old');
   });
 });
