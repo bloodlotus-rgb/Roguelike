@@ -203,10 +203,13 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           float w1 = smoothstep(0.18, 0.24, tone) * 0.08;
           float w2 = smoothstep(0.4, 0.46, tone) * 0.09;
           float w3 = smoothstep(0.58, 0.64, tone) * 0.1 + smoothstep(0.64, 0.76, tone) * 0.14;
+          // Drawn by hand: each line wavers, presses harder or lighter, and the pen lifts now
+          // and then, less so as the shade deepens and the lines close up.
+          float lift = 1.0 - smoothstep(0.5, 0.75, tone);
           float ink = max(
-            (1.0 - smoothstep(w1 - aa, w1 + aa, d1)) * step(0.001, w1),
-            (1.0 - smoothstep(w2 - aa, w2 + aa, d2)) * step(0.001, w2));
-          ink = max(ink, (1.0 - smoothstep(w3 - aa, w3 + aa, d3)) * step(0.001, w3));
+            inkPen(hp.x + hp.y, hp.x - hp.y, w1, aa, 0.0, lift),
+            inkPen(hp.x - hp.y, hp.x + hp.y, w2, aa, 17.0, lift));
+          ink = max(ink, inkPen(hp.x * 1.3 + 0.25, hp.y, w3, aa, 41.0, lift * 0.5));
           ink = max(ink, smoothstep(0.74, 0.78, tone));
           ink = max(ink, smoothstep(0.82, 0.92, shadowed));
           float edge = 0.0;
@@ -316,6 +319,18 @@ float inkNoise(vec2 p) {
   vec2 f = fract(p);
   vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(inkHash(i), inkHash(i + vec2(1.0, 0.0)), u.x), mix(inkHash(i + vec2(0.0, 1.0)), inkHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+// One family of pen lines: 'across' counts lines, 'along' runs down each line. Each line
+// has its own waver, pressure and lifts; 'lift' scales how often the pen leaves the paper.
+float inkPen(float across, float along, float width, float aa, float seed, float lift) {
+  if (width <= 0.001) return 0.0;
+  float id = floor(across);
+  float waver = (inkNoise(vec2(along * 0.7, id * 3.7 + seed)) - 0.5) * 0.3;
+  float d = abs(fract(across + waver) - 0.5);
+  float w = width * (0.65 + 0.7 * inkNoise(vec2(along * 1.1, id * 1.3 + seed + 7.0)));
+  float line = 1.0 - smoothstep(w - aa, w + aa, d);
+  float gap = step(inkNoise(vec2(along * 0.5, id * 5.1 + seed + 3.0)), 0.22 * lift);
+  return line * (1.0 - gap);
 }`;
 
 /** A flat cut-out standing on the floor, facing the camera, lit like the floor under it. */
