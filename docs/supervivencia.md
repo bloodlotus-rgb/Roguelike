@@ -1,6 +1,6 @@
 # Expedición: cuerpo, mochila, campamento y obras (propuesta v2)
 
-> Estado: **propuesta en conversación** (ping pong, segunda vuelta). Reemplaza el manejo de recursos actual y le da forma a los campamentos y a la noche de `concepto.md`. Va **antes de los jefes** (Etapa B). Lo marcado **[Propuesta]** es mío para validar.
+> Estado: **aprobado**. Se implementa en tres etapas: E1, E2 y E3. Reemplaza el manejo de recursos actual y le da forma a los campamentos y a la noche de `concepto.md`. Va **antes de los jefes** (Etapa B). Lo marcado **[Propuesta]** es mío para validar.
 
 ## Por qué
 
@@ -174,8 +174,9 @@ Menos objetos sueltos y más **lugares** donde buscar:
 - **E2 · Campamento y noche**: ciclo de día y noche, armar campamento, pantalla del fogón (comer, beber, hervir, cocinar, vendarse, dormir), eventos nocturnos y defensa, Ingenio y Voluntad.
 - **E3 · Obras y mansión**: antorchas, marcas de tiza, barricadas, sogas, deterioro, volver a la superficie, la mansión con la tienda.
 
-## Preguntas
+## Supuestos al implementar
 
-1. ¿Te cierra partirlo en E1, E2 y E3, en ese orden?
-2. **Tienda**: ¿la mansión y su tienda entran en E3, o antes, para que el oro sirva desde E1?
-3. **Puertas**: las barricadas necesitan entradas de sala. ¿Querés también **puertas** de verdad (se abren, se cierran, hacen ruido) como parte de la mazmorra, o solo los huecos donde se construye?
+- **[Supuesto]** La **tienda** entra en E3, con la mansión. Hasta entonces el oro se junta pero no se gasta.
+- **[Supuesto]** **Puertas de verdad** (se abren, se cierran, hacen ruido) entran en E3, junto con las barricadas.
+- **[Supuesto]** **Mientras no exista el fogón (E1)**: la comida y el agua de la mochila se pueden consumir en cualquier lado, fuera de combate, quedándose quieto un par de segundos. En E2 eso pasa a ser solo en el campamento (salvo la ración de marcha).
+- **[Supuesto]** En E1 el agua sale solo de **fuentes** limpias; las goteras y el agua turbia llegan con el fogón (E2), porque hace falta hervirla.
