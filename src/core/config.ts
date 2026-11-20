@@ -95,6 +95,8 @@ export const CONFIG = {
     doorHp: 60,
     bashDoor: 20,
     bashBarricade: 8,
+    /** Condition a rope loses each dawn. */
+    ropeRot: 4,
     /** Chance a barricade is battered on any night. */
     nightBarricade: 0.1,
   },

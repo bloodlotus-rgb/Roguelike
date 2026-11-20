@@ -66,6 +66,10 @@ export interface Level {
   doorways: Point[];
   /** Doorways that have a door (part of the level's geography). */
   doors: Point[];
+  /** A hole down to the next level; a rope tied here is a shortcut. */
+  pit: Point;
+  /** Where a rope from the level above comes down. */
+  landing: Point;
   /** Tiles shut right now (closed doors, barricades): floor, but nothing gets through. */
   closed?: Set<number>;
 }
@@ -249,6 +253,8 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
     features: [],
     doorways: [],
     doors: [],
+    pit: { x: 0, y: 0 },
+    landing: { x: 0, y: 0 },
   };
 
   removeUnreachable(level, level.start);
@@ -265,6 +271,13 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
   const taken = new Set<string>([`${level.start.x},${level.start.y}`, `${level.stairs.x},${level.stairs.y}`]);
   // Fountains are geography: the same in every life. Loot, remains and crates re-roll.
   const fountains = placeSpots(level, Rng.derive(seed, 'fountains', depth), taken, rngCount(Rng.derive(seed, 'fountains-n', depth), CONFIG.features.fountain));
+  // The pit down and the landing from above are geography too.
+  const shaftRng = Rng.derive(seed, 'shafts', depth);
+  const [pit, landing] = placeSpots(level, shaftRng, taken, 2);
+  level.pit = pit ? { x: pit[0], y: pit[1] } : { ...level.stairs };
+  level.landing = landing ? { x: landing[0], y: landing[1] } : { ...level.start };
+  // Keep the tiles around the pit and landing clear.
+  for (const p of [level.pit, level.landing]) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) taken.add(`${p.x + dx},${p.y + dy}`);
   const lootRng = Rng.derive(seed, 'items', depth, itemsRoll);
   const features: Feature[] = fountains.map(([x, y]) => ({ id: 0, kind: 'fountain' as const, x, y }));
   const dripRng = Rng.derive(seed, 'drips', depth);

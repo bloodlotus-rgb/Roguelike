@@ -171,7 +171,19 @@ export interface LifeOptions {
 type Command = { type: 'interact' } | { type: 'use'; uid: number; sign?: ChalkSign } | { type: 'drop'; uid: number };
 
 /** What the hero can do where they stand. */
-export type Interaction = 'stairs' | 'up' | 'camp' | 'torch' | 'openDoor' | 'closeDoor' | 'fountain' | 'drip' | 'search' | null;
+export type Interaction =
+  | 'stairs'
+  | 'up'
+  | 'ropeDown'
+  | 'ropeUp'
+  | 'camp'
+  | 'torch'
+  | 'openDoor'
+  | 'closeDoor'
+  | 'fountain'
+  | 'drip'
+  | 'search'
+  | null;
 
 /** Counters behind the acquired traits. */
 export interface LifeCounters {
@@ -662,9 +674,11 @@ export class World {
     });
   }
 
-  private enterLevel(depth: number, from: 'above' | 'below' = 'above'): void {
+  private enterLevel(depth: number, from: 'above' | 'below' | 'ropeDown' | 'ropeUp' = 'above'): void {
     this.level = generateLevel(this.seed, depth, this.life);
-    const arrival = from === 'below' ? this.level.stairs : this.level.start;
+    // By rope you arrive at the landing below, or beside the pit above.
+    const arrival =
+      from === 'below' ? this.level.stairs : from === 'ropeDown' ? this.level.landing : from === 'ropeUp' ? this.besidePit() : this.level.start;
     this.player = { x: arrival.x + 0.5, y: arrival.y + 0.5 };
     // The dynasty's map: whatever any ancestor saw here is already known.
     this.explored = unpackTiles(this.exploredByDepth[depth], this.level.width * this.level.height);
@@ -1280,9 +1294,13 @@ export class World {
       camp.condition -= CONFIG.camp.emptyDamage;
       if (camp.condition <= 0) this.loseCamp(camp, events);
     }
-    // Torches burn down, a day at a time; barricades take a beating some nights.
+    // Torches burn down, a day at a time; ropes rot; barricades take a beating some nights.
     for (const w of [...this.works]) {
       if (w.kind === 'torch') w.condition = Math.max(0, w.condition - CONFIG.works.torchBurn);
+      if (w.kind === 'rope') {
+        w.condition -= CONFIG.works.ropeRot;
+        if (w.condition <= 0) this.works.splice(this.works.indexOf(w), 1);
+      }
       if (w.kind === 'barricade' && rng.chance(CONFIG.works.nightBarricade)) {
         w.condition -= 30;
         if (w.condition <= 0) {
@@ -1380,6 +1398,8 @@ export class World {
   private refreshShut(): void {
     const shut = new Set<number>();
     for (const [tile, door] of this.doorStates) if (door.state === 'shut') shut.add(tile);
+    // Nobody walks over the pit.
+    shut.add(this.level.pit.y * this.level.width + this.level.pit.x);
     for (const w of this.works) {
       if (w.kind !== 'barricade' || w.depth !== this.depth) continue;
       const tile = w.y * this.level.width + w.x;
@@ -1506,6 +1526,54 @@ export class World {
     if (!r) return false;
     const ways = this.level.doorways.filter((d) => d.x >= r.x - 1 && d.x <= r.x + r.w && d.y >= r.y - 1 && d.y <= r.y + r.h);
     return ways.length > 0 && ways.every((d) => this.level.closed?.has(d.y * this.level.width + d.x));
+  }
+
+  // Pits and ropes ----------------------------------------------------------------------
+
+  private ropeAt(depth: number): Work | undefined {
+    return this.works.find((w) => w.kind === 'rope' && w.depth === depth && w.condition > 0);
+  }
+
+  /** A rope within reach: down the pit on this level, or up from the landing to the one above. */
+  private ropeHere(way: 'down' | 'up'): boolean {
+    const spot = way === 'down' ? this.level.pit : this.level.landing;
+    if (!this.ropeAt(way === 'down' ? this.depth : this.depth - 1)) return false;
+    if (way === 'up' && this.depth <= 1) return false;
+    return dist(this.player, { x: spot.x + 0.5, y: spot.y + 0.5 }) <= 1.5;
+  }
+
+  /** A floor tile next to the pit, to stand on after climbing out of it. */
+  private besidePit(): Point {
+    const { pit } = this.level;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (isFloor(this.level, pit.x + dx, pit.y + dy)) return { x: pit.x + dx, y: pit.y + dy };
+    }
+    return this.level.start;
+  }
+
+  /** Ties a rope at the pit: a shortcut down (and back up) for the whole family. */
+  private tieRope(uid: number, events: WorldEvent[]): void {
+    const { pit } = this.level;
+    if (dist(this.player, { x: pit.x + 0.5, y: pit.y + 0.5 }) > 1.6 || this.ropeAt(this.depth)) {
+      return void events.push({ type: 'cantBuild', reason: 'taken' });
+    }
+    removeItem(this.inventory, uid);
+    events.push({ type: 'workBuilt', work: this.newWork('rope', { x: pit.x, y: pit.y }) });
+  }
+
+  /** Down the rope to the landing below, or up it to the pit above. */
+  climbRope(): 'down' | 'up' | null {
+    if (this.ropeHere('down')) {
+      this.leaveLevel();
+      this.enterLevel(this.depth + 1, 'ropeDown');
+      return 'down';
+    }
+    if (this.ropeHere('up')) {
+      this.leaveLevel();
+      this.enterLevel(this.depth - 1, 'ropeUp');
+      return 'up';
+    }
+    return null;
   }
 
   /** Fills the torch at hand with a flask of oil. */
@@ -1747,6 +1815,8 @@ export class World {
   get interaction(): Interaction {
     if (this.atStairs) return 'stairs';
     if (this.atUpStairs) return 'up';
+    if (this.ropeHere('down')) return 'ropeDown';
+    if (this.ropeHere('up')) return 'ropeUp';
     if (this.campInReach) return 'camp';
     if (this.torchToRefill) return 'torch';
     const door = this.doorInReach();
@@ -1850,6 +1920,10 @@ export class World {
       return;
     }
     // Food, water, bandages: only by the fire. A camp kit is pitched where you stand.
+    if (item.kind === 'rope') {
+      this.tieRope(uid, events);
+      return;
+    }
     if (item.kind === 'planks') {
       this.buildBarricade(uid, events);
       return;

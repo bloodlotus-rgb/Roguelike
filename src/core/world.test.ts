@@ -979,3 +979,33 @@ describe('doors and barricades', () => {
   });
 });
 
+describe('pits and ropes', () => {
+  it('a rope tied at the pit is a shortcut down and back up, for the family', () => {
+    const works: import('./dynasty').Work[] = [];
+    const world = new World('estirpe', 'headsman', 0, 1, { works });
+    world.enemies = [];
+    world.inventory.items = world.inventory.items.filter((i) => i.kind !== 'campKit');
+    addItem(world.inventory, 'rope');
+    const pit = world.level.pit;
+    world.player = { x: pit.x + 1.5, y: pit.y + 0.5 };
+    if (!isFloor(world.level, pit.x + 1, pit.y)) world.player = { x: pit.x - 0.5, y: pit.y + 0.5 };
+    const rope = world.inventory.items.find((i) => i.kind === 'rope')!;
+    world.useItem(rope.uid);
+    run(world, 0.05);
+    expect(works).toMatchObject([{ kind: 'rope', depth: 1 }]);
+    expect(world.interaction).toBe('ropeDown');
+    expect(world.climbRope()).toBe('down');
+    expect(world.depth).toBe(2);
+    expect(Math.floor(world.player.x)).toBe(world.level.landing.x);
+    expect(world.interaction).toBe('ropeUp');
+    expect(world.climbRope()).toBe('up');
+    expect(world.depth).toBe(1);
+  });
+
+  it('nobody walks over the pit', () => {
+    const world = arena();
+    const { pit } = world.level;
+    expect(world.level.closed?.has(pit.y * world.level.width + pit.x)).toBe(true);
+  });
+});
+

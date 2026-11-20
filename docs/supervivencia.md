@@ -204,3 +204,16 @@ Menos objetos sueltos y más **lugares** donde buscar:
 - **[Supuesto]** Se puede dormir también de día: pasás directo al alba siguiente (perdés el resto del día).
 - Guardado versión 3.
 - Pendiente: en el motor clásico no se dibujan campamentos ni goteras.
+
+## E3 implementada
+
+- **Subir**: cada nivel tiene una salida hacia arriba donde se entra. Subir lleva al nivel de arriba, junto a su escalera de bajada. Dentro de una vida, cada nivel se recuerda como se dejó (lo tomado, lo registrado, lo tirado, los horrores y las puertas): nada reaparece al ir y volver.
+- **Mansión**: cada vida sale de ahí, y desde la profundidad 1 se vuelve caminando. Dormir en casa recupera todo, llena los odres y hace pasar una noche abajo (las obras se gastan y los campamentos vacíos se arriesgan). La despensa vende con el oro del héroe: raciones, ración de marcha, odre, aceite, leña, vendas, kit de campamento, antorcha, tiza, tablas y soga. Lo que se tira en la mansión se pierde.
+- **Antorchas**: se plantan en el piso y quedan para la familia. En su luz la lámpara no se gasta y los horrores dudan; los cazadores nocturnos no salen en salas con antorcha. Se consumen un tercio por amanecer y se recargan con aceite. Las tres más cercanas dan luz real.
+- **Tiza**: cinco marcas por tiza (flecha hacia donde mirás, peligro, agua, campamento, escalera), en el piso y en el mapa. Se borran con las generaciones.
+- **Puertas**: cerca del 40 % de las entradas de sala tienen puerta, abierta o cerrada según la vida. Cerrada bloquea el paso, la vista, la luz y los caminos. Abrir o cerrar hace ruido.
+- **Barricadas**: con tablas en una entrada de sala; se abren y se cierran, y reemplazan a la puerta que hubiera. Los horrores que cazan se pegan a una puerta o barricada cerrada y la golpean hasta romperla. De noche, a veces las castigan. Un campamento en una sala con todas sus entradas cerradas tiene un tercio de la chance de ataque.
+- **Pozos y sogas**: cada nivel tiene un pozo (nadie lo cruza). Una soga atada ahí es un atajo al nivel de abajo, que cae en un punto fijo, y desde ahí se puede volver a subir. La soga se pudre de a poco.
+- **Deterioro entre generaciones**: tiza −34, sogas −20, antorchas −50 (quedan apagadas), barricadas −15.
+- Guardado versión 4.
+- Pendiente: en el motor clásico no se dibujan puertas, obras ni pozos (aunque bloquean igual).

@@ -173,6 +173,32 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     ctx.stroke();
   }
 
+  // The pit, once seen, and its rope; a rope down from above at the landing.
+  if (seen(level.pit.x, level.pit.y)) {
+    const p = at(level.pit.x + 0.5, level.pit.y + 0.5);
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, Math.max(3, size * 0.4), 0, Math.PI * 2);
+    ctx.fill();
+    if (world.works.some((w) => w.kind === 'rope' && w.depth === world.depth)) {
+      ctx.strokeStyle = '#b48a5a';
+      ctx.lineWidth = Math.max(1.5, size / 8);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x, p.y - size * 0.8);
+      ctx.stroke();
+    }
+  }
+  if (world.depth > 1 && world.works.some((w) => w.kind === 'rope' && w.depth === world.depth - 1)) {
+    const p = at(level.landing.x + 0.5, level.landing.y + 0.5);
+    ctx.strokeStyle = '#b48a5a';
+    ctx.lineWidth = Math.max(1.5, size / 8);
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y + size * 0.4);
+    ctx.lineTo(p.x, p.y - size * 0.6);
+    ctx.stroke();
+  }
+
   // Doors and barricades in seen doorways.
   for (const d of level.doorways) {
     if (!seen(d.x, d.y)) continue;

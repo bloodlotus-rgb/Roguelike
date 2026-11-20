@@ -786,6 +786,19 @@ export class ThreeView {
     decor.receiveShadow = true;
     this.levelGroup.add(decor);
     this.buildDebris(level);
+    // The pit: a hole of solid ink with a ragged rim.
+    const pitMesh = new THREE.Mesh(new THREE.CircleGeometry(0.46, 20), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    pitMesh.rotation.x = -Math.PI / 2;
+    pitMesh.position.set(level.pit.x + 0.5, 0.008, level.pit.y + 0.5);
+    this.levelGroup.add(pitMesh);
+    const rim = new THREE.Mesh(
+      new THREE.RingGeometry(0.46, 0.56, 20),
+      inkMaterial(new THREE.MeshLambertMaterial({ color: 0x8a7a62 })),
+    );
+    rim.rotation.x = -Math.PI / 2;
+    rim.position.set(level.pit.x + 0.5, 0.009, level.pit.y + 0.5);
+    rim.receiveShadow = true;
+    this.levelGroup.add(rim);
     this.effects.reset();
   }
 
@@ -1283,7 +1296,33 @@ export class ThreeView {
     }
   }
 
+  private ropeMeshes: THREE.Mesh[] = [];
+
+  /** A rope tied at this level's pit, and one hanging at the landing from the level above. */
+  private syncRopes(world: World): void {
+    for (const m of this.ropeMeshes) this.scene.remove(m);
+    this.ropeMeshes = [];
+    const material = this.woodMaterial;
+    const ropeAt = (depth: number) => world.works.some((w) => w.kind === 'rope' && w.depth === depth && w.condition > 0);
+    const hang = (x: number, y: number, top: number) => {
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, top, 6), material);
+      mesh.position.set(x + 0.5, top / 2 - 0.05, y + 0.5);
+      mesh.castShadow = true;
+      this.scene.add(mesh);
+      this.ropeMeshes.push(mesh);
+    };
+    if (ropeAt(world.depth)) hang(world.level.pit.x, world.level.pit.y, 0.5);
+    if (world.depth > 1 && ropeAt(world.depth - 1)) hang(world.level.landing.x, world.level.landing.y, 3);
+  }
+
+  private ropeKey = '';
+
   private syncWorks(world: World, now: number): void {
+    const ropeKey = `${world.depth}:${world.works.filter((w) => w.kind === 'rope').map((w) => `${w.depth}-${w.condition > 0}`).join(',')}`;
+    if (ropeKey !== this.ropeKey) {
+      this.ropeKey = ropeKey;
+      this.syncRopes(world);
+    }
     const seen = new Set<number>();
     const lit: Array<{ x: number; y: number; d: number }> = [];
     for (const w of world.works) {

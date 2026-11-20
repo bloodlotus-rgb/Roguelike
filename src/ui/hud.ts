@@ -232,6 +232,8 @@ export class Hud {
     const keys: Record<NonNullable<Interaction>, StringKey> = {
       stairs: 'descend',
       up: 'action_up',
+      ropeDown: 'action_ropeDown',
+      ropeUp: 'action_ropeUp',
       camp: 'action_camp',
       torch: 'action_torch',
       openDoor: 'action_openDoor',

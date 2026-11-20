@@ -283,7 +283,8 @@ class Session implements SceneHost {
         this.dynasty.chronicle.push({ type: 'campLost', generation: this.dynasty.generation, depth: e.camp.depth, reason: 'night' });
         this.hud.toastText(t('toast_campLost', { depth: e.camp.depth }), true);
       } else if (e.type === 'workBuilt') {
-        this.hud.toast(e.work.kind === 'torch' ? 'toast_torchSet' : e.work.kind === 'barricade' ? 'toast_barricade' : 'toast_chalk');
+        const keys = { torch: 'toast_torchSet', barricade: 'toast_barricade', chalk: 'toast_chalk', rope: 'toast_rope' } as const;
+        this.hud.toast(keys[e.work.kind]);
       } else if (e.type === 'bashing') this.hud.toast(e.barricade ? 'toast_bashingBarricade' : 'toast_bashingDoor');
       else if (e.type === 'shutBroken') {
         this.hud.toastText(e.barricade ? t('toast_barricadeBroken', { depth: e.depth }) : t('toast_doorBroken'), e.barricade);
@@ -508,6 +509,14 @@ class Session implements SceneHost {
     const interaction = this.world.interaction;
     if (interaction === 'stairs') this.descend();
     else if (interaction === 'up') this.climb();
+    else if (interaction === 'ropeDown' || interaction === 'ropeUp') {
+      this.world.climbRope();
+      this.hud.setDepth(this.world.depth);
+      this.hud.setInteraction(null);
+      this.controls.reset();
+      this.classic?.restart();
+      this.persist();
+    }
     else if (interaction === 'camp') {
       // The camp is a pause by the fire.
       this.paused = true;
