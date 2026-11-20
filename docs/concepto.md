@@ -1,4 +1,4 @@
-# Concepto — borrador v3
+# Concepto — borrador v5
 
 > Estado: **borrador para revisar**. Lo marcado como **[Propuesta]** es una sugerencia mía que hay que validar; lo que está en **Decisiones abiertas** todavía no tiene respuesta.
 
@@ -45,7 +45,7 @@ Base segura arriba de la mazmorra: lugar de descanso y tienda. Es donde empieza 
 
 ## Héroes caídos
 
-- Al morir, el personaje queda como **jefe en el nivel donde murió**, con su clase y el equipo que llevaba.
+- Al morir, el personaje queda como **jefe en el nivel donde murió**, con su clase y el equipo que llevaba. Pasa con cualquier causa de muerte: combate, hambre, sed o trampa.
 - **Cada rasgo tiene un análogo de jefe.** Los atributos especiales del jefe salen de los rasgos que tuvo en vida; otros atributos dependen de la profundidad.
 - Si lo derrotás, **descansa en paz**: desaparece para siempre y suelta su equipo.
 - Si un héroe muere a manos de un héroe caído, también se convierte en jefe.
@@ -90,32 +90,47 @@ Ejemplos ilustrativos:
 
 ## Clase
 
-Se elige al empezar cada vida, después de elegir al integrante del linaje. Las clases están por definir.
+Se elige al empezar cada vida, después de elegir al integrante del linaje. La clase del ancestro no influye en la del heredero. Tres clases iniciales, pocas y bien distintas, con nombres góticos.
+
+Nombres confirmados; las identidades son **[Propuesta]**:
+
+| Base | Nombre | Identidad |
+|---|---|---|
+| Guerrero | **Verdugo** | Cuerpo a cuerpo con armas pesadas. Aguanta mucho, pero tiene más hambre y sed. |
+| Pícaro | **Saqueador** | Ágil. Desarma trampas, abre cerraduras y encuentra más oro. Frágil. |
+| Sacerdote | **Cirial** | Usa la luz como arma y como fe: quema luz para curar o para repeler. Fuerte de noche, pero vive con la luz justa. |
+
+Cada clase toca la supervivencia de una forma distinta. **[Propuesta]**
 
 ## Supervivencia
 
 - Medidores iniciales: **hambre, sed y luz**.
+- **Sin estamina**: el hambre y la sed cumplen ese papel.
 
 ### Campamentos
 
 - Son objetos que se instalan en una sala y no se pueden mover. Para tener otro punto de descanso hay que conseguir los materiales de un campamento nuevo. Ahí se descansa y se cura.
 - **Persisten entre vidas**: los campamentos de los ancestros quedan para los descendientes.
 - **Ataques nocturnos**: cada noche, cada campamento tiene una chance de ser atacado y destruido. El riesgo depende de la sala.
-- **[Propuesta]** Al campamento donde está el héroe no se le tira el riesgo: el ataque se juega y hay que defenderlo. Los campamentos vacíos se resuelven solos con su chance.
-
-### Día y noche
-
-- Hay un ciclo de día y noche aunque se esté bajo tierra.
-- **De noche** los enemigos cambian de comportamiento, baja la visibilidad y todo se vuelve más peligroso.
-- El juego pasa a un **modo de supervivencia más intenso**: o defendés tu campamento hasta que amanece, o huís hasta un campamento.
+- Al campamento donde está el héroe no se le tira el riesgo: el ataque se juega y hay que defenderlo. Los campamentos vacíos se resuelven solos con su chance.
 - **Desgaste generacional**: en cada cambio de generación, algunos campamentos pueden desaparecer. Esto evita llenar todas las salas de campamentos.
 - **[Propuesta] Riesgo de la sala**: sube con la profundidad, la cercanía a zonas donde aparecen monstruos y la cantidad de entradas de la sala. Baja en salas sin salida o fortificadas.
 - **[Propuesta] Desgaste**: la chance de desaparecer crece con las generaciones que lleva el campamento.
 
+### Día y noche
+
+- Hay un ciclo de día y noche aunque se esté bajo tierra.
+- **Duración**: de 6 a 8 minutos de día y de 2 a 3 de noche, para que entre en una sesión de celular.
+- **De noche** los enemigos cambian de comportamiento, baja la visibilidad y todo se vuelve más peligroso.
+- El juego pasa a un **modo de supervivencia más intenso**: o defendés tu campamento hasta que amanece, o huís hasta un campamento.
+- De noche la luz se gasta más rápido.
+- El atardecer se ve como papel que se oscurece y tinta que se desvanece en los bordes, sin reloj en pantalla.
+
 ## Ritmo y controles
 
 - **Tiempo real**, con pausa al salir.
-- Controles para pantalla táctil y para teclado/mouse.
+- **Celular**: joystick virtual con el pulgar izquierdo, botones de acción con el derecho, apuntado automático al enemigo más cercano hacia donde se mira.
+- **Compu**: teclado y mouse.
 
 ## Guardado
 
@@ -135,11 +150,9 @@ Se elige al empezar cada vida, después de elegir al integrante del linaje. Las 
 
 ## Decisiones abiertas
 
-1. **Duración del ciclo**: cuánto dura un día y una noche en minutos reales, y cómo se avisa que se acerca la noche.
-2. **Combate**: cómo se pelea en tiempo real con pantalla táctil.
-3. **Héroes caídos**: ¿y si murió de hambre o por una trampa? ¿Hay un tope de jefes por nivel?
-4. **Clases**: cuántas y cuáles.
-5. **Nombre del juego.**
+1. **Idioma**: ¿el juego sale en español, en inglés o con selector? Define cómo se nombran clases y rasgos.
+2. **Héroes caídos**: ¿hay un tope de jefes por nivel?
+3. **Nombre del juego.**
 
 ## Decisiones tomadas
 
@@ -149,4 +162,7 @@ Se elige al empezar cada vida, después de elegir al integrante del linaje. Las 
 - Tiempo real; medidores de hambre, sed y luz.
 - Una sola dinastía por jugador.
 - El oro y el equipo del que muere quedan con su jefe; sin depósito familiar.
-- La noche es un modo de supervivencia intenso: defender el campamento o huir a otro.
+- La noche es un modo de supervivencia intenso: defender el campamento o huir a otro. Día de 6 a 8 minutos, noche de 2 a 3.
+- Combate con joystick virtual y botones; sin estamina.
+- Tres clases iniciales: Verdugo, Saqueador y Cirial. La clase del ancestro no influye.
+- Todo héroe que muere se vuelve jefe, sea cual sea la causa.
