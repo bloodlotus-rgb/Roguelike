@@ -100,3 +100,35 @@ function castRay(x0: number, y0: number, x1: number, y1: number, visit: (x: numb
     }
   }
 }
+
+/**
+ * Walks a ray from `origin` at `angle` through the grid (DDA). Returns the distances at
+ * which it enters and leaves the first wall tile it meets, or `maxDistance` for both if
+ * it gets that far without meeting one.
+ */
+export function castWallRay(level: Level, origin: Point, angle: number, maxDistance: number): { enter: number; exit: number } {
+  const dx = Math.cos(angle);
+  const dy = Math.sin(angle);
+  let tx = Math.floor(origin.x);
+  let ty = Math.floor(origin.y);
+  const stepX = dx > 0 ? 1 : -1;
+  const stepY = dy > 0 ? 1 : -1;
+  const deltaX = Math.abs(1 / (dx || 1e-9));
+  const deltaY = Math.abs(1 / (dy || 1e-9));
+  let sideX = (dx > 0 ? tx + 1 - origin.x : origin.x - tx) * deltaX;
+  let sideY = (dy > 0 ? ty + 1 - origin.y : origin.y - ty) * deltaY;
+  for (;;) {
+    let distance: number;
+    if (sideX < sideY) {
+      distance = sideX;
+      sideX += deltaX;
+      tx += stepX;
+    } else {
+      distance = sideY;
+      sideY += deltaY;
+      ty += stepY;
+    }
+    if (distance >= maxDistance) return { enter: maxDistance, exit: maxDistance };
+    if (!isFloor(level, tx, ty)) return { enter: distance, exit: Math.min(sideX, sideY) };
+  }
+}

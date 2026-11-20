@@ -42,6 +42,9 @@ export const COMBAT = {
   hearing: 0.9,
   /** Fraction of the light radius within which the flame gives the player away from any side. */
   glow: 0.5,
+  /** The hero sees only ahead: half-angle of the vision cone, and how close is seen all around. */
+  visionCone: (58 * Math.PI) / 180,
+  nearSight: 1.4,
   /** Unseen horrors within this many tiles that look at the player show their eyes. */
   eyesRange: 9,
   /** A horror that notices the player warns the others within this many tiles. */
@@ -168,6 +171,7 @@ export class World {
   private flowTile = -1;
   private lastViewTile = -1;
   private lastRadius = -1;
+  private lastFacing = 999;
 
   constructor(seed: string, classId: ClassId = 'headsman', life = 0, depth = 1) {
     this.seed = seed;
@@ -608,10 +612,22 @@ export class World {
   reveal(): number[] {
     const tileIndex = Math.floor(this.player.y) * this.level.width + Math.floor(this.player.x);
     const radius = Math.round(this.lightRadius * 4) / 4;
-    if (tileIndex === this.lastViewTile && radius === this.lastRadius) return [];
+    const facing = Math.round(Math.atan2(this.facing.y, this.facing.x) / 0.06);
+    if (tileIndex === this.lastViewTile && radius === this.lastRadius && facing === this.lastFacing) return [];
     this.lastViewTile = tileIndex;
     this.lastRadius = radius;
-    this.visibleNow = new Set(visibleTiles(this.level, this.player, radius));
+    this.lastFacing = facing;
+    const { width } = this.level;
+    // In line of sight and lit, and either ahead of the hero or right next to them.
+    this.visibleNow = new Set(
+      visibleTiles(this.level, this.player, radius).filter((index) => {
+        const to = { x: (index % width) + 0.5 - this.player.x, y: Math.floor(index / width) + 0.5 - this.player.y };
+        const d = length(to);
+        if (d <= COMBAT.nearSight + 0.5) return true;
+        // Count a tile as seen if any part of it falls inside the cone.
+        return angleBetween(this.facing, to) <= COMBAT.visionCone + Math.atan(0.7 / d);
+      }),
+    );
     const fresh: number[] = [];
     for (const index of this.visibleNow) {
       if (this.explored[index]) continue;
