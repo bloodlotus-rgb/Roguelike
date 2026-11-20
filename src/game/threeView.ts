@@ -57,7 +57,9 @@ function canvasTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
 }
 
 /** Shared by the wall materials: whether to cut walls away, and where the hero stands. */
-const cutaway = { fade: { value: 0 }, player: { value: new THREE.Vector3() } };
+const cutaway = { fade: { value: 0 }, player: { value: new THREE.Vector3() }, night: { value: 0 } };
+/** Radius of the plunderer's sight in the dark, in tiles. */
+const NIGHT_RADIUS = 6.5;
 
 /**
  * Our ink look on lit surfaces, plus the cut-away for the top view.
@@ -107,6 +109,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uFade = cutaway.fade;
     shader.uniforms.uPlayer = cutaway.player;
+    shader.uniforms.uNight = cutaway.night;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;')
       .replace(
@@ -125,7 +128,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
-        '#include <common>\nuniform float uFade;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;',
+        '#include <common>\nuniform float uFade;\nuniform float uNight;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;',
       )
       .replace(
         '#include <map_fragment>',
@@ -161,6 +164,23 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           float ink = max(step(d1, smoothstep(0.35, 1.0, tone) * 0.22), step(d2, smoothstep(0.7, 1.0, tone) * 0.16));
           ink *= step(0.015, lit);
           outgoingLight = mix(outgoingLight, outgoingLight * 0.2, ink);
+          if (uNight > 0.5) {
+            // Sight in the dark: everything black, the drawing's own lines and the
+            // shading hatches traced in white, fading out with distance.
+            float far = distance(vInkPos.xz, uPlayer.xz);
+            float fade = 1.0 - smoothstep(${(NIGHT_RADIUS * 0.55).toFixed(2)}, ${NIGHT_RADIUS.toFixed(2)}, far);
+            // Contours: where the drawing changes tone sharply, and where surfaces fold.
+            float texel = dot(diffuseColor.rgb, vec3(0.3333));
+            float lines = smoothstep(0.08, 0.2, fwidth(texel));
+            lines = max(lines, smoothstep(0.25, 0.7, length(fwidth(n))));
+            vec3 toHero = normalize(vec3(uPlayer.x, 1.3, uPlayer.z) - vInkPos);
+            float facing = clamp(dot(n, toHero), 0.0, 1.0);
+            float shadeTone = 1.0 - facing;
+            float hatch = max(step(d1, smoothstep(0.25, 1.0, shadeTone) * 0.2), step(d2, smoothstep(0.65, 1.0, shadeTone) * 0.14));
+            // Ceilings stay quieter so the eye goes to walls and floor.
+            float chalk = max(lines, hatch * (n.y < -0.5 ? 0.25 : 0.55)) * fade;
+            outgoingLight = vec3(0.84, 0.87, 0.92) * chalk;
+          }
         }
         #include <opaque_fragment>`,
       );
@@ -228,6 +248,11 @@ class Cutout {
   /** Brightness from the game's own rule of sight, warmed by the flame. */
   shade(material: THREE.MeshBasicMaterial, brightness: number, red = 0): void {
     const b = Math.max(0, Math.min(1, brightness));
+    if (cutaway.night.value > 0.5) {
+      // Seen in the dark: pale and cold, like the chalk lines around them.
+      material.color.setRGB(b * 0.62 * (1 + red * 0.3), b * 0.66 * (1 - red * 0.5), b * 0.74 * (1 - red * 0.5));
+      return;
+    }
     material.color.setRGB(b * (1 - red * 0.2), b * 0.86 * (1 - red * 0.75), b * 0.66 * (1 - red * 0.8));
   }
 }
@@ -646,6 +671,8 @@ export class ThreeView {
   private positionCamera(world: World, fpAngle: number): void {
     const p = world.player;
     cutaway.fade.value = this.mode === 'top' ? 1 : 0;
+    // The plunderer's shadow step snuffs the light, but lets them see the world in chalk.
+    cutaway.night.value = world.invisible && world.cls.special.kind === 'shadowStep' ? 1 : 0;
     cutaway.player.value.set(p.x, 0, p.y);
     if (this.mode === 'first') {
       this.camera.position.set(p.x, EYE, p.y);
