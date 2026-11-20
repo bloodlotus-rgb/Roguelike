@@ -315,7 +315,14 @@ class Session implements SceneHost {
     const life = save.life!;
     this.memberId = life.memberId;
     this.chronicleFrom = life.chronicleFrom ?? this.dynasty.chronicle.length;
-    void this.begin(World.restore(life.world, this.dynasty.explored)).then(() => this.setPaused(true));
+    void this.begin(
+      World.restore(life.world, {
+        explored: this.dynasty.explored,
+        camps: this.dynasty.camps,
+        builder: life.memberId,
+        generation: this.dynasty.generation,
+      }),
+    ).then(() => this.setPaused(true));
   }
 
   /** A member was chosen on the roster: now their class. */
@@ -334,7 +341,13 @@ class Session implements SceneHost {
     this.chosen = null;
     this.chronicleFrom = this.dynasty.chronicle.length;
     await this.begin(
-      new World(this.dynasty.seed, classId, this.dynasty.lives, 1, { traits: [...member.traits], explored: this.dynasty.explored }),
+      new World(this.dynasty.seed, classId, this.dynasty.lives, 1, {
+        traits: [...member.traits],
+        explored: this.dynasty.explored,
+        camps: this.dynasty.camps,
+        builder: member.id,
+        generation: this.dynasty.generation,
+      }),
     );
     this.persist();
     this.showHint();

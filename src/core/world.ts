@@ -7,7 +7,7 @@ import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
 import { hasLineOfSight, moveWithCollision, visibleTiles } from './geometry';
 import { Rng } from './rng';
-import { packTiles, unpackTiles, type DeathCause } from './dynasty';
+import { packTiles, unpackTiles, type CampSite, type DeathCause } from './dynasty';
 import { freshSurvival, isDead, lightRadius, tickSurvival, type Survival } from './survival';
 import { combineEffects, compatible, TRAIT_CAP, traitDef, type TraitEffects } from './traits';
 
@@ -114,12 +114,22 @@ export type PlayerAction =
 export type WorldEvent =
   | { type: 'pickup'; itemId: number; kind: LootKind; amount?: number }
   | { type: 'noRoom'; kind: ItemKind }
-  | { type: 'refilled'; skins: number }
+  | { type: 'refilled'; skins: number; turbid: boolean }
   | { type: 'found'; kinds: LootKind[]; gold: number; dropped: number }
   | { type: 'used'; kind: ItemKind }
-  | { type: 'cantUse'; reason: 'danger' | 'empty' }
+  | { type: 'cantUse'; reason: 'danger' | 'empty' | 'camp' }
   | { type: 'channel'; kind: ItemKind; seconds: number }
   | { type: 'interrupted' }
+  | { type: 'nightfall' }
+  | { type: 'dawn' }
+  | { type: 'campBuilt'; camp: CampSite }
+  | { type: 'cantBuild'; reason: 'danger' | 'corridor' | 'taken' }
+  | { type: 'campLost'; camp: CampSite }
+  | { type: 'campUsed'; kind: ItemKind; sick?: boolean; poisoned?: boolean; nightmares?: boolean }
+  | { type: 'needFire' }
+  | { type: 'boiled' }
+  | { type: 'fireLit' }
+  | { type: 'slept'; outcome: 'quiet' | 'noises' | 'attack'; healed: number }
   | { type: 'revealed'; tiles: number[] }
   | { type: 'attack'; pos: Point; facing: Point; arc: number; range: number; finisher: boolean }
   | { type: 'enemyHit'; id: number; damage: number; crit: boolean; burn: boolean; pos: Point }
@@ -143,13 +153,18 @@ export interface LifeOptions {
   explored?: Record<number, string>;
   /** What the hero carries down (a starter kit when left out). */
   inventory?: Inventory;
+  /** The family's camps, shared with the dynasty (camps pitched now are added to it). */
+  camps?: CampSite[];
+  /** Who is down there and in which generation, for the camps they pitch. */
+  builder?: number;
+  generation?: number;
 }
 
 /** Things the player asks for between frames; the world carries them out in its update. */
 type Command = { type: 'interact' } | { type: 'use'; uid: number } | { type: 'drop'; uid: number };
 
 /** What the hero can do where they stand. */
-export type Interaction = 'stairs' | 'fountain' | 'search' | null;
+export type Interaction = 'stairs' | 'camp' | 'fountain' | 'drip' | 'search' | null;
 
 /** Counters behind the acquired traits. */
 export interface LifeCounters {
@@ -207,6 +222,9 @@ export interface WorldSnapshot {
   /** Containers already searched on this level. */
   searched?: number[];
   calm?: number;
+  clock?: number;
+  fire?: boolean;
+  nightmares?: boolean;
   /** This level's explored tiles, packed. */
   explored: string;
   path: number[];
@@ -262,6 +280,15 @@ export class World {
   inventory: Inventory;
   gold = 0;
   searched = new Set<number>();
+  /** Seconds since the first dawn of this life. */
+  clock = 0;
+  /** The fire of the camp at hand is burning (until dawn). */
+  campfire = false;
+  /** Horror flesh brings bad dreams: the next night heals less. */
+  nightmares = false;
+  camps: CampSite[];
+  private readonly builder: number;
+  private readonly generation: number;
   /** Seconds without danger nearby; healing starts after a while. */
   calm = 0;
   /** Eating, drinking or filling the lamp: standing still for a moment. */
@@ -323,13 +350,16 @@ export class World {
     this.fx = combineEffects(this.traits);
     this.exploredByDepth = options.explored ?? {};
     this.inventory = options.inventory ? JSON.parse(JSON.stringify(options.inventory)) : starterKit();
+    this.camps = options.camps ?? [];
+    this.builder = options.builder ?? 0;
+    this.generation = options.generation ?? 1;
     this.survival = freshSurvival(this.maxHealth);
     this.enterLevel(depth);
   }
 
   /** Brings a saved life back exactly as it was. */
-  static restore(snapshot: WorldSnapshot, explored: Record<number, string> = {}): World {
-    const world = new World(snapshot.seed, snapshot.classId, snapshot.life, snapshot.depth, { traits: snapshot.traits, explored });
+  static restore(snapshot: WorldSnapshot, options: Omit<LifeOptions, 'traits' | 'inventory'> = {}): World {
+    const world = new World(snapshot.seed, snapshot.classId, snapshot.life, snapshot.depth, { ...options, traits: snapshot.traits });
     world.player = { ...snapshot.player };
     world.facing = { ...snapshot.facing };
     world.survival = { ...snapshot.survival };
@@ -351,6 +381,9 @@ export class World {
     world.gold = snapshot.gold ?? 0;
     world.searched = new Set(snapshot.searched ?? []);
     world.calm = snapshot.calm ?? 0;
+    world.clock = snapshot.clock ?? 0;
+    world.campfire = snapshot.fire ?? false;
+    world.nightmares = snapshot.nightmares ?? false;
     world.rng.state = snapshot.rng;
     world.explored = unpackTiles(snapshot.explored, world.level.width * world.level.height);
     world.path = new Set(snapshot.path);
@@ -400,6 +433,9 @@ export class World {
       gold: this.gold,
       searched: [...this.searched],
       calm: this.calm,
+      clock: this.clock,
+      fire: this.campfire,
+      nightmares: this.nightmares,
       rng: this.rng.state,
       explored: packTiles(this.explored),
       path: [...this.path],
@@ -500,7 +536,8 @@ export class World {
   /** Distance at which horrors notice the player. */
   detectionRange(def: EnemyDef): number {
     const run = this.running ? 1 + (COMBAT.run.detection - 1) * (1 + (this.fx.runNoise ?? 0)) : 1;
-    return (def.detect + this.lightRadius * 0.8) * run * Math.max(0.3, 1 + (this.fx.detection ?? 0));
+    const night = this.isNight ? CONFIG.time.nightDetection : 1;
+    return (def.detect + this.lightRadius * 0.8) * run * night * Math.max(0.3, 1 + (this.fx.detection ?? 0));
   }
 
   /** Rat eye: distance at which the plunderer sees items in the dark (0 for other classes). */
@@ -532,31 +569,7 @@ export class World {
     this.rng = Rng.derive(this.seed, 'combat', this.life, depth);
     const spawnRng = Rng.derive(this.seed, 'enemies', this.life, depth);
     this.nextId = Math.max(this.nextId, ...this.level.items.map((i) => i.id + 1));
-    this.enemies = spawnEnemies(this.level, spawnRng).map((spawn) => ({
-      id: this.nextId++,
-      kind: spawn.kind,
-      def: ENEMIES[spawn.kind],
-      pos: { ...spawn.pos },
-      health: ENEMIES[spawn.kind].health,
-      state: 'idle',
-      timer: spawnRng.range(0, 2),
-      alerted: false,
-      forgetTimer: 0,
-      facing: { x: 1, y: 0 },
-      strikeDir: { x: 1, y: 0 },
-      room: spawn.room,
-      roamer: spawn.roamer,
-      wanderTarget: null,
-      roamField: null,
-      roamRoom: spawn.room,
-      flank: spawnRng.range(-1, 1),
-      visible: false,
-      watching: false,
-      wax: 0,
-      waxTick: 0,
-      bleed: 0,
-      bleedTick: 0,
-    }));
+    this.enemies = spawnEnemies(this.level, spawnRng).map((spawn) => this.makeEnemy(spawn.kind, spawn.pos, spawn.room, spawn.roamer, spawnRng));
     // Tunnel Rat: one more item on every level.
     if (this.fx.extraItem) {
       const extraRng = Rng.derive(this.seed, 'extra', this.life, depth);
@@ -588,7 +601,8 @@ export class World {
       maxHealth: this.maxHealth,
       hungerMultiplier: this.cls.hungerMultiplier * Math.max(0.2, 1 + (fx.hunger ?? 0)),
       thirstMultiplier: this.cls.thirstMultiplier * Math.max(0.2, 1 + (fx.thirst ?? 0)),
-      lightMultiplier: (passive.kind === 'devoutFlame' ? passive.lightDrain : 1) * Math.max(0.2, 1 + (fx.light ?? 0)),
+      lightMultiplier:
+        (passive.kind === 'devoutFlame' ? passive.lightDrain : 1) * Math.max(0.2, 1 + (fx.light ?? 0)) * (this.isNight ? CONFIG.time.nightLight : 1),
       starvingMultiplier: Math.max(0.2, 1 + (fx.starvingDrain ?? 0)),
     });
     if (this.survival.health < before.health) this.lastCause = before.hunger <= 0 || this.survival.hunger <= 0 ? { type: 'hunger' } : { type: 'thirst' };
@@ -603,6 +617,7 @@ export class World {
     }
     this.gainCharge(this.cls.charge.perSecond * (1 + (fx.chargeOverTime ?? 0)) * dt);
     this.time += dt;
+    this.tickClock(dt, events);
     this.rally *= Math.exp(-dt / COMBAT.rallyFade);
     if (fx.mapPath) this.path.add(Math.floor(this.player.y) * this.level.width + Math.floor(this.player.x));
 
@@ -886,6 +901,14 @@ export class World {
         events.push({ type: 'drop', item });
       }
     }
+    // Crawlers and Husks leave flesh that feeds, cooked, at a price.
+    if ((enemy.kind === 'crawler' || enemy.kind === 'husk') && this.rng.chance(CONFIG.loot.horrorMeat)) {
+      const meat: LevelItem = { id: this.nextId++, kind: 'horrorMeat', x: Math.floor(enemy.pos.x), y: Math.floor(enemy.pos.y) };
+      if (isFloor(this.level, meat.x, meat.y)) {
+        this.level.items.push(meat);
+        events.push({ type: 'drop', item: meat });
+      }
+    }
   }
 
   private startSpecial(events: WorldEvent[]): void {
@@ -978,7 +1001,8 @@ export class World {
   private healWhenCalm(dt: number): void {
     this.calm = this.inDanger ? 0 : this.calm + dt;
     const s = this.survival;
-    if (this.calm < CONFIG.survival.calmBeforeHealing || s.health >= this.maxHealth || s.hunger <= 0 || s.thirst <= 0) return;
+    // At night wounds stay open until you sleep.
+    if (this.isNight || this.calm < CONFIG.survival.calmBeforeHealing || s.health >= this.maxHealth || s.hunger <= 0 || s.thirst <= 0) return;
     const amount = Math.min(CONFIG.survival.healPerSecond * dt, this.maxHealth - s.health);
     this.survival = { ...s, health: s.health + amount };
     this.spend(this.cls.costs.heal, amount);
@@ -1069,7 +1093,7 @@ export class World {
       }
       if (item.kind === 'gold') {
         this.gold += item.amount ?? 0;
-      } else if (!addItem(this.inventory, item.kind, item.charges ?? ITEMS[item.kind].charges)) {
+      } else if (!addItem(this.inventory, item.kind, item.charges ?? ITEMS[item.kind].charges, { turbid: item.turbid, poison: item.poison })) {
         // No room: it stays on the floor until something is dropped.
         if (this.refused !== item.id) events.push({ type: 'noRoom', kind: item.kind });
         this.refused = item.id;
@@ -1080,6 +1104,280 @@ export class World {
     }
   }
 
+  // Day, night and camps ---------------------------------------------------------------
+
+  get isNight(): boolean {
+    return this.clock % (CONFIG.time.day + CONFIG.time.night) >= CONFIG.time.day;
+  }
+
+  /** Day of this life, from 1. */
+  get day(): number {
+    return Math.floor(this.clock / (CONFIG.time.day + CONFIG.time.night)) + 1;
+  }
+
+  /** How far through the day or the night, 0 to 1. */
+  get phase(): number {
+    const t = this.clock % (CONFIG.time.day + CONFIG.time.night);
+    return this.isNight ? (t - CONFIG.time.day) / CONFIG.time.night : t / CONFIG.time.day;
+  }
+
+  private tickClock(dt: number, events: WorldEvent[]): void {
+    const wasNight = this.isNight;
+    this.clock += dt;
+    if (!wasNight && this.isNight) this.nightfall(events);
+    else if (wasNight && !this.isNight) this.dawn(events, null);
+  }
+
+  /** Night falls: hunters come out of the far rooms. */
+  private nightfall(events: WorldEvent[]): void {
+    const rng = Rng.derive(this.seed, 'nightfall', this.life, this.depth, this.day);
+    const far = this.level.rooms
+      .map((room, index) => ({ room, index }))
+      .filter(({ room }) => dist(this.player, { x: room.x + room.w / 2, y: room.y + room.h / 2 }) > 12);
+    if (far.length === 0) return;
+    const count = 2 + Math.floor(this.depth / 2);
+    for (let i = 0; i < count; i++) {
+      const { room, index } = rng.pick(far);
+      const pos = { x: rng.int(room.x, room.x + room.w - 1) + 0.5, y: rng.int(room.y, room.y + room.h - 1) + 0.5 };
+      if (!isFloor(this.level, Math.floor(pos.x), Math.floor(pos.y))) continue;
+      this.enemies.push(this.makeEnemy(rng.pick<EnemyKind>(['crawler', 'crawler', 'husk', 'snuffer']), pos, index, true, rng));
+    }
+    events.push({ type: 'nightfall' });
+  }
+
+  /** Dawn: the fire is out, and empty camps learn whether something came in the night. */
+  private dawn(events: WorldEvent[], slept: CampSite | null): void {
+    this.campfire = false;
+    const rng = Rng.derive(this.seed, 'dawn', this.life, this.day);
+    for (const camp of [...this.camps]) {
+      if (camp === slept || !rng.chance(CONFIG.camp.emptyAttack)) continue;
+      camp.condition -= CONFIG.camp.emptyDamage;
+      if (camp.condition <= 0) this.loseCamp(camp, events);
+    }
+    events.push({ type: 'dawn' });
+  }
+
+  private loseCamp(camp: CampSite, events: WorldEvent[]): void {
+    const i = this.camps.indexOf(camp);
+    if (i >= 0) this.camps.splice(i, 1);
+    events.push({ type: 'campLost', camp });
+  }
+
+  /** A family camp on this level within reach. */
+  get campInReach(): CampSite | null {
+    return (
+      this.camps.find((c) => c.depth === this.depth && dist(this.player, { x: c.x + 0.5, y: c.y + 0.5 }) <= CONFIG.camp.reach) ?? null
+    );
+  }
+
+  private roomAt(x: number, y: number): number {
+    return this.level.rooms.findIndex((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+  }
+
+  /** Pitches a camp where the hero stands: inside a room, out of danger, one per room. */
+  private buildCamp(uid: number, events: WorldEvent[]): void {
+    const x = Math.floor(this.player.x);
+    const y = Math.floor(this.player.y);
+    const room = this.roomAt(x, y);
+    if (this.inDanger) return void events.push({ type: 'cantBuild', reason: 'danger' });
+    if (room < 0) return void events.push({ type: 'cantBuild', reason: 'corridor' });
+    const taken = this.camps.some((c) => c.depth === this.depth && this.roomAt(c.x, c.y) === room);
+    const onSomething = (x === this.level.stairs.x && y === this.level.stairs.y) || this.level.features.some((f) => f.x === x && f.y === y);
+    if (taken || onSomething) return void events.push({ type: 'cantBuild', reason: 'taken' });
+    removeItem(this.inventory, uid);
+    const camp: CampSite = {
+      id: Math.max(0, ...this.camps.map((c) => c.id)) + 1,
+      depth: this.depth,
+      x,
+      y,
+      built: this.generation,
+      builder: this.builder,
+      condition: 100,
+    };
+    this.camps.push(camp);
+    events.push({ type: 'campBuilt', camp });
+  }
+
+  /** How much more cooking gives, with Wits. */
+  private get cookBonus(): number {
+    return 1 + Math.max(0, this.attrs.wit - 10) * 0.03;
+  }
+
+  /** Whether the hero can tell a poisonous mushroom (Wits). */
+  get knowsMushrooms(): boolean {
+    return this.attrs.wit >= 12;
+  }
+
+  /**
+   * By the fire: eat, drink, dress wounds, cook, feed the fire or fill the lamp with an
+   * item. Takes effect at once (the camp screen is a pause in the game). Returns what
+   * happened.
+   */
+  campUse(uid: number): WorldEvent[] {
+    const events: WorldEvent[] = [];
+    const item = this.inventory.items.find((it) => it.uid === uid);
+    if (!item || !this.campInReach) return events;
+    const s = { ...this.survival };
+    const clamp = (v: number) => Math.max(0, Math.min(100, v));
+    const food = Math.max(0.2, 1 + (this.fx.foodValue ?? 0));
+    const cfg = CONFIG.camp;
+    const needsFire = item.kind === 'mushroom' || item.kind === 'horrorMeat';
+    if (needsFire && !this.campfire) return [{ type: 'needFire' }];
+    const used: Extract<WorldEvent, { type: 'campUsed' }> = { type: 'campUsed', kind: item.kind };
+    switch (item.kind) {
+      case 'ration':
+        s.hunger = clamp(s.hunger + CONFIG.use.ration.hunger * food);
+        s.health = Math.min(this.maxHealth, s.health + (this.fx.foodHeal ?? 0));
+        removeItem(this.inventory, uid);
+        break;
+      case 'marchRation':
+        s.hunger = clamp(s.hunger + CONFIG.use.marchRation.hunger * food);
+        s.thirst = clamp(s.thirst + CONFIG.use.marchRation.thirst);
+        removeItem(this.inventory, uid);
+        break;
+      case 'waterskin':
+        if (!item.charges) return [{ type: 'cantUse', reason: 'empty' }];
+        s.thirst = clamp(s.thirst + CONFIG.use.waterskin.thirst);
+        item.charges--;
+        // Unboiled drip water may turn your stomach.
+        if (item.turbid && this.rng.chance(0.5)) {
+          s.hunger = clamp(s.hunger - 10);
+          s.health = Math.max(1, s.health - 8);
+          used.sick = true;
+        }
+        if (item.charges === 0) item.turbid = false;
+        break;
+      case 'bandage':
+        s.health = Math.min(this.maxHealth, s.health + cfg.bandage);
+        removeItem(this.inventory, uid);
+        break;
+      case 'mushroom':
+        if (item.poison) {
+          s.thirst = clamp(s.thirst - 20);
+          s.health = Math.max(1, s.health - 10);
+          used.poisoned = true;
+        } else s.hunger = clamp(s.hunger + cfg.mushroom * this.cookBonus * food);
+        removeItem(this.inventory, uid);
+        break;
+      case 'horrorMeat':
+        s.hunger = clamp(s.hunger + cfg.horrorMeat * this.cookBonus * food);
+        if (this.rng.chance(cfg.nightmares)) {
+          this.nightmares = true;
+          used.nightmares = true;
+        }
+        removeItem(this.inventory, uid);
+        break;
+      case 'firewood':
+        if (this.campfire) return events;
+        this.campfire = true;
+        removeItem(this.inventory, uid);
+        this.survival = s;
+        return [{ type: 'fireLit' }];
+      case 'oil':
+        s.light = clamp(s.light + CONFIG.use.oil.light * Math.max(0.2, 1 + (this.fx.oilValue ?? 0)));
+        removeItem(this.inventory, uid);
+        break;
+      case 'campKit':
+        return events;
+    }
+    this.survival = s;
+    events.push(used);
+    return events;
+  }
+
+  /** Boils a waterskin of drip water over the fire, so it is safe to drink. */
+  campBoil(uid: number): WorldEvent[] {
+    const item = this.inventory.items.find((it) => it.uid === uid);
+    if (!item || item.kind !== 'waterskin' || !item.turbid || !this.campInReach) return [];
+    if (!this.campfire) return [{ type: 'needFire' }];
+    item.turbid = false;
+    return [{ type: 'boiled' }];
+  }
+
+  /**
+   * Sleeps until dawn. The night is drawn: quiet, noises that spoil the rest, or an attack
+   * that wakes you in the dark with horrors at the fire. A fire and Will keep them away.
+   */
+  sleep(): WorldEvent[] {
+    const camp = this.campInReach;
+    if (!camp || this.inDanger) return [];
+    const events: WorldEvent[] = [];
+    const cfg = CONFIG.camp;
+    const rng = Rng.derive(this.seed, 'night', this.life, this.depth, this.day, Math.floor(this.clock));
+    const attackChance = Math.min(0.6, Math.max(0.03, cfg.attack + (this.campfire ? 0 : cfg.noFire) - (this.attrs.wil - 10) * 0.015));
+    const roll = rng.next();
+    const outcome = roll < attackChance ? 'attack' : roll < attackChance + cfg.noises ? 'noises' : 'quiet';
+    // Rest: whole with a full belly and throat, less on an empty one, bad dreams or a broken night.
+    const s = this.survival;
+    let rest = Math.min(1, Math.min(s.hunger, s.thirst) / 50);
+    if (this.nightmares) rest *= 0.5;
+    if (outcome === 'noises') rest *= 0.7;
+    if (outcome === 'attack') rest *= 0.4;
+    const healed = (this.maxHealth - s.health) * rest;
+    this.survival = {
+      ...s,
+      health: s.health + healed,
+      hunger: Math.max(0, s.hunger - cfg.nightHunger * this.cls.hungerMultiplier),
+      thirst: Math.max(0, s.thirst - cfg.nightThirst * this.cls.thirstMultiplier),
+    };
+    this.nightmares = false;
+    const cycle = CONFIG.time.day + CONFIG.time.night;
+    const dayStart = Math.floor(this.clock / cycle) * cycle;
+    if (outcome === 'attack') {
+      // Woken in the middle of the night: hold the fire until dawn.
+      this.clock = Math.max(this.clock, dayStart + CONFIG.time.day + CONFIG.time.night * 0.35);
+      camp.condition -= cfg.attackDamage;
+      const room = this.roomAt(camp.x, camp.y);
+      const r = this.level.rooms[room];
+      const count = rng.int(2, 3) + Math.floor(this.depth / 4);
+      for (let i = 0; i < count && r; i++) {
+        // They come in along the walls of the room.
+        const side = rng.int(0, 3);
+        const x = side === 0 ? r.x : side === 1 ? r.x + r.w - 1 : rng.int(r.x, r.x + r.w - 1);
+        const y = side === 2 ? r.y : side === 3 ? r.y + r.h - 1 : rng.int(r.y, r.y + r.h - 1);
+        if (!isFloor(this.level, x, y)) continue;
+        const enemy = this.makeEnemy(rng.pick<EnemyKind>(['crawler', 'crawler', 'husk']), { x: x + 0.5, y: y + 0.5 }, room, false, rng);
+        enemy.alerted = true;
+        enemy.state = 'chase';
+        this.enemies.push(enemy);
+      }
+      if (camp.condition <= 0) this.loseCamp(camp, events);
+    } else {
+      this.clock = dayStart + cycle;
+      this.dawn(events, camp);
+    }
+    events.unshift({ type: 'slept', outcome, healed: Math.round(healed) });
+    return events;
+  }
+
+  private makeEnemy(kind: EnemyKind, pos: Point, room: number, roamer: boolean, rng: Rng): Enemy {
+    return {
+      id: this.nextId++,
+      kind,
+      def: ENEMIES[kind],
+      pos: { ...pos },
+      health: ENEMIES[kind].health,
+      state: 'idle',
+      timer: rng.range(0, 2),
+      alerted: false,
+      forgetTimer: 0,
+      facing: { x: 1, y: 0 },
+      strikeDir: { x: 1, y: 0 },
+      room,
+      roamer,
+      wanderTarget: null,
+      roamField: null,
+      roamRoom: room,
+      flank: rng.range(-1, 1),
+      visible: false,
+      watching: false,
+      wax: 0,
+      waxTick: 0,
+      bleed: 0,
+      bleedTick: 0,
+    };
+  }
+
   // Backpack and places ---------------------------------------------------------------
 
   /** The fountain or unsearched container within reach, if any. */
@@ -1087,7 +1385,7 @@ export class World {
     let best: Feature | null = null;
     let bestD: number = CONFIG.loot.reach;
     for (const f of this.level.features) {
-      if (f.kind !== 'fountain' && this.searched.has(f.id)) continue;
+      if ((f.kind === 'remains' || f.kind === 'crate') && this.searched.has(f.id)) continue;
       const d = dist(this.player, { x: f.x + 0.5, y: f.y + 0.5 });
       if (d <= bestD) {
         best = f;
@@ -1100,9 +1398,10 @@ export class World {
   /** What the action button does here. */
   get interaction(): Interaction {
     if (this.atStairs) return 'stairs';
+    if (this.campInReach) return 'camp';
     const f = this.featureInReach();
     if (!f) return null;
-    return f.kind === 'fountain' ? 'fountain' : 'search';
+    return f.kind === 'fountain' || f.kind === 'drip' ? f.kind : 'search';
   }
 
   /** Use the fountain or search the container at hand (the stairs are the session's business). */
@@ -1132,18 +1431,21 @@ export class World {
   private doInteract(events: WorldEvent[]): void {
     const f = this.featureInReach();
     if (!f) return;
-    if (f.kind === 'fountain') {
+    if (f.kind === 'fountain' || f.kind === 'drip') {
+      // Drip water is turbid, and mixed with clean water it all turns turbid.
+      const turbid = f.kind === 'drip';
       let skins = 0;
       for (const it of this.inventory.items) {
         if (it.kind !== 'waterskin') continue;
         it.charges = ITEMS.waterskin.charges;
+        it.turbid = turbid;
         skins++;
       }
-      events.push({ type: 'refilled', skins });
+      events.push({ type: 'refilled', skins, turbid });
       return;
     }
     this.searched.add(f.id);
-    const table = CONFIG.loot[f.kind];
+    const table = CONFIG.loot[f.kind as 'remains' | 'crate'];
     const rng = Rng.derive(this.seed, 'search', this.life, this.depth, f.id);
     const kinds: LootKind[] = [];
     let gold = 0;
@@ -1165,9 +1467,9 @@ export class World {
   }
 
   /** Leaves an item on the floor, where it stays for this life. */
-  private dropAt(kind: LootKind, x: number, y: number, charges?: number): void {
+  private dropAt(kind: LootKind, x: number, y: number, charges?: number, extra: Pick<LevelItem, 'turbid' | 'poison'> = {}): void {
     const id = this.nextId++ + 5000;
-    const item: LevelItem = { id, kind, x, y };
+    const item: LevelItem = { id, kind, x, y, ...extra };
     if (charges !== undefined) item.charges = charges;
     this.level.items.push(item);
     // Picked up again only after stepping away and back.
@@ -1177,7 +1479,7 @@ export class World {
   private doDrop(uid: number): void {
     const item = removeItem(this.inventory, uid);
     if (!item) return;
-    this.dropAt(item.kind, Math.floor(this.player.x), Math.floor(this.player.y), item.charges);
+    this.dropAt(item.kind, Math.floor(this.player.x), Math.floor(this.player.y), item.charges, { turbid: item.turbid, poison: item.poison });
   }
 
   /** Eating, drinking and filling the lamp take a moment standing still; march rations don't. */
@@ -1190,6 +1492,15 @@ export class World {
     }
     if (ITEMS[item.kind].onTheMove) {
       this.applyItem(uid, events);
+      return;
+    }
+    // Food, water, bandages: only by the fire. A camp kit is pitched where you stand.
+    if (item.kind === 'campKit') {
+      this.buildCamp(uid, events);
+      return;
+    }
+    if (ITEMS[item.kind].campOnly) {
+      events.push({ type: 'cantUse', reason: 'camp' });
       return;
     }
     if (item.kind !== 'oil' && this.inDanger) {
@@ -1448,7 +1759,7 @@ export class World {
       events.push({ type: 'parry', id: enemy.id, pos: { ...enemy.pos } });
       return;
     }
-    this.hurtPlayer(def.damage, def.stealsLight, events, { kind: def.kind });
+    this.hurtPlayer(def.damage * (this.isNight ? CONFIG.time.nightDamage : 1), def.stealsLight, events, { kind: def.kind });
   }
 
   private fire(enemy: Enemy): void {

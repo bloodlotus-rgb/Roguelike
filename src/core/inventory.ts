@@ -3,7 +3,16 @@
  * matters more takes up more room. Pure logic, no drawing.
  */
 
-export type ItemKind = 'ration' | 'marchRation' | 'waterskin' | 'oil';
+export type ItemKind =
+  | 'ration'
+  | 'marchRation'
+  | 'waterskin'
+  | 'oil'
+  | 'firewood'
+  | 'bandage'
+  | 'mushroom'
+  | 'horrorMeat'
+  | 'campKit';
 
 export interface ItemDef {
   /** Cells across and down, unturned. */
@@ -13,13 +22,20 @@ export interface ItemDef {
   charges?: number;
   /** Can be used while walking (otherwise you stop for a moment). */
   onTheMove?: boolean;
+  /** Only by the fire: eating, drinking, cooking, dressing wounds. */
+  campOnly?: boolean;
 }
 
 export const ITEMS: Record<ItemKind, ItemDef> = {
-  ration: { w: 1, h: 1 },
+  ration: { w: 1, h: 1, campOnly: true },
   marchRation: { w: 1, h: 2, onTheMove: true },
-  waterskin: { w: 1, h: 2, charges: 4 },
+  waterskin: { w: 1, h: 2, charges: 4, campOnly: true },
   oil: { w: 1, h: 1 },
+  firewood: { w: 2, h: 1, campOnly: true },
+  bandage: { w: 1, h: 1, campOnly: true },
+  mushroom: { w: 1, h: 1, campOnly: true },
+  horrorMeat: { w: 1, h: 2, campOnly: true },
+  campKit: { w: 2, h: 3 },
 };
 
 export const ITEM_KINDS = Object.keys(ITEMS) as ItemKind[];
@@ -33,6 +49,10 @@ export interface Packed {
   turned: boolean;
   /** Uses left, for items that have them. */
   charges?: number;
+  /** A waterskin filled from a drip: drink it boiled. */
+  turbid?: boolean;
+  /** A mushroom that will make you sick (Wits can tell). */
+  poison?: boolean;
 }
 
 export interface Inventory {
@@ -86,10 +106,15 @@ export function findSpot(inv: Inventory, kind: ItemKind): { x: number; y: number
 }
 
 /** Puts an item wherever it fits. Returns it, or null when there is no room. */
-export function addItem(inv: Inventory, kind: ItemKind, charges = ITEMS[kind].charges): Packed | null {
+export function addItem(
+  inv: Inventory,
+  kind: ItemKind,
+  charges = ITEMS[kind].charges,
+  extra: Pick<Packed, 'turbid' | 'poison'> = {},
+): Packed | null {
   const spot = findSpot(inv, kind);
   if (!spot) return null;
-  const item: Packed = { uid: inv.nextUid++, kind, ...spot };
+  const item: Packed = { uid: inv.nextUid++, kind, ...spot, ...extra };
   if (charges !== undefined) item.charges = charges;
   inv.items.push(item);
   return item;
@@ -132,7 +157,9 @@ export function countOf(inv: Inventory, kind: ItemKind): number {
 /** What each new life carries down from the mansion (until the shop exists). */
 export function starterKit(): Inventory {
   const inv = emptyInventory();
+  addItem(inv, 'campKit');
   addItem(inv, 'waterskin');
+  addItem(inv, 'firewood');
   addItem(inv, 'ration');
   addItem(inv, 'ration');
   addItem(inv, 'marchRation');

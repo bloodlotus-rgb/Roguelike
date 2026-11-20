@@ -41,6 +41,10 @@ export function chronicleLine(dynasty: Dynasty, entry: ChronicleEntry): string[]
       return [t('chr_diedOld', { name: name(entry.memberId) })];
     case 'acquired':
       return [t('chr_acquired', { name: name(entry.memberId), trait: traitName(entry.trait), depth: entry.depth })];
+    case 'campBuilt':
+      return [t('chr_campBuilt', { name: name(entry.memberId), depth: entry.depth })];
+    case 'campLost':
+      return [t(entry.reason === 'night' ? 'chr_campLostNight' : 'chr_campLostTime', { depth: entry.depth })];
   }
 }
 

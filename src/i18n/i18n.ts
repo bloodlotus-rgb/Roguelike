@@ -185,6 +185,9 @@ const strings = {
   chr_inherited: { es: '{name} heredó {trait} de {from}.', en: '{name} inherited {trait} from {from}.' },
   chr_aged: { es: '{name} envejeció: {trait}.', en: '{name} grew older: {trait}.' },
   chr_diedOld: { es: '{name} murió por la edad.', en: '{name} died of old age.' },
+  chr_campBuilt: { es: '{name} levantó un campamento en la profundidad {depth}.', en: '{name} pitched a camp at depth {depth}.' },
+  chr_campLostNight: { es: 'Algo destrozó el campamento de la profundidad {depth}.', en: 'Something tore apart the camp at depth {depth}.' },
+  chr_campLostTime: { es: 'El campamento de la profundidad {depth} se vino abajo con los años.', en: 'The camp at depth {depth} fell apart with the years.' },
   chr_acquired: { es: '{name} ganó {trait} en la profundidad {depth}.', en: '{name} earned {trait} at depth {depth}.' },
 } satisfies Record<string, Record<Lang, string>>;
 

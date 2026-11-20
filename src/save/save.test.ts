@@ -34,10 +34,13 @@ describe('save data', () => {
     delete world.gold;
     world.drops = [{ id: 1001, kind: 'water', x: 3, y: 3 }, { id: 1002, kind: 'food', x: 4, y: 4 }];
     world.taken = [0, 1];
-    const old = { version: 1, savedAt: 1, dynasty, life: { memberId: 1, world } };
+    const oldDynasty = { ...dynasty } as Record<string, unknown>;
+    delete oldDynasty.camps;
+    const old = { version: 1, savedAt: 1, dynasty: oldDynasty, life: { memberId: 1, world } };
     const data = migrate(JSON.parse(JSON.stringify(old)))!;
     expect(data.version).toBe(SAVE_VERSION);
     expect(data.life!.world.drops).toEqual([{ id: 1002, kind: 'ration', x: 4, y: 4 }]);
+    expect(data.dynasty.camps).toEqual([]);
     const restored = World.restore(data.life!.world);
     expect(restored.inventory.items.length).toBeGreaterThan(0);
     expect(restored.gold).toBe(0);

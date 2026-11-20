@@ -34,7 +34,23 @@ export type ChronicleEntry =
   | { type: 'born'; generation: number; memberId: number; parentId: number; inherited: Array<{ trait: string; from: number }> }
   | { type: 'aged'; generation: number; memberId: number; trait: string }
   | { type: 'diedOld'; generation: number; memberId: number }
-  | { type: 'acquired'; generation: number; memberId: number; trait: string; depth: number };
+  | { type: 'acquired'; generation: number; memberId: number; trait: string; depth: number }
+  | { type: 'campBuilt'; generation: number; memberId: number; depth: number }
+  | { type: 'campLost'; generation: number; depth: number; reason: 'night' | 'time' };
+
+/** A camp pitched by someone of the family: it stays for everyone until it wears away. */
+export interface CampSite {
+  id: number;
+  depth: number;
+  /** Tile it stands on. */
+  x: number;
+  y: number;
+  /** Generation it was pitched in, and by whom. */
+  built: number;
+  builder: number;
+  /** 100 new, 0 gone. */
+  condition: number;
+}
 
 export interface Dynasty {
   seed: string;
@@ -45,6 +61,8 @@ export interface Dynasty {
   chronicle: ChronicleEntry[];
   /** Explored tiles per depth, as run-length strings (see `packTiles`). */
   explored: Record<number, string>;
+  /** Camps the family keeps in the dungeon. */
+  camps: CampSite[];
   nextId: number;
 }
 
@@ -99,7 +117,16 @@ export function ageOf(dynasty: Dynasty, member: Member): number {
 /** Starts a dynasty: three siblings, children of a founder no one plays. */
 export function createDynasty(seed: string): Dynasty {
   const rng = Rng.derive(seed, 'dynasty', 'founding');
-  const dynasty: Dynasty = { seed, generation: 1, lives: 0, members: [], chronicle: [{ type: 'founded', generation: 1 }], explored: {}, nextId: 1 };
+  const dynasty: Dynasty = {
+    seed,
+    generation: 1,
+    lives: 0,
+    members: [],
+    chronicle: [{ type: 'founded', generation: 1 }],
+    explored: {},
+    camps: [],
+    nextId: 1,
+  };
   const names = new Set<string>();
   for (let i = 0; i < 3; i++) {
     const name = makeName(rng, names);
@@ -198,6 +225,14 @@ export function recordDeath(
     }
     entries.push({ type: 'born', generation: next, memberId: child.id, parentId: fallen.id, inherited });
   }
+
+  // Old camps fall apart: the longer a camp has stood, the likelier it is gone.
+  dynasty.camps = (dynasty.camps ?? []).filter((camp) => {
+    const age = next - camp.built;
+    if (!rng.chance(Math.min(0.6, 0.1 * age))) return true;
+    entries.push({ type: 'campLost', generation: next, depth: camp.depth, reason: 'time' });
+    return false;
+  });
 
   dynasty.chronicle.push(...entries);
   return entries;

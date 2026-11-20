@@ -3,6 +3,7 @@ import { maxHealth } from './attributes';
 import { CLASSES, type ClassId } from './classes';
 import { isFloor } from './dungeon';
 import { ENEMIES, type EnemyKind } from './enemies';
+import { CONFIG } from './config';
 import { addItem } from './inventory';
 import { COMBAT, NO_INPUT, World, type ControlInput, type Enemy, type WorldEvent } from './world';
 
@@ -624,7 +625,7 @@ describe('fixes from play', () => {
 describe('body and backpack', () => {
   it('starts each life with a starter kit and no gold', () => {
     const world = arena();
-    expect(world.inventory.items.map((i) => i.kind).sort()).toEqual(['marchRation', 'oil', 'ration', 'ration', 'waterskin']);
+    expect(world.inventory.items.map((i) => i.kind).sort()).toEqual(['campKit', 'firewood', 'marchRation', 'oil', 'ration', 'ration', 'waterskin']);
     expect(world.gold).toBe(0);
   });
 
@@ -674,33 +675,31 @@ describe('body and backpack', () => {
     expect(world.taken.has(7002)).toBe(false);
   });
 
-  it('eating takes a moment standing still, and moving interrupts it', () => {
+  it('filling the lamp takes a moment standing still, and moving interrupts it', () => {
     const world = arena();
-    world.survival = { ...world.survival, hunger: 40 };
-    const ration = world.inventory.items.find((i) => i.kind === 'ration')!;
-    world.useItem(ration.uid);
+    world.survival = { ...world.survival, light: 20 };
+    const oil = world.inventory.items.find((i) => i.kind === 'oil')!;
+    world.useItem(oil.uid);
     run(world, 0.5);
-    expect(world.survival.hunger).toBeLessThan(41);
+    expect(world.survival.light).toBeLessThan(21);
     run(world, 0.1, move(1, 0));
     expect(world.channel).toBeNull();
-    world.useItem(ration.uid);
+    world.useItem(oil.uid);
     const events = run(world, 2);
     expect(events.some((e) => e.type === 'used')).toBe(true);
-    expect(world.survival.hunger).toBeGreaterThan(70);
-    expect(world.inventory.items.some((i) => i.uid === ration.uid)).toBe(false);
+    expect(world.survival.light).toBeGreaterThan(60);
   });
 
-  it('a march ration is eaten on the move; a waterskin loses a sip per drink', () => {
+  it('food and water wait for the fire; a march ration is eaten on the move', () => {
     const world = arena();
     world.survival = { ...world.survival, hunger: 40, thirst: 40 };
+    const ration = world.inventory.items.find((i) => i.kind === 'ration')!;
+    world.useItem(ration.uid);
+    expect(run(world, 0.05)).toContainEqual({ type: 'cantUse', reason: 'camp' });
     const march = world.inventory.items.find((i) => i.kind === 'marchRation')!;
     world.useItem(march.uid);
     world.update(0.02, move(1, 0));
     expect(world.survival.hunger).toBeGreaterThan(60);
-    const skin = world.inventory.items.find((i) => i.kind === 'waterskin')!;
-    world.useItem(skin.uid);
-    run(world, 2);
-    expect(skin.charges).toBe(3);
   });
 
   it('fountains fill every waterskin; searching a container finds things once', () => {
@@ -731,3 +730,113 @@ describe('body and backpack', () => {
     expect(copy.inventory).toEqual(world.inventory);
   });
 });
+
+describe('camps and nights', () => {
+  /** A world with a camp pitched in the first room, the hero at it. */
+  function camped(): World {
+    const world = arena();
+    const kit = world.inventory.items.find((i) => i.kind === 'campKit')!;
+    world.useItem(kit.uid);
+    const events = run(world, 0.05);
+    expect(events.some((e) => e.type === 'campBuilt')).toBe(true);
+    return world;
+  }
+
+  it('a camp is pitched in a room, one per room, and stays for the family', () => {
+    const camps: import('./dynasty').CampSite[] = [];
+    const world = new World('estirpe', 'headsman', 0, 1, { camps, builder: 3, generation: 2 });
+    world.enemies = [];
+    const kit = world.inventory.items.find((i) => i.kind === 'campKit')!;
+    world.useItem(kit.uid);
+    run(world, 0.05);
+    expect(camps).toHaveLength(1);
+    expect(camps[0]).toMatchObject({ depth: 1, builder: 3, built: 2, condition: 100 });
+    expect(world.interaction).toBe('camp');
+    expect(world.inventory.items.some((i) => i.kind === 'campKit')).toBe(false);
+    // The heir finds it there.
+    const heir = new World('estirpe', 'plunderer', 1, 1, { camps });
+    heir.player = { x: camps[0].x + 0.5, y: camps[0].y + 0.5 };
+    expect(heir.interaction).toBe('camp');
+  });
+
+  it('by the fire you eat, drink, boil water and cook', () => {
+    const world = camped();
+    world.survival = { ...world.survival, hunger: 30, thirst: 30 };
+    const ration = world.inventory.items.find((i) => i.kind === 'ration')!;
+    world.campUse(ration.uid);
+    expect(world.survival.hunger).toBeGreaterThan(60);
+    const skin = world.inventory.items.find((i) => i.kind === 'waterskin')!;
+    skin.turbid = true;
+    addItem(world.inventory, 'mushroom', undefined, { poison: false });
+    const mushroom = world.inventory.items.find((i) => i.kind === 'mushroom')!;
+    expect(world.campBoil(skin.uid)).toEqual([{ type: 'needFire' }]);
+    expect(world.campUse(mushroom.uid)).toEqual([{ type: 'needFire' }]);
+    const wood = world.inventory.items.find((i) => i.kind === 'firewood')!;
+    expect(world.campUse(wood.uid)).toEqual([{ type: 'fireLit' }]);
+    expect(world.campBoil(skin.uid)).toEqual([{ type: 'boiled' }]);
+    world.campUse(skin.uid);
+    expect(world.survival.thirst).toBeGreaterThan(50);
+    world.campUse(mushroom.uid);
+    expect(world.inventory.items.some((i) => i.kind === 'mushroom')).toBe(false);
+  });
+
+  it('a night of sleep heals, costs the body, and brings the dawn', () => {
+    const world = camped();
+    world.survival = { ...world.survival, health: 30, hunger: 90, thirst: 90 };
+    const day = world.day;
+    const events = world.sleep();
+    const slept = events.find((e) => e.type === 'slept');
+    expect(slept).toBeTruthy();
+    if (slept?.type === 'slept' && slept.outcome !== 'attack') {
+      expect(world.day).toBe(day + 1);
+      expect(world.isNight).toBe(false);
+    }
+    expect(world.survival.health).toBeGreaterThan(30);
+    expect(world.survival.hunger).toBeLessThan(90);
+  });
+
+  it('an attack wakes you at night with horrors in the camp', () => {
+    // Without fire and with low Will, some night among many brings an attack.
+    let attacked = false;
+    for (let life = 0; life < 30 && !attacked; life++) {
+      const world = new World('estirpe-' + life, 'plunderer', life, 1);
+      world.enemies = [];
+      const kit = world.inventory.items.find((i) => i.kind === 'campKit')!;
+      world.useItem(kit.uid);
+      run(world, 0.05);
+      if (!world.campInReach) continue;
+      const slept = world.sleep().find((e) => e.type === 'slept');
+      if (slept?.type === 'slept' && slept.outcome === 'attack') {
+        attacked = true;
+        expect(world.isNight).toBe(true);
+        expect(world.enemies.some((e) => e.alerted)).toBe(true);
+        expect(world.camps[0].condition).toBeLessThan(100);
+      }
+    }
+    expect(attacked).toBe(true);
+  });
+
+  it('night falls, hunters come out, and wounds stop closing on their own', () => {
+    const world = arena();
+    const before = world.enemies.length;
+    world.clock = CONFIG.time.day - 0.01;
+    const events = run(world, 0.05);
+    expect(events).toContainEqual({ type: 'nightfall' });
+    expect(world.isNight).toBe(true);
+    expect(world.enemies.length).toBeGreaterThan(before);
+    world.enemies = [];
+    world.survival = { ...world.survival, health: 40 };
+    run(world, 8);
+    expect(world.survival.health).toBeLessThanOrEqual(40);
+  });
+
+  it('the clock, the fire and the camps survive a snapshot', () => {
+    const world = camped();
+    world.clock = 500;
+    world.campfire = true;
+    const copy = World.restore(JSON.parse(JSON.stringify(world.snapshot())));
+    expect(copy.clock).toBe(500);
+    expect(copy.campfire).toBe(true);
+  });
+});
+

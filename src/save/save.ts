@@ -5,7 +5,7 @@ import type { WorldSnapshot } from '../core/world';
  * What is kept between sessions: the dynasty, and the life being played if there is one.
  * There is a single save and it is overwritten continuously: nothing can be undone.
  */
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export interface CurrentLife {
   memberId: number;
@@ -42,6 +42,12 @@ const MIGRATIONS: Record<number, (data: Record<string, unknown>) => Record<strin
         .map((d) => ({ ...d, kind: d.kind === 'food' ? 'ration' : 'oil' }));
       world.taken = [];
     }
+    return data;
+  },
+  // 2 → 3: camps. The family starts with none.
+  2: (data) => {
+    const dynasty = data.dynasty as Record<string, unknown> | undefined;
+    if (dynasty && !Array.isArray(dynasty.camps)) dynasty.camps = [];
     return data;
   },
 };
