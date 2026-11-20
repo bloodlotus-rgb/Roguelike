@@ -1,4 +1,4 @@
-# Concepto — borrador v1
+# Concepto — borrador v2
 
 > Estado: **borrador para revisar**. Lo marcado como **[Propuesta]** es una sugerencia mía que hay que validar; lo que está en **Decisiones abiertas** todavía no tiene respuesta.
 
@@ -30,7 +30,12 @@ Un roguelike de supervivencia y exploración en tiempo real, para celular y nave
 
 ## La superficie
 
-Base segura arriba de la mazmorra: lugar de descanso y algún tipo de tienda. Es donde empieza cada vida.
+Base segura arriba de la mazmorra: lugar de descanso y tienda. Es donde empieza cada vida.
+
+- **Tienda**: armas, armaduras, fuentes de luz, comida y agua, mochilas.
+- **Moneda**: oro que se lootea en la mazmorra.
+- **Sin depósito familiar**, para evitar la acumulación de poder entre vidas.
+- **La herencia está en el cadáver** **[Propuesta]**: el oro y el equipo de un héroe muerto quedan con su jefe. Para recuperarlos, el descendiente tiene que derrotar a su ancestro.
 
 ## El mapa heredado
 
@@ -60,6 +65,7 @@ Base segura arriba de la mazmorra: lugar de descanso y algún tipo de tienda. Es
 Cada personaje tiene una colección de rasgos que funcionan como una lotería genérica: tablas ponderadas de las que se sortea.
 
 - **Tipos**: modificadores de atributos o características, efectos especiales y defectos.
+- **Origen**: de nacimiento (heredados o sorteados), de la edad o **adquiridos** durante la vida.
 - **Herencia**: algunos rasgos vienen de los ancestros al azar y otros se sortean nuevos.
 - **Envejecimiento**: con la edad aparecen rasgos específicos que favorecen los atributos mentales y perjudican los físicos.
 - **Atributos**: físicos (Fuerza, Agilidad, Vigor) y mentales (Ingenio, Voluntad, Percepción).
@@ -74,6 +80,14 @@ Ejemplos ilustrativos:
 | Estómago chico | Defecto | El hambre sube más rápido | Devora la comida del jugador |
 | Canas | Edad | +Voluntad, −Agilidad | Lento pero invoca ecos |
 
+## Progresión dentro de una vida
+
+- **Sin niveles de experiencia.** El héroe progresa con **rasgos adquiridos** y con el equipo que encuentra o compra.
+- Los rasgos adquiridos salen de lo que vive: sobrevivir a un envenenamiento da *Resistencia al veneno*, pasar mucho tiempo a oscuras da *Ojos de gato*. Las heridas graves dejan rasgos negativos (*Tuerto*, *Pierna mala*).
+- **Tope de rasgos por personaje**: si gana uno con el tope lleno, se pierde otro. Los rasgos se reemplazan, no se apilan.
+- Algunos rasgos adquiridos pueden pasar a los herederos con baja probabilidad. **[Propuesta]**
+- Los rasgos adquiridos también tienen su análogo de jefe.
+
 ## Clase
 
 Se elige al empezar cada vida, después de elegir al integrante del linaje. Las clases están por definir.
@@ -81,7 +95,15 @@ Se elige al empezar cada vida, después de elegir al integrante del linaje. Las 
 ## Supervivencia
 
 - Medidores iniciales: **hambre, sed y luz**.
-- **Campamentos**: son objetos que se instalan en una sala y no se pueden mover. Para tener otro punto de descanso hay que conseguir los materiales de un campamento nuevo. Ahí se descansa y se cura.
+
+### Campamentos
+
+- Son objetos que se instalan en una sala y no se pueden mover. Para tener otro punto de descanso hay que conseguir los materiales de un campamento nuevo. Ahí se descansa y se cura.
+- **Persisten entre vidas**: los campamentos de los ancestros quedan para los descendientes.
+- **Ataques nocturnos**: cada noche, cada campamento tiene una chance de ser atacado y destruido. El riesgo depende de la sala.
+- **Desgaste generacional**: en cada cambio de generación, algunos campamentos pueden desaparecer. Esto evita llenar todas las salas de campamentos.
+- **[Propuesta] Riesgo de la sala**: sube con la profundidad, la cercanía a zonas donde aparecen monstruos y la cantidad de entradas de la sala. Baja en salas sin salida o fortificadas.
+- **[Propuesta] Desgaste**: la chance de desaparecer crece con las generaciones que lleva el campamento.
 
 ## Ritmo y controles
 
@@ -106,11 +128,16 @@ Se elige al empezar cada vida, después de elegir al integrante del linaje. Las 
 
 ## Decisiones abiertas
 
-1. **Vista**: cenital o isométrica. **[Propuesta: cenital 3/4]**
-2. **Estilo visual.** **[Propuesta: tinta y papel]** ¿Quién hace el arte?
-3. **Progresión dentro de una vida.** **[Propuesta: rasgos adquiridos]**
-4. **Campamentos entre vidas**: ¿los campamentos que instaló un ancestro siguen ahí para sus descendientes? ¿Los monstruos que se reponen pueden destruirlos?
-5. **Superficie**: ¿qué se vende, con qué moneda, y se puede llevar algo de una vida a la otra (un depósito familiar)?
-6. **Héroes caídos**: ¿y si murió de hambre o por una trampa? ¿Hay un tope de jefes por nivel?
-7. **Clases**: cuántas y cuáles.
-8. **Nombre del juego.**
+1. **Día y noche**: ¿cómo funciona el ciclo bajo tierra? ¿Es un reloj, se nota en algo dentro de la mazmorra, qué pasa de noche además de los ataques a campamentos?
+2. **Oro al morir**: ¿queda con el jefe (herencia en el cadáver) o se pierde?
+3. **Héroes caídos**: ¿y si murió de hambre o por una trampa? ¿Hay un tope de jefes por nivel?
+4. **Clases**: cuántas y cuáles.
+5. **Nombre del juego.**
+
+## Decisiones tomadas
+
+- Vista **cenital 3/4**.
+- Estilo **tinta y papel**: la oscuridad es papel en blanco y la luz "dibuja" lo que se ve. Arte provisorio para arrancar.
+- Progresión por **rasgos adquiridos**, sin niveles de experiencia.
+- Tiempo real; medidores de hambre, sed y luz.
+- Una sola dinastía por jugador.
