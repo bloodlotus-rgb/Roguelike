@@ -1,4 +1,4 @@
-# Concepto — borrador v2
+# Concepto — borrador v3
 
 > Estado: **borrador para revisar**. Lo marcado como **[Propuesta]** es una sugerencia mía que hay que validar; lo que está en **Decisiones abiertas** todavía no tiene respuesta.
 
@@ -35,7 +35,7 @@ Base segura arriba de la mazmorra: lugar de descanso y tienda. Es donde empieza 
 - **Tienda**: armas, armaduras, fuentes de luz, comida y agua, mochilas.
 - **Moneda**: oro que se lootea en la mazmorra.
 - **Sin depósito familiar**, para evitar la acumulación de poder entre vidas.
-- **La herencia está en el cadáver** **[Propuesta]**: el oro y el equipo de un héroe muerto quedan con su jefe. Para recuperarlos, el descendiente tiene que derrotar a su ancestro.
+- **La herencia está en el cadáver**: el oro y el equipo de un héroe muerto quedan con su jefe. Para recuperarlos, el descendiente tiene que derrotar a su ancestro.
 
 ## El mapa heredado
 
@@ -101,6 +101,13 @@ Se elige al empezar cada vida, después de elegir al integrante del linaje. Las 
 - Son objetos que se instalan en una sala y no se pueden mover. Para tener otro punto de descanso hay que conseguir los materiales de un campamento nuevo. Ahí se descansa y se cura.
 - **Persisten entre vidas**: los campamentos de los ancestros quedan para los descendientes.
 - **Ataques nocturnos**: cada noche, cada campamento tiene una chance de ser atacado y destruido. El riesgo depende de la sala.
+- **[Propuesta]** Al campamento donde está el héroe no se le tira el riesgo: el ataque se juega y hay que defenderlo. Los campamentos vacíos se resuelven solos con su chance.
+
+### Día y noche
+
+- Hay un ciclo de día y noche aunque se esté bajo tierra.
+- **De noche** los enemigos cambian de comportamiento, baja la visibilidad y todo se vuelve más peligroso.
+- El juego pasa a un **modo de supervivencia más intenso**: o defendés tu campamento hasta que amanece, o huís hasta un campamento.
 - **Desgaste generacional**: en cada cambio de generación, algunos campamentos pueden desaparecer. Esto evita llenar todas las salas de campamentos.
 - **[Propuesta] Riesgo de la sala**: sube con la profundidad, la cercanía a zonas donde aparecen monstruos y la cantidad de entradas de la sala. Baja en salas sin salida o fortificadas.
 - **[Propuesta] Desgaste**: la chance de desaparecer crece con las generaciones que lleva el campamento.
@@ -128,8 +135,8 @@ Se elige al empezar cada vida, después de elegir al integrante del linaje. Las 
 
 ## Decisiones abiertas
 
-1. **Día y noche**: ¿cómo funciona el ciclo bajo tierra? ¿Es un reloj, se nota en algo dentro de la mazmorra, qué pasa de noche además de los ataques a campamentos?
-2. **Oro al morir**: ¿queda con el jefe (herencia en el cadáver) o se pierde?
+1. **Duración del ciclo**: cuánto dura un día y una noche en minutos reales, y cómo se avisa que se acerca la noche.
+2. **Combate**: cómo se pelea en tiempo real con pantalla táctil.
 3. **Héroes caídos**: ¿y si murió de hambre o por una trampa? ¿Hay un tope de jefes por nivel?
 4. **Clases**: cuántas y cuáles.
 5. **Nombre del juego.**
@@ -141,3 +148,5 @@ Se elige al empezar cada vida, después de elegir al integrante del linaje. Las 
 - Progresión por **rasgos adquiridos**, sin niveles de experiencia.
 - Tiempo real; medidores de hambre, sed y luz.
 - Una sola dinastía por jugador.
+- El oro y el equipo del que muere quedan con su jefe; sin depósito familiar.
+- La noche es un modo de supervivencia intenso: defender el campamento o huir a otro.
