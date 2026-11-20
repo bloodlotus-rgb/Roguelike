@@ -183,7 +183,9 @@ Cada clase toca la supervivencia de una forma distinta. **[Propuesta]**
 - Un jefe por nivel como máximo; un nivel con jefe es más peligroso. Quien muere en un nivel con jefe se suma a su escolta.
 - Mazmorra infinita; un final queda para más adelante.
 - Vista **cenital 3/4**.
-- Estilo **tinta y papel, oscuro**: lo que no se ve es tinta negra; el papel aparece solo donde llega la llama y lo recordado queda apagado. Muros y columnas proyectan sombras. Arte provisorio para arrancar.
+- Estilo **tinta y papel, oscuro**: fuera de la llama no se ve nada (ni siquiera lo ya explorado); el papel aparece solo donde llega la luz. Muros y columnas proyectan sombras suaves. Arte por código, mejorándolo de a poco; el arte final se decide más adelante.
+- **Mapa desplegable** con lo explorado, dibujado como boceto. **[Supuesto]** No pausa el juego: mirarlo en la oscuridad es un riesgo.
+- **Ojos en la oscuridad**: los horrores que te miran desde fuera de la luz muestran los ojos (pálidos si solo miran, rojos si cazan). Los sigilosos solo de cerca.
 - Atmósfera opresiva en **2D** (no 3D por ahora): sombras de la llama, sonido generado por código (ambiente, pasos, latido, horrores que se oyen antes de verse), cámara cerrada y viñeta que aprieta con el peligro.
 - Progresión por **rasgos adquiridos**, sin niveles de experiencia.
 - Tiempo real; medidores de hambre, sed y luz.

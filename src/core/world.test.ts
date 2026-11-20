@@ -36,6 +36,7 @@ function place(world: World, kind: EnemyKind, dx: number, dy: number, state: Ene
     roamRoom: 0,
     flank: 0,
     visible: true,
+    watching: false,
     wax: 0,
     waxTick: 0,
   };
@@ -411,6 +412,15 @@ describe('perception', () => {
     b.facing = { x: 1, y: 0 };
     run(dim, 0.1);
     expect(b.alerted).toBe(false);
+  });
+
+  it('shows the eyes of an unseen horror that looks at the player', () => {
+    const world = arena('headsman');
+    world.survival = { ...world.survival, light: 0 };
+    const enemy = place(world, 'husk', 4, 0);
+    run(world, 0.05);
+    expect(enemy.visible).toBe(false);
+    expect(enemy.watching).toBe(true);
   });
 
   it('spreads the alarm to nearby horrors', () => {
