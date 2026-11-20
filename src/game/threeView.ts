@@ -311,6 +311,11 @@ const LIGHTS_WITH_INK_SHADOW = (() => {
   return `float inkShadow = 1.0;\n${replaced}`;
 })();
 
+/** Solid ink seen from inside a slightly larger shell: an outline around a shape. */
+function hullMaterial(): THREE.MeshLambertMaterial {
+  return inkMaterial(new THREE.MeshLambertMaterial({ side: THREE.BackSide }), { cut: true });
+}
+
 /** Smooth value noise, for edges of ink that wander like a brush. */
 const INK_NOISE = `
 float inkHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -491,6 +496,8 @@ export class ThreeView {
   private readonly stone = repeating(canvasTexture(stoneColor(256)));
   private wallTiles: Array<[number, number]> = [];
   private columns: THREE.InstancedMesh | null = null;
+  /** The columns' outline: a slightly larger shell seen from inside, drawn in solid ink. */
+  private columnHull: THREE.InstancedMesh | null = null;
   private columnTiles: Array<[number, number]> = [];
   private readonly effects: Effects;
   private lastNow = 0;
@@ -689,6 +696,8 @@ export class ThreeView {
     this.columns.castShadow = true;
     this.columns.receiveShadow = true;
     this.levelGroup.add(this.columns);
+    this.columnHull = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.33, 0.36, 1, 18, 1, true), hullMaterial(), this.columnTiles.length);
+    this.levelGroup.add(this.columnHull);
     this.applyWallHeight();
 
     // Decoration painted on the floor: ink at the foot of the walls, bones, rubble, stains.
@@ -758,17 +767,26 @@ export class ThreeView {
     }
     const stone = inkMaterial(new THREE.MeshLambertMaterial({ color: 0xcdbf9f, flatShading: true }));
     const bone = inkMaterial(new THREE.MeshLambertMaterial({ color: 0xe6dcc4 }));
-    const add = (geometry: THREE.BufferGeometry, material: THREE.Material, list: THREE.Matrix4[]) => {
+    const hull = hullMaterial();
+    const grow = new THREE.Matrix4();
+    const add = (geometry: THREE.BufferGeometry, material: THREE.Material, list: THREE.Matrix4[], outline = 0) => {
       if (list.length === 0) return;
       const mesh = new THREE.InstancedMesh(geometry, material, list.length);
       list.forEach((m, i) => mesh.setMatrixAt(i, m));
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       this.levelGroup.add(mesh);
+      // A pen outline: the same shape a little larger, seen from inside, in solid ink.
+      if (outline > 0) {
+        const shell = new THREE.InstancedMesh(geometry, hull, list.length);
+        grow.makeScale(1 + outline, 1 + outline, 1 + outline);
+        list.forEach((m, i) => shell.setMatrixAt(i, m.clone().multiply(grow)));
+        this.levelGroup.add(shell);
+      }
     };
-    add(new THREE.IcosahedronGeometry(1, 0), stone, rocks);
+    add(new THREE.IcosahedronGeometry(1, 0), stone, rocks, 0.22);
     add(new THREE.CylinderGeometry(1, 0.8, 1, 6), bone, bones);
-    add(new THREE.SphereGeometry(1, 10, 8), bone, skulls);
+    add(new THREE.SphereGeometry(1, 10, 8), bone, skulls, 0.14);
   }
 
   private applyWallHeight(): void {
@@ -783,7 +801,15 @@ export class ThreeView {
         m.makeScale(1, h, 1);
         m.setPosition(x + 0.5, h / 2, y + 0.5);
         this.columns!.setMatrixAt(i, m);
+        // The outline shell: a touch wider, same height.
+        m.makeScale(1.08, h, 1.08);
+        m.setPosition(x + 0.5, h / 2, y + 0.5);
+        this.columnHull?.setMatrixAt(i, m);
       });
+      if (this.columnHull) {
+        this.columnHull.instanceMatrix.needsUpdate = true;
+        this.columnHull.computeBoundingSphere();
+      }
       this.columns.instanceMatrix.needsUpdate = true;
       this.columns.computeBoundingSphere();
     }
