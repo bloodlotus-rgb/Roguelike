@@ -185,8 +185,8 @@ Cada clase toca la supervivencia de una forma distinta. **[Propuesta]**
 - Vista **cenital 3/4**.
 - Estilo **tinta y papel, oscuro**: fuera de la llama no se ve nada (ni siquiera lo ya explorado); el papel aparece solo donde llega la luz. Muros y columnas proyectan sombras suaves. Arte por código, mejorándolo de a poco; el arte final se decide más adelante.
 - **Mapa desplegable** con lo explorado, dibujado como boceto. **[Supuesto]** No pausa el juego: mirarlo en la oscuridad es un riesgo.
-- **Visión**: la luz se recorta con la geometría de las paredes (se ve la pared, nunca lo que hay detrás) y el héroe ve solo en un **cono hacia adelante** (unos 116°) más un radio chico alrededor. Lo de atrás es oscuridad.
-- **Ojos en la oscuridad**: los horrores que te miran desde fuera de la luz muestran los ojos (pálidos si solo miran, rojos si cazan). Los sigilosos solo de cerca.
+- **Visión**: un cono hacia adelante (unos 116°) que sale del cuerpo del héroe, con bordes nítidos y recortado por las paredes: se ve el frente de los muros y las columnas, nunca lo que hay detrás ni hacia atrás. La luz tiene un tinte cálido de llama. El héroe se dibuja siempre sobre la oscuridad.
+- **Ojos en la oscuridad**: los horrores que te miran desde fuera de la vista muestran los ojos, del mismo color que en su dibujo. Cada tipo tiene ojos distintos: el Rastrero tres puntos bajos en arco, el Hueco un solo ojo alto, la Plañidera dos ranuras tristes, el Apagavelas dos alfileres juntos (y solo de cerca).
 - Atmósfera opresiva en **2D** (no 3D por ahora): sombras de la llama, sonido generado por código (ambiente, pasos, latido, horrores que se oyen antes de verse), cámara cerrada y viñeta que aprieta con el peligro.
 - Progresión por **rasgos adquiridos**, sin niveles de experiencia.
 - Tiempo real; medidores de hambre, sed y luz.

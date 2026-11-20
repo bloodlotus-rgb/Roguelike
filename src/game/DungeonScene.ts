@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { Point } from '../core/dungeon';
 import type { EnemyKind } from '../core/enemies';
+import { isFloor } from '../core/dungeon';
 import { castWallRay } from '../core/geometry';
 import { COMBAT, NO_INPUT, type ControlInput, type Enemy, type World, type WorldEvent } from '../core/world';
 import type { StringKey } from '../i18n/i18n';
@@ -14,7 +15,7 @@ import {
 } from './art';
 import { drawEnemySheet, drawHeroSheet, ENEMY_SIZE, FLAME_ANCHOR, type SpriteSheet } from './sprites';
 
-/** Height of each horror's eyes above its feet, in tiles. */
+/** Height of each horror's head above its feet, in tiles (for the wax flame). */
 const EYE_HEIGHT: Record<EnemyKind, number> = { crawler: 0.3, husk: 1.2, mourner: 1.2, snuffer: 1.3 };
 
 /** World units per tile. */
@@ -27,10 +28,15 @@ const LIGHT_MASK_SIZE = 512;
 /** Fraction of the mask's half-size where the light is fully gone. */
 const LIGHT_EDGE = 0.93;
 /** The vision cut-out lives in a small texture that follows the hero, softened with a blur. */
-const VISION_PER_TILE = 16;
+const VISION_PER_TILE = 48;
 const VISION_SPAN = 18;
-/** How far into the wall a ray goes, so the wall it hits shows and what is behind does not. */
-const WALL_SHOW = 0.95;
+/** Height of a wall's front face inside its tile, in tiles (3/4 view). */
+const WALL_FACE = 0.7;
+/** Warm tint of the flame over everything it lights. */
+const LIGHT_TINT = 0xf6d6a6;
+/** The pale of the horrors' eyes, as drawn in their sprites. */
+const EYE_HEX = 0xece2cb;
+const EYE_SCALE = 1.5;
 const DARK_HEX = 0x110e0c;
 /** How many tiles fit across the shortest side of the screen. */
 const VIEW_TILES = 9.5;
@@ -84,6 +90,7 @@ export class DungeonScene extends Phaser.Scene {
   private vision!: Phaser.GameObjects.RenderTexture;
   private visionGfx!: Phaser.GameObjects.Graphics;
   private visionAngle = 0;
+  private tint!: Phaser.GameObjects.Graphics;
   private fx!: Phaser.GameObjects.Graphics;
   private itemSprites = new Map<number, Phaser.GameObjects.Image>();
   private enemySprites = new Map<number, Phaser.GameObjects.Image>();
@@ -148,9 +155,8 @@ export class DungeonScene extends Phaser.Scene {
       .setOrigin(0)
       .setScale(TILE / VISION_PER_TILE)
       .setDepth(3.9);
-    this.vision.enableFilters();
-    this.vision.filters?.internal.addBlur(1, 1.5, 1.5, 1);
     this.visionGfx = this.make.graphics({}, false);
+    this.tint = this.add.graphics().setDepth(3.8).setBlendMode(Phaser.BlendModes.MULTIPLY);
     this.visionAngle = Math.atan2(world.facing.y, world.facing.x);
 
     // Outside the flame there is nothing: the mask fades to ink and a frame covers the rest.
@@ -294,7 +300,8 @@ export class DungeonScene extends Phaser.Scene {
   private syncPlayer(time: number): void {
     const world = this.host.world;
     this.player.setPosition(px(world.player.x), px(world.player.y));
-    this.player.setDepth(2 + world.player.y / 1000);
+    // The hero always shows over the darkness, as a silhouette against it.
+    this.player.setDepth(4.6);
     if (Math.abs(world.facing.x) > 0.1) this.player.setFlipX(world.facing.x < 0);
 
     // Pick the frame: attack poses, walking by distance covered, or breathing.
@@ -420,15 +427,15 @@ export class DungeonScene extends Phaser.Scene {
   }
 
   /**
-   * What the hero sees: a fan of rays inside the vision cone plus a small circle around
-   * them, each ray stopped by the walls. Rays go a little into the wall they hit, so the
-   * wall itself shows but nothing behind it. Everything else is darkness.
+   * What the hero sees: a cone from the hero's body, cut sharply by the walls. Rays stop
+   * at the wall they meet; only a wall's front face (seen from below) and columns show
+   * inside their tile. Everything else is darkness, and the lit part takes the flame's tint.
    */
   private updateVision(dt: number): void {
     const world = this.host.world;
     const level = world.level;
-    const origin = { x: world.player.x, y: world.player.y - 0.15 };
-    const radius = world.lightRadius + 0.3;
+    const origin = { x: world.player.x, y: world.player.y - 0.45 };
+    const reach = world.lightRadius;
 
     // The cone turns smoothly toward where the hero faces.
     const target = Math.atan2(world.facing.y, world.facing.x);
@@ -437,33 +444,53 @@ export class DungeonScene extends Phaser.Scene {
     while (delta < -Math.PI) delta += Math.PI * 2;
     this.visionAngle += delta * Math.min(1, dt * 12 || 1);
 
+    const points: Point[] = [origin];
+    const steps = 96;
+    const half = COMBAT.visionCone;
+    for (let i = 0; i <= steps; i++) {
+      const a = this.visionAngle - half + (2 * half * i) / steps;
+      const hit = castWallRay(level, origin, a, reach);
+      let d = hit.enter;
+      if (hit.hit) {
+        const column =
+          isFloor(level, hit.tileX - 1, hit.tileY) &&
+          isFloor(level, hit.tileX + 1, hit.tileY) &&
+          isFloor(level, hit.tileX, hit.tileY - 1) &&
+          isFloor(level, hit.tileX, hit.tileY + 1);
+        const sin = Math.sin(a);
+        if (column) d = hit.exit;
+        else if (hit.horizontal && sin < 0 && isFloor(level, hit.tileX, hit.tileY + 1)) {
+          // Looking up at a wall: its front face shows, the rock above it does not.
+          d = Math.min(hit.exit, hit.enter + WALL_FACE / Math.abs(sin));
+        }
+        d = Math.min(d, reach);
+      }
+      points.push({ x: origin.x + Math.cos(a) * d, y: origin.y + Math.sin(a) * d });
+    }
+
     const ox = world.player.x - VISION_SPAN / 2;
     const oy = world.player.y - VISION_SPAN / 2;
     const k = VISION_PER_TILE;
     const g = this.visionGfx;
     g.clear();
     g.fillStyle(0xffffff, 1);
-    const fan = (center: number, half: number, reach: number, steps: number) => {
-      g.beginPath();
-      g.moveTo((origin.x - ox) * k, (origin.y - oy) * k);
-      for (let i = 0; i <= steps; i++) {
-        const a = center - half + (2 * half * i) / steps;
-        const hit = castWallRay(level, origin, a, reach);
-        // Show the wall that was hit, but never past its far side.
-        const d = hit.enter >= reach ? reach : Math.min(reach, hit.enter + WALL_SHOW, hit.exit);
-        g.lineTo((origin.x + Math.cos(a) * d - ox) * k, (origin.y + Math.sin(a) * d - oy) * k);
-      }
-      g.closePath();
-      g.fillPath();
-    };
-    fan(this.visionAngle, COMBAT.visionCone, radius, 72);
-    fan(0, Math.PI, COMBAT.nearSight, 40);
-
+    g.beginPath();
+    points.forEach((p, i) => (i === 0 ? g.moveTo((p.x - ox) * k, (p.y - oy) * k) : g.lineTo((p.x - ox) * k, (p.y - oy) * k)));
+    g.closePath();
+    g.fillPath();
     this.vision.setPosition(px(ox), px(oy));
     this.vision.clear();
     this.vision.fill(DARK_HEX, 1);
     this.vision.erase(g);
     this.vision.render();
+
+    const tint = this.tint;
+    tint.clear();
+    tint.fillStyle(LIGHT_TINT, 1);
+    tint.beginPath();
+    points.forEach((p, i) => (i === 0 ? tint.moveTo(px(p.x), px(p.y)) : tint.lineTo(px(p.x), px(p.y))));
+    tint.closePath();
+    tint.fillPath();
   }
 
   /** Soft shadows under everyone, and the hero's living flame with rising embers. */
@@ -522,18 +549,61 @@ export class DungeonScene extends Phaser.Scene {
     const now = this.time.now;
     for (const enemy of this.host.world.enemies) {
       if (enemy.state === 'dead' || !enemy.watching) continue;
-      // Each pair blinks now and then, on its own rhythm.
+      // Each one blinks now and then, on its own rhythm.
       if ((now / 1000 + enemy.id * 0.73) % 3.7 < 0.14) continue;
+      const flip = enemy.facing.x < 0 ? -1 : 1;
       const x = px(enemy.pos.x);
-      const y = px(enemy.pos.y) - TILE * EYE_HEIGHT[enemy.kind];
-      const gap = enemy.kind === 'husk' ? 5 : enemy.kind === 'crawler' ? 3 : 3.5;
-      const color = enemy.alerted ? 0xc4452f : 0xd8ccb0;
-      g.fillStyle(color, 0.18);
-      g.fillCircle(x - gap, y, 4);
-      g.fillCircle(x + gap, y, 4);
-      g.fillStyle(color, 0.95);
-      g.fillEllipse(x - gap, y, 2.6, 1.6);
-      g.fillEllipse(x + gap, y, 2.6, 1.6);
+      const y = px(enemy.pos.y);
+      // Drawn a bit larger than in the sprites so they read at a glance in the dark.
+      const k = EYE_SCALE;
+      const at = (dx: number, dy: number) => ({ x: x + dx * flip * k, y: y + dy - (k - 1) * 2 });
+      // Same pale color as in the drawings; each horror has its own eyes.
+      switch (enemy.kind) {
+        case 'crawler': {
+          // Three little eyes in an arc, low to the ground.
+          for (const [dx, dy, r] of [
+            [-3.5, -7.3, 1.1],
+            [-1, -8, 0.9],
+            [3.5, -7.3, 1.1],
+          ]) {
+            const p = at(dx, dy);
+            g.fillStyle(EYE_HEX, 0.15);
+            g.fillCircle(p.x, p.y, r * 2.4 * k);
+            g.fillStyle(EYE_HEX, 1);
+            g.fillCircle(p.x, p.y, r * k);
+          }
+          break;
+        }
+        case 'husk': {
+          // A single eye, high up and off to one side.
+          const p = at(-10.5, -39.7);
+          g.fillStyle(EYE_HEX, 0.15);
+          g.fillCircle(p.x, p.y, 3.4 * k);
+          g.fillStyle(EYE_HEX, 1);
+          g.fillCircle(p.x, p.y, 1.3 * k);
+          break;
+        }
+        case 'mourner': {
+          // Two sorrowful slits, slanting down to the sides.
+          g.lineStyle(1.3 * k, EYE_HEX, 1);
+          const a = at(-0.6, -40.4);
+          const b = at(-2.6, -39.3);
+          const c = at(0.6, -40.4);
+          const d = at(2.6, -39.3);
+          g.lineBetween(a.x, a.y, b.x, b.y);
+          g.lineBetween(c.x, c.y, d.x, d.y);
+          break;
+        }
+        case 'snuffer': {
+          // Two pinpricks, close together.
+          for (const dx of [-1.5, 1.5]) {
+            const p = at(dx, -42.3);
+            g.fillStyle(EYE_HEX, 1);
+            g.fillCircle(p.x, p.y, 0.8 * k);
+          }
+          break;
+        }
+      }
     }
   }
 

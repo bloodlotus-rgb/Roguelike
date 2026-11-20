@@ -101,12 +101,23 @@ function castRay(x0: number, y0: number, x1: number, y1: number, visit: (x: numb
   }
 }
 
+export interface WallHit {
+  /** Distance at which the ray enters the first wall tile, or the maximum distance. */
+  enter: number;
+  /** Distance at which it leaves that tile. */
+  exit: number;
+  /** The wall tile hit, and whether it was entered through its top or bottom side. */
+  tileX: number;
+  tileY: number;
+  horizontal: boolean;
+  hit: boolean;
+}
+
 /**
- * Walks a ray from `origin` at `angle` through the grid (DDA). Returns the distances at
- * which it enters and leaves the first wall tile it meets, or `maxDistance` for both if
- * it gets that far without meeting one.
+ * Walks a ray from `origin` at `angle` through the grid (DDA) up to `maxDistance` and
+ * reports the first wall tile it meets.
  */
-export function castWallRay(level: Level, origin: Point, angle: number, maxDistance: number): { enter: number; exit: number } {
+export function castWallRay(level: Level, origin: Point, angle: number, maxDistance: number): WallHit {
   const dx = Math.cos(angle);
   const dy = Math.sin(angle);
   let tx = Math.floor(origin.x);
@@ -119,16 +130,23 @@ export function castWallRay(level: Level, origin: Point, angle: number, maxDista
   let sideY = (dy > 0 ? ty + 1 - origin.y : origin.y - ty) * deltaY;
   for (;;) {
     let distance: number;
+    let horizontal: boolean;
     if (sideX < sideY) {
       distance = sideX;
       sideX += deltaX;
       tx += stepX;
+      horizontal = false;
     } else {
       distance = sideY;
       sideY += deltaY;
       ty += stepY;
+      horizontal = true;
     }
-    if (distance >= maxDistance) return { enter: maxDistance, exit: maxDistance };
-    if (!isFloor(level, tx, ty)) return { enter: distance, exit: Math.min(sideX, sideY) };
+    if (distance >= maxDistance) {
+      return { enter: maxDistance, exit: maxDistance, tileX: tx, tileY: ty, horizontal, hit: false };
+    }
+    if (!isFloor(level, tx, ty)) {
+      return { enter: distance, exit: Math.min(sideX, sideY), tileX: tx, tileY: ty, horizontal, hit: true };
+    }
   }
 }

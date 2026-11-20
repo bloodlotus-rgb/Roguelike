@@ -501,8 +501,16 @@ function drawMourner(p: Pen, pose: EnemyPose): void {
       [x + sway * 0.2 + j(p, 1), 50],
     ], 0.8);
   }
-  // Dark face behind the veil, and ink running from the eyes.
+  // Dark face behind the veil, pale sorrowful eyes, and ink running from them.
   ellipse(p, 17 + sway * 0.8, 12, 3.8, 4.6, INK);
+  line(p, [
+    [16.4 + sway * 0.8, 11.6],
+    [14.4 + sway * 0.8, 12.7],
+  ], 1.1, PAPER);
+  line(p, [
+    [17.6 + sway * 0.8, 11.6],
+    [19.6 + sway * 0.8, 12.7],
+  ], 1.1, PAPER);
   line(p, [
     [15.5 + sway, 15],
     [15 + sway, 22],
