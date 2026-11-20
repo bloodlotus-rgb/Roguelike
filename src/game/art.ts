@@ -303,7 +303,7 @@ function drawWallFootShade(level: Level, ctx: CanvasRenderingContext2D, tile: nu
 }
 
 /** Bones, rubble, stains, chains and the remains of earlier delvers. Purely decorative. */
-function drawDecor(level: Level, ctx: CanvasRenderingContext2D, rng: Rng, tile: number): void {
+function drawDecor(level: Level, ctx: CanvasRenderingContext2D, rng: Rng, tile: number, flatOnly = false): void {
   const s = tile / 32;
   const { width, height } = level;
   const start = level.start;
@@ -330,6 +330,8 @@ function drawDecor(level: Level, ctx: CanvasRenderingContext2D, rng: Rng, tile: 
       const px = (x + rng.range(0.2, 0.8)) * tile;
       const py = (y + rng.range(0.25, 0.8)) * tile;
       const roll = rng.next();
+      // The 3D engine builds bones, rubble and skulls with real volume; only flat things are painted.
+      if (flatOnly && (roll < 0.55 || (roll >= 0.78 && roll < 0.9))) continue;
       if (roll < 0.3) {
         // Scattered bones.
         ctx.lineWidth = 2 * s;
@@ -417,14 +419,15 @@ function drawStairs(ctx: CanvasRenderingContext2D, rng: Rng, x: number, y: numbe
 /** Tileable paper used to cover what has not been seen yet. */
 /**
  * The floor's decoration for the 3D engine, on a transparent canvas covering the whole
- * level: ink pooling at the foot of the walls, and the bones, rubble, stains and remains.
+ * level: ink pooling at the foot of the walls, stains and remains (bones, rubble and skulls
+ * are built in 3D).
  */
 export function drawFloorDecor(level: Level, tile: number): HTMLCanvasElement {
   const [c, ctx] = canvas(level.width * tile, level.height * tile);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   drawWallFootShade(level, ctx, tile);
-  drawDecor(level, ctx, Rng.derive(level.seed, 'art', level.depth), tile);
+  drawDecor(level, ctx, Rng.derive(level.seed, 'art', level.depth), tile, true);
   return c;
 }
 
