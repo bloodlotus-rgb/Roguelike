@@ -16,9 +16,10 @@ import { isFloor } from '../core/dungeon';
 import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
-import { drawCamp, drawChalk, drawFeature, drawFloorDecor, drawItem, drawProjectile, drawTorch, LOOT_KINDS } from './art';
+import { drawChalk, drawFloorDecor, drawProjectile } from './art';
 import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
 import { BRICK_DEPTH, layBricks } from './masonry';
+import { campModel, featureModel, lootModel, outlined, stairsDownModel, stairsUpModel, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
 import { easeInOut, easeOut, swingPhase } from './swing';
 import { Effects } from './threeEffects';
 import { drawHands, inkTexture } from './firstPerson';
@@ -102,10 +103,12 @@ interface InkOptions {
    * on screen wherever a face ends, so every brick is drawn, not just shaded.
    */
   outline?: boolean;
+  /** Solid ink whatever the light or the side (outline shells). */
+  solid?: boolean;
 }
 
 function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = {}): THREE.MeshLambertMaterial {
-  const { cut = false, worldUv, grime = false, outline = false } = options;
+  const { cut = false, worldUv, grime = false, outline = false, solid = false } = options;
   const uvCode =
     worldUv === 'box'
       ? `bool inkAlongZ = abs(vInkNormal.x) > 0.5;
@@ -183,7 +186,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
       )
       .replace(
         '#include <opaque_fragment>',
-        `if (!gl_FrontFacing) {
+        `if (${solid ? 'true' : '!gl_FrontFacing'}) {
           outgoingLight = vec3(0.0);
         } else {
           vec3 irradiance = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;
@@ -333,7 +336,7 @@ const LIGHTS_WITH_INK_SHADOW = (() => {
 
 /** Solid ink seen from inside a slightly larger shell: an outline around a shape. */
 function hullMaterial(): THREE.MeshLambertMaterial {
-  return inkMaterial(new THREE.MeshLambertMaterial({ side: THREE.BackSide }), { cut: true });
+  return inkMaterial(new THREE.MeshLambertMaterial({ side: THREE.BackSide }), { cut: true, solid: true });
 }
 
 /** Smooth value noise, for edges of ink that wander like a brush. */
@@ -480,6 +483,24 @@ function eyesCanvas(kind: EnemyKind): HTMLCanvasElement {
   return c;
 }
 
+/** A small chalk-white glint: something lies there in the dark. */
+function glintCanvas(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = 32;
+  c.height = 32;
+  const ctx = c.getContext('2d')!;
+  ctx.strokeStyle = 'rgba(236, 232, 222, 0.85)';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(16, 6);
+  ctx.lineTo(16, 26);
+  ctx.moveTo(6, 16);
+  ctx.lineTo(26, 16);
+  ctx.stroke();
+  return c;
+}
+
 function flameCanvas(): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = 32;
@@ -531,7 +552,6 @@ export class ThreeView {
   private readonly textures: Record<'wall' | 'floor' | 'ceiling' | 'stairs', THREE.CanvasTexture>;
   private readonly wallRelief = repeating(new THREE.CanvasTexture(wallRelief(512)));
   private readonly enemySheets = new Map<EnemyKind, { sheet: SpriteSheet; texture: THREE.CanvasTexture }>();
-  private readonly itemTextures = new Map<string, { sheet: SpriteSheet; texture: THREE.CanvasTexture }>();
   private readonly projectileTexture: { sheet: SpriteSheet; texture: THREE.CanvasTexture };
   private readonly eyeMaterials = new Map<EnemyKind, THREE.SpriteMaterial>();
   private hero: Cutout | null = null;
@@ -540,14 +560,17 @@ export class ThreeView {
   private heroClass = '';
   private flame: THREE.Sprite;
   private readonly enemies = new Map<number, { cutout: Cutout; material: THREE.MeshBasicMaterial; eyes: THREE.Sprite }>();
-  private readonly items = new Map<number, Cutout>();
+  private readonly items = new Map<number, { obj: THREE.Object3D; glint: THREE.Sprite }>();
+  /** Materials for the small 3D models, dressed in ink. */
+  private readonly mats: ModelMaterials;
+  private readonly flameMaterial: THREE.SpriteMaterial;
+  private readonly glintMaterial: THREE.SpriteMaterial;
   /** Fountains, remains and crates; a container's drawing changes once searched. */
-  private readonly features = new Map<number, { cutout: Cutout; key: string }>();
-  private readonly featureTextures = new Map<string, { sheet: SpriteSheet; texture: THREE.CanvasTexture }>();
-  private readonly camps = new Map<number, { cutout: Cutout; key: string }>();
+  private readonly features = new Map<number, { obj: THREE.Object3D; key: string }>();
+  private readonly camps = new Map<number, { obj: THREE.Object3D; flame: THREE.Sprite }>();
   private readonly campLight: THREE.PointLight;
   /** Torches and chalk marks: cut-outs and floor decals, and a few lights for the nearest torches. */
-  private readonly works = new Map<number, { obj: THREE.Mesh; key: string; cutout?: Cutout }>();
+  private readonly works = new Map<number, { obj: THREE.Object3D; key: string; flame?: THREE.Sprite }>();
   private readonly torchLights: THREE.PointLight[] = [];
   private readonly chalkTextures = new Map<string, THREE.Texture>();
   /** Doors and barricades, rebuilt when their state changes. */
@@ -599,40 +622,53 @@ export class ThreeView {
       const eyes = canvasTexture(eyesCanvas(kind));
       this.eyeMaterials.set(kind, new THREE.SpriteMaterial({ map: eyes, transparent: true, depthWrite: false }));
     }
-    for (const kind of LOOT_KINDS) {
-      const sheet = sheetFromCanvas(drawItem(kind, 64));
-      this.itemTextures.set(kind, { sheet, texture: canvasTexture(sheet.canvas) });
-    }
-    for (const lit of [false, true]) {
-      const sheet = { ...sheetFromCanvas(drawCamp(64, lit)), originY: 0.92 };
-      this.featureTextures.set(`camp-${lit}`, { sheet, texture: canvasTexture(sheet.canvas) });
-    }
     // The camp fire, when burning, lights the room around it.
     this.campLight = new THREE.PointLight(0xffb070, 0, 5, 1.6);
+    this.shadowed(this.campLight, 5);
     this.scene.add(this.campLight);
-    for (const lit of [false, true]) {
-      const sheet = { ...sheetFromCanvas(drawTorch(64, lit)), originY: 0.97 };
-      this.featureTextures.set(`torch-${lit}`, { sheet, texture: canvasTexture(sheet.canvas) });
-    }
     for (const sign of ['arrow', 'danger', 'water', 'camp', 'stairs'] as const) this.chalkTextures.set(sign, canvasTexture(drawChalk(sign, 96)));
     for (let i = 0; i < 3; i++) {
       const light = new THREE.PointLight(0xffb070, 0, CONFIG.works.torchRadius + 1, 1.6);
+      // The nearest torch throws real shadows; the others only light (shadows cost six renders each).
+      if (i === 0) this.shadowed(light, CONFIG.works.torchRadius + 1.5);
       this.torchLights.push(light);
       this.scene.add(light);
     }
-    for (const kind of ['fountain', 'drip', 'remains', 'crate'] as const) {
-      for (const spent of [false, true]) {
-        const sheet = { ...sheetFromCanvas(drawFeature(kind, 64, spent)), originY: 0.92 };
-        this.featureTextures.set(`${kind}-${spent}`, { sheet, texture: canvasTexture(sheet.canvas) });
-      }
-    }
     const projectile = sheetFromCanvas(drawProjectile(64));
     this.projectileTexture = { sheet: { ...projectile, originY: 0.5 }, texture: canvasTexture(projectile.canvas) };
+    const ink = (color: number, extra: Partial<THREE.MeshLambertMaterialParameters> = {}) =>
+      inkMaterial(new THREE.MeshLambertMaterial({ color, ...extra }), { cut: true });
+    this.mats = {
+      stone: ink(0xcdbf9f, { flatShading: true }),
+      wood: ink(0xa5784a),
+      cloth: ink(0x9c8a68),
+      bone: ink(0xe6dcc4),
+      metal: ink(0x6f6a62),
+      water: ink(0x7d93a3),
+      flesh: ink(0x7a4a40),
+      gold: ink(0xd8b25a),
+      paper: ink(0xece2cb),
+      ink: new THREE.MeshBasicMaterial({ color: 0x000000 }),
+      hull: hullMaterial(),
+    };
+    const flameTexture = canvasTexture(flameCanvas());
+    this.flameMaterial = new THREE.SpriteMaterial({ map: flameTexture, transparent: true, depthWrite: false });
+    this.glintMaterial = new THREE.SpriteMaterial({ map: canvasTexture(glintCanvas()), transparent: true, depthWrite: false, depthTest: false });
     this.flame = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: canvasTexture(flameCanvas()), transparent: true, depthWrite: false, depthTest: false }),
+      new THREE.SpriteMaterial({ map: flameTexture, transparent: true, depthWrite: false, depthTest: false }),
     );
     this.flame.renderOrder = 11;
     this.scene.add(this.flame);
+  }
+
+  /** Gives a point light soft, cheap shadows within its reach. */
+  private shadowed(light: THREE.PointLight, reach: number): void {
+    light.castShadow = true;
+    light.shadow.mapSize.set(256, 256);
+    light.shadow.camera.near = 0.05;
+    light.shadow.camera.far = reach;
+    light.shadow.bias = -0.004;
+    light.shadow.radius = 2;
   }
 
   setMode(mode: CameraMode): void {
@@ -681,18 +717,27 @@ export class ThreeView {
     });
     this.levelGroup = new THREE.Group();
     this.scene.add(this.levelGroup);
-    for (const f of this.features.values()) this.scene.remove(f.cutout.mesh);
+    for (const f of this.features.values()) this.scene.remove(f.obj);
     this.features.clear();
-    for (const c of this.camps.values()) this.scene.remove(c.cutout.mesh);
+    for (const c of this.camps.values()) {
+      this.scene.remove(c.obj);
+      this.scene.remove(c.flame);
+    }
     this.camps.clear();
-    for (const w of this.works.values()) this.scene.remove(w.obj);
+    for (const it of this.items.values()) {
+      this.scene.remove(it.obj);
+      this.scene.remove(it.glint);
+    }
+    this.items.clear();
+    for (const w of this.works.values()) {
+      this.scene.remove(w.obj);
+      if (w.flame) this.scene.remove(w.flame);
+    }
     this.works.clear();
     for (const d of this.doors.values()) this.scene.remove(d.obj);
     this.doors.clear();
-    for (const map of [this.items, this.projectiles]) {
-      for (const c of map.values()) this.scene.remove(c.mesh);
-      map.clear();
-    }
+    for (const c of this.projectiles.values()) this.scene.remove(c.mesh);
+    this.projectiles.clear();
     for (const e of this.enemies.values()) {
       this.scene.remove(e.cutout.mesh);
       this.scene.remove(e.eyes);
@@ -704,11 +749,15 @@ export class ThreeView {
     const floorMesh = new THREE.Mesh(floor, inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.floor })));
     floorMesh.receiveShadow = true;
     this.levelGroup.add(floorMesh);
-    const stairs = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.stairs })));
-    stairs.rotation.x = -Math.PI / 2;
-    stairs.position.set(level.stairs.x + 0.5, 0.002, level.stairs.y + 0.5);
-    stairs.receiveShadow = true;
-    this.levelGroup.add(stairs);
+    // Stairs down into a shaft cut in the floor, and a flight up where you came in.
+    const down = stairsDownModel(this.mats);
+    down.position.set(level.stairs.x + 0.5, 0, level.stairs.y + 0.5);
+    down.rotation.y = this.stairsFacing(level, level.stairs);
+    this.levelGroup.add(down);
+    const up = outlined(stairsUpModel(this.mats), this.mats);
+    up.position.set(level.start.x + 0.5, 0, level.start.y + 0.5);
+    up.rotation.y = this.stairsFacing(level, level.start);
+    this.levelGroup.add(up);
     this.ceiling = new THREE.Mesh(
       this.tileQuads(level, WALL_FIRST, false),
       inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling })),
@@ -954,6 +1003,8 @@ export class ThreeView {
     for (let ty = 0; ty < level.height; ty++) {
       for (let tx = 0; tx < level.width; tx++) {
         if (!isFloor(level, tx, ty)) continue;
+        // The stairs down open a hole in the floor.
+        if (up && tx === level.stairs.x && ty === level.stairs.y) continue;
         positions.push(tx, y, ty, tx + 1, y, ty, tx + 1, y, ty + 1, tx, y, ty + 1);
         for (let i = 0; i < 4; i++) normals.push(0, up ? 1 : -1, 0);
         uvs.push(0, 1, 1, 1, 1, 0, 0, 0);
@@ -1205,44 +1256,55 @@ export class ThreeView {
     for (const item of world.level.items) {
       if (world.taken.has(item.id)) continue;
       seen.add(item.id);
-      let cutout = this.items.get(item.id);
-      if (!cutout) {
-        const { sheet, texture } = this.itemTextures.get(item.kind)!;
-        cutout = new Cutout(sheet, new THREE.MeshBasicMaterial({ map: texture, alphaTest: 0.5, side: THREE.DoubleSide }), 0.6);
-        this.scene.add(cutout.mesh);
-        this.items.set(item.id, cutout);
+      let entry = this.items.get(item.id);
+      if (!entry) {
+        const obj = outlined(lootModel(item.kind, this.mats), this.mats, 0.008);
+        obj.position.set(item.x + 0.5, 0, item.y + 0.5);
+        // A touch larger than life, so it reads from above.
+        obj.scale.setScalar(1.7);
+        // Each lies at its own angle.
+        obj.rotation.y = ((item.id * 2654435761) % 1000) / 1000 * Math.PI * 2;
+        this.scene.add(obj);
+        const glint = new THREE.Sprite(this.glintMaterial);
+        glint.scale.set(0.3, 0.3, 1);
+        glint.position.set(item.x + 0.5, 0.35, item.y + 0.5);
+        this.scene.add(glint);
+        entry = { obj, glint };
+        this.items.set(item.id, entry);
       }
-      cutout.place({ x: item.x + 0.5, y: item.y + 0.5 }, this.camera, false, this.mode);
+      // Rat eye: nearby things glint in the dark for the plunderer.
       const tile = item.y * world.level.width + item.x;
       const d = Math.hypot(item.x + 0.5 - world.player.x, item.y + 0.5 - world.player.y);
-      let brightness = world.visibleNow.has(tile) ? this.falloff(world, d) : 0;
-      if (world.itemSight > 0 && d <= world.itemSight) brightness = Math.max(brightness, 0.55);
-      cutout.shade(cutout.mesh.material as THREE.MeshBasicMaterial, brightness);
+      entry.glint.visible = world.itemSight > 0 && d <= world.itemSight && !world.visibleNow.has(tile);
     }
-    for (const [id, cutout] of this.items) {
+    for (const [id, entry] of this.items) {
       if (seen.has(id)) continue;
-      this.scene.remove(cutout.mesh);
+      this.scene.remove(entry.obj);
+      this.scene.remove(entry.glint);
       this.items.delete(id);
     }
   }
 
+  /** Which way a flight of stairs faces: toward the open floor around it. */
+  private stairsFacing(level: Level, p: Point): number {
+    const dirs: Array<[number, number, number]> = [[0, 1, 0], [1, 0, Math.PI / 2], [0, -1, Math.PI], [-1, 0, -Math.PI / 2]];
+    for (const [dx, dy, a] of dirs) if (isFloor(level, p.x + dx, p.y + dy)) return a;
+    return 0;
+  }
+
   private syncFeatures(world: World): void {
     for (const f of world.level.features) {
-      const key = `${f.kind}-${f.kind !== 'fountain' && world.searched.has(f.id)}`;
+      const key = `${f.kind}-${f.kind !== 'fountain' && f.kind !== 'drip' && world.searched.has(f.id)}`;
       let entry = this.features.get(f.id);
-      if (!entry || entry.key !== key) {
-        if (entry) this.scene.remove(entry.cutout.mesh);
-        const { sheet, texture } = this.featureTextures.get(key)!;
-        const size = f.kind === 'remains' ? 0.7 : 0.95;
-        const cutout = new Cutout(sheet, new THREE.MeshBasicMaterial({ map: texture, alphaTest: 0.5, side: THREE.DoubleSide }), size);
-        this.scene.add(cutout.mesh);
-        entry = { cutout, key };
-        this.features.set(f.id, entry);
-      }
-      entry.cutout.place({ x: f.x + 0.5, y: f.y + 0.5 }, this.camera, false, this.mode);
-      const tile = f.y * world.level.width + f.x;
-      const d = Math.hypot(f.x + 0.5 - world.player.x, f.y + 0.5 - world.player.y);
-      entry.cutout.shade(entry.cutout.mesh.material as THREE.MeshBasicMaterial, world.visibleNow.has(tile) ? this.falloff(world, d) : 0);
+      if (entry && entry.key === key) continue;
+      if (entry) this.scene.remove(entry.obj);
+      const obj = outlined(featureModel(f.kind, this.mats, key.endsWith('true')), this.mats);
+      obj.position.set(f.x + 0.5, 0, f.y + 0.5);
+      obj.scale.setScalar(1.25);
+      obj.rotation.y = ((f.id * 40503) % 360) * (Math.PI / 180);
+      this.scene.add(obj);
+      entry = { obj, key };
+      this.features.set(f.id, entry);
     }
   }
 
@@ -1333,10 +1395,15 @@ export class ThreeView {
       let entry = this.works.get(w.id);
       if (!entry || entry.key !== key) {
         if (entry) this.scene.remove(entry.obj);
+        if (entry?.flame) this.scene.remove(entry.flame);
         if (w.kind === 'torch') {
-          const { sheet, texture } = this.featureTextures.get(key)!;
-          const cutout = new Cutout(sheet, new THREE.MeshBasicMaterial({ map: texture, alphaTest: 0.5, side: THREE.DoubleSide }), 1.1);
-          entry = { obj: cutout.mesh, key, cutout };
+          const obj = outlined(torchModel(this.mats), this.mats);
+          obj.position.set(w.x + 0.5, 0, w.y + 0.5);
+          const flame = new THREE.Sprite(this.flameMaterial);
+          flame.position.set(w.x + 0.5, TORCH_FLAME, w.y + 0.5);
+          flame.visible = burning;
+          this.scene.add(flame);
+          entry = { obj, key, flame };
         } else {
           // Chalk lies on the floor, lit like it.
           const decal = new THREE.Mesh(
@@ -1351,17 +1418,17 @@ export class ThreeView {
         this.scene.add(entry.obj);
         this.works.set(w.id, entry);
       }
-      if (entry.cutout) {
-        entry.cutout.place({ x: w.x + 0.5, y: w.y + 0.5 }, this.camera, false, this.mode);
-        const tile = w.y * world.level.width + w.x;
+      if (entry.flame && burning) {
         const d = Math.hypot(w.x + 0.5 - world.player.x, w.y + 0.5 - world.player.y);
-        entry.cutout.shade(entry.cutout.mesh.material as THREE.MeshBasicMaterial, burning && world.visibleNow.has(tile) ? 1 : world.visibleNow.has(tile) ? this.falloff(world, d) : 0);
-        if (burning) lit.push({ x: w.x + 0.5, y: w.y + 0.5, d });
+        const flicker = 1 + Math.sin(now / 80 + w.id) * 0.08;
+        entry.flame.scale.set(0.22 * flicker, 0.32 * flicker, 1);
+        lit.push({ x: w.x + 0.5, y: w.y + 0.5, d });
       }
     }
     for (const [id, entry] of this.works) {
       if (seen.has(id)) continue;
       this.scene.remove(entry.obj);
+      if (entry.flame) this.scene.remove(entry.flame);
       this.works.delete(id);
     }
     // The nearest burning torches get a real light.
@@ -1373,7 +1440,7 @@ export class ThreeView {
         return;
       }
       const flicker = 1 + Math.sin(now / 80 + i * 2) * 0.07 + Math.sin(now / 31 + i) * 0.05;
-      light.position.set(torch.x, 1.05, torch.y);
+      light.position.set(torch.x, TORCH_FLAME, torch.y);
       light.intensity = 2.4 * flicker;
     });
   }
@@ -1386,29 +1453,30 @@ export class ThreeView {
       if (camp.depth !== world.depth) continue;
       seen.add(camp.id);
       const lit = here === camp && world.campfire;
-      const key = `camp-${lit}`;
       let entry = this.camps.get(camp.id);
-      if (!entry || entry.key !== key) {
-        if (entry) this.scene.remove(entry.cutout.mesh);
-        const { sheet, texture } = this.featureTextures.get(key)!;
-        const cutout = new Cutout(sheet, new THREE.MeshBasicMaterial({ map: texture, alphaTest: 0.5, side: THREE.DoubleSide }), 0.9);
-        this.scene.add(cutout.mesh);
-        entry = { cutout, key };
+      if (!entry) {
+        const obj = outlined(campModel(this.mats), this.mats);
+        obj.position.set(camp.x + 0.5, 0, camp.y + 0.5);
+        obj.scale.setScalar(1.4);
+        this.scene.add(obj);
+        const flame = new THREE.Sprite(this.flameMaterial);
+        flame.position.set(camp.x + 0.78, 0.26, camp.y + 0.57);
+        this.scene.add(flame);
+        entry = { obj, flame };
         this.camps.set(camp.id, entry);
       }
-      entry.cutout.place({ x: camp.x + 0.5, y: camp.y + 0.5 }, this.camera, false, this.mode);
-      const tile = camp.y * world.level.width + camp.x;
-      const d = Math.hypot(camp.x + 0.5 - world.player.x, camp.y + 0.5 - world.player.y);
-      entry.cutout.shade(entry.cutout.mesh.material as THREE.MeshBasicMaterial, lit ? 1 : world.visibleNow.has(tile) ? this.falloff(world, d) : 0);
+      entry.flame.visible = lit;
       if (lit) {
         const flicker = 1 + Math.sin(now / 90) * 0.08 + Math.sin(now / 37) * 0.05;
-        this.campLight.position.set(camp.x + 0.5, 0.6, camp.y + 0.5);
+        entry.flame.scale.set(0.32 * flicker, 0.42 * flicker, 1);
+        this.campLight.position.set(camp.x + 0.7, 0.55, camp.y + 0.55);
         this.campLight.intensity = 3 * flicker;
       }
     }
     for (const [id, entry] of this.camps) {
       if (seen.has(id)) continue;
-      this.scene.remove(entry.cutout.mesh);
+      this.scene.remove(entry.obj);
+      this.scene.remove(entry.flame);
       this.camps.delete(id);
     }
   }
