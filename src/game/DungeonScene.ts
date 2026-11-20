@@ -6,6 +6,7 @@ import { castWallRay } from '../core/geometry';
 import { NO_INPUT, type ControlInput, type Enemy, type World, type WorldEvent } from '../core/world';
 import {
   drawItem,
+  LOOT_KINDS,
   drawLevel,
   drawLightMask,
   drawProjectile,
@@ -788,7 +789,7 @@ export class DungeonScene extends Phaser.Scene {
       this.addSheet(`hero-${classId}`, () => drawHeroSheet(classId, artTile));
     }
     add('projectile', () => drawProjectile(artTile));
-    for (const kind of ['food', 'water', 'oil'] as const) add(`item-${kind}`, () => drawItem(kind, artTile));
+    for (const kind of LOOT_KINDS) add(`item-${kind}`, () => drawItem(kind, artTile));
     for (const kind of ENEMY_KINDS) this.addSheet(`enemy-${kind}`, () => drawEnemySheet(kind, artTile));
     for (let i = 0; i < 4; i++) add(`splat-${i}`, () => drawSplat(artTile, `splat-${i}`));
   }

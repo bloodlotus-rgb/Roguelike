@@ -45,11 +45,6 @@ const VIEW_KEY = 'estirpe.view';
 /** Turning speed in first person, radians per second at full stick. */
 const TURN_SPEED = 2.6;
 
-const PICKUP_TOAST: Record<string, StringKey> = {
-  food: 'pickupFood',
-  water: 'pickupWater',
-  oil: 'pickupOil',
-};
 
 function storedView(): 'top' | 'first' {
   try {
@@ -101,7 +96,15 @@ class Session implements SceneHost {
         this.hud.setPlaying(false);
         this.lineage.showRoster();
       },
-      onDescend: () => this.descend(),
+      onDescend: () => this.act(),
+      onUseItem: (uid) => {
+        this.world.useItem(uid);
+        this.setPaused(false);
+      },
+      onDropItem: (uid) => {
+        this.world.dropItem(uid);
+        this.persist();
+      },
       onResume: () => this.setPaused(false),
       onPause: () => this.setPaused(true),
       onAbandon: () => {
@@ -145,7 +148,7 @@ class Session implements SceneHost {
     window.addEventListener('keydown', (e) => {
       if (!this.playing) return;
       if (e.code === 'Escape') this.setPaused(!this.paused);
-      if (e.code === 'Enter' && this.world.atStairs && !this.paused) this.descend();
+      if ((e.code === 'Enter' || e.code === 'KeyE') && !this.paused) this.act();
       if (e.code === 'KeyM') this.toggleMap();
       if (e.code === 'KeyV') this.toggleView();
     });
@@ -211,7 +214,19 @@ class Session implements SceneHost {
     this.sound.update(world, events, this.paused);
     this.updateDanger(world);
     for (const e of events) {
-      if (e.type === 'pickup') this.hud.toast(PICKUP_TOAST[e.kind]);
+      if (e.type === 'pickup') {
+        this.hud.toastText(e.kind === 'gold' ? t('toast_gold', { n: e.amount ?? 0 }) : t(`item_${e.kind}` as StringKey));
+      } else if (e.type === 'noRoom') this.hud.toastText(t('toast_noRoom', { item: t(`item_${e.kind}` as StringKey) }));
+      else if (e.type === 'refilled') this.hud.toast(e.skins > 0 ? 'toast_refilled' : 'toast_noSkin');
+      else if (e.type === 'found') {
+        const names = e.kinds.filter((k) => k !== 'gold').map((k) => t(`item_${k}` as StringKey));
+        if (e.gold > 0) names.push(t('toast_gold', { n: e.gold }));
+        this.hud.toastText(names.length ? t('toast_found', { list: names.join(', ') }) : t('toast_foundNothing'), true);
+        if (e.dropped > 0) this.hud.toast('toast_droppedSome');
+      } else if (e.type === 'channel') {
+        this.hud.toast(e.kind === 'waterskin' ? 'toast_drinking' : e.kind === 'oil' ? 'toast_filling' : 'toast_eating');
+      } else if (e.type === 'interrupted') this.hud.toast('toast_interrupted');
+      else if (e.type === 'cantUse') this.hud.toast(e.reason === 'danger' ? 'toast_danger' : 'toast_empty');
       else if (e.type === 'parry') this.hud.toast('parry');
       else if (e.type === 'executed') this.hud.toast('executed');
       else if (e.type === 'playerHit' && e.lightStolen > 0) this.hud.toast('lightStolen');
@@ -233,7 +248,8 @@ class Session implements SceneHost {
     this.hudTimer++;
     if (this.hudTimer % 3 === 0 || events.length > 0) {
       this.hud.setSurvival(world.survival, world.maxHealth);
-      this.hud.setStairsAvailable(world.atStairs);
+      this.hud.setInteraction(world.interaction);
+      this.hud.setGold(world.gold);
       this.hud.setSpecial(world.specialCharge, world.specialReady);
       this.hud.setDodgeReady(world.dodgeCooldown <= 0);
     }
@@ -420,11 +436,18 @@ class Session implements SceneHost {
     };
   }
 
+  /** The action button: the stairs, a fountain or something to search, whatever is at hand. */
+  private act(): void {
+    if (!this.playing || this.world.dead) return;
+    if (this.world.interaction === 'stairs') this.descend();
+    else this.world.interact();
+  }
+
   private descend(): void {
     if (!this.world.atStairs || this.world.dead) return;
     this.world.descend();
     this.hud.setDepth(this.world.depth);
-    this.hud.setStairsAvailable(false);
+    this.hud.setInteraction(null);
     this.controls.reset();
     this.classic?.restart();
     this.persist();
@@ -440,6 +463,7 @@ class Session implements SceneHost {
       this.hud.setHeroInfo(
         `<p class="hero-line">${t('heroLine', { name: member.name, class: t(`className_${this.world.classId}` as StringKey) })}</p>${traitList({ ...member, traits: this.world.traits })}`,
       );
+      this.hud.backpack.show(this.world.inventory, this.world.gold);
     }
     this.hud.setPaused(paused);
   }

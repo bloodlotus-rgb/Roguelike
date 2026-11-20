@@ -2,6 +2,8 @@ import { ATTRIBUTE_IDS, type Attributes } from '../core/attributes';
 import { CLASSES, CLASS_IDS, type ClassId } from '../core/classes';
 import type { Survival } from '../core/survival';
 import type { World } from '../core/world';
+import type { Interaction } from '../core/world';
+import { BackpackUi } from './backpack';
 import { drawMap, type MapExtras } from './map';
 import { getLang, onLangChange, setLang, t, type StringKey } from '../i18n/i18n';
 
@@ -16,6 +18,8 @@ export interface HudHandlers {
   onResume: () => void;
   onPause: () => void;
   onAbandon: () => void;
+  onUseItem: (uid: number) => void;
+  onDropItem: (uid: number) => void;
   onToggleSound: () => boolean;
   onOpenMap: () => void;
   onToggleView: () => void;
@@ -40,6 +44,9 @@ export class Hud {
   private mapWorld: World | null = null;
   private mapExtras: MapExtras = {};
   private readonly heroInfo: HTMLElement;
+  private readonly goldValue: HTMLElement;
+  readonly backpack: BackpackUi;
+  private interaction: Interaction = null;
   private viewButton!: HTMLButtonElement;
   private firstPerson = false;
   private mapTimer = 0;
@@ -71,9 +78,10 @@ export class Hud {
         </div>
       </header>
       <div class="toasts" aria-live="polite"></div>
+      <div class="purse"><span data-i18n="gold"></span> <b class="gold-value">0</b></div>
       <div class="seed"><span data-i18n="seed"></span>: <span class="seed-value"></span></div>
       <div class="actions">
-        <button class="paper-button descend" type="button" data-i18n="descend" hidden></button>
+        <button class="paper-button descend" type="button" hidden></button>
         <button class="action-button special" type="button">
           <span class="special-ring"></span>
           <span data-i18n="special"></span>
@@ -91,6 +99,7 @@ export class Hud {
       <section class="screen pause-screen" hidden>
         <h2 data-i18n="paused"></h2>
         <div class="hero-info"></div>
+        <div class="backpack-slot"></div>
         <button class="paper-button resume" type="button" data-i18n="resume"></button>
         <button class="link-button abandon" type="button" data-i18n="abandon"></button>
       </section>
@@ -128,6 +137,11 @@ export class Hud {
     this.specialButton = root.querySelector('.special')!;
     this.specialRing = root.querySelector('.special-ring')!;
     this.heroInfo = root.querySelector('.hero-info')!;
+    this.goldValue = root.querySelector('.gold-value')!;
+    this.backpack = new BackpackUi(root.querySelector('.backpack-slot')!, {
+      onUse: handlers.onUseItem,
+      onDrop: handlers.onDropItem,
+    });
     this.pauseScreen = root.querySelector('.pause-screen')!;
     this.classScreen = root.querySelector('.class-screen')!;
     this.mapScreen = root.querySelector('.map-screen')!;
@@ -169,6 +183,7 @@ export class Hud {
       document.title = t('title');
       this.renderDepth();
       this.renderClassTitle();
+      this.renderInteraction();
     };
     onLangChange(translate);
     translate();
@@ -203,8 +218,22 @@ export class Hud {
     this.renderDepth();
   }
 
-  setStairsAvailable(available: boolean): void {
-    this.descendButton.hidden = !available;
+  /** The action button changes with what is at hand: stairs, a fountain, something to search. */
+  setInteraction(interaction: Interaction): void {
+    if (interaction === this.interaction) return;
+    this.interaction = interaction;
+    this.descendButton.hidden = interaction === null;
+    this.renderInteraction();
+  }
+
+  private renderInteraction(): void {
+    const key: StringKey =
+      this.interaction === 'fountain' ? 'action_fountain' : this.interaction === 'search' ? 'action_search' : 'descend';
+    this.descendButton.textContent = t(key);
+  }
+
+  setGold(gold: number): void {
+    this.goldValue.textContent = String(gold);
   }
 
   setPlaying(playing: boolean): void {

@@ -142,6 +142,20 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     }
   }
 
+  // Fountains, once seen: water is geography.
+  for (const f of level.features) {
+    if (f.kind !== 'fountain' || !seen(f.x, f.y)) continue;
+    const p = at(f.x + 0.5, f.y + 0.5);
+    const r = Math.max(3, size * 0.32);
+    ctx.fillStyle = '#7d93a3';
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = Math.max(1, size / 12);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
   // Where the family's heroes fell: a cross and a name.
   for (const death of extras.deaths ?? []) {
     const p = at(death.x, death.y);

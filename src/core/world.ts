@@ -1114,8 +1114,9 @@ export class World {
     this.commands.push({ type: 'use', uid });
   }
 
+  /** Drops an item where the hero stands, at once (it is only moving data, like rearranging). */
   dropItem(uid: number): void {
-    this.commands.push({ type: 'drop', uid });
+    this.doDrop(uid);
   }
 
   private runCommands(events: WorldEvent[]): void {

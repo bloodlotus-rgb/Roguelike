@@ -180,3 +180,14 @@ Menos objetos sueltos y más **lugares** donde buscar:
 - **[Supuesto]** **Puertas de verdad** (se abren, se cierran, hacen ruido) entran en E3, junto con las barricadas.
 - **[Supuesto]** **Mientras no exista el fogón (E1)**: la comida y el agua de la mochila se pueden consumir en cualquier lado, fuera de combate, quedándose quieto un par de segundos. En E2 eso pasa a ser solo en el campamento (salvo la ración de marcha).
 - **[Supuesto]** En E1 el agua sale solo de **fuentes** limpias; las goteras y el agua turbia llegan con el fogón (E2), porque hace falta hervirla.
+
+## E1 implementada
+
+- Gasto por actividad y por clase (tabla de la sección 1), curación fuera de peligro pagada con hambre y sed (5 s de calma, 2 de vida por segundo), umbrales al 25 %.
+- Mochila de 5 × 4 tipo Tetris en la pausa: elegir, usar, girar, tirar y mover. Kit inicial: odre, dos raciones secas, una ración de marcha y un frasco de aceite.
+- Comer, beber y cargar la lámpara: 1,5 s quieto (comer y beber, además, sin horrores cerca). La ración de marcha se come caminando.
+- Fuentes (fijas en cada nivel) para llenar odres; restos y cajones para registrar una vez por vida; oro en montoncitos y en el monedero.
+- Botón de acción según lo que tengas cerca: bajar, llenar odres, registrar (también `E` o `Enter`).
+- Guardado versión 2: las vidas en curso reciben el kit inicial.
+- Pendiente: en el motor clásico (`?engine=classic`) no se dibujan las fuentes, restos ni cajones.
+

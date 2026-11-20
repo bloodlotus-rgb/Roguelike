@@ -11,7 +11,7 @@ import type { EnemyKind } from '../core/enemies';
 import { castWallRay } from '../core/geometry';
 import { Rng } from '../core/rng';
 import type { Enemy, World, WorldEvent } from '../core/world';
-import { drawItem, drawProjectile } from './art';
+import { drawItem, drawProjectile, LOOT_KINDS } from './art';
 import { drawEnemySheet, ENEMY_SIZE, type SpriteSheet } from './sprites';
 import { easeIn, easeInOut, easeOut, swingPhase } from './swing';
 
@@ -165,7 +165,7 @@ export class FirstPersonView {
     container.appendChild(this.canvas);
     this.ctx = this.canvas.getContext('2d')!;
     for (const kind of ['crawler', 'husk', 'mourner', 'snuffer'] as const) this.enemySheets.set(kind, drawEnemySheet(kind, 64));
-    for (const kind of ['food', 'water', 'oil'] as const) this.items.set(kind, drawItem(kind, 64));
+    for (const kind of LOOT_KINDS) this.items.set(kind, drawItem(kind, 64));
   }
 
   /** Low resolution on purpose: about 200 to 320 pixels wide, scaled up crisply. */
