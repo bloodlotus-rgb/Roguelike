@@ -14,6 +14,8 @@ export interface SurvivalModifiers {
   hungerMultiplier: number;
   thirstMultiplier: number;
   lightMultiplier: number;
+  /** How fast health drains while starving or dehydrated (1 = normal). */
+  starvingMultiplier?: number;
 }
 
 export const DEFAULT_MODIFIERS: SurvivalModifiers = { maxHealth: 100, hungerMultiplier: 1, thirstMultiplier: 1, lightMultiplier: 1 };
@@ -31,7 +33,8 @@ export function tickSurvival(state: Survival, dt: number, mods: SurvivalModifier
   const thirst = clamp(state.thirst - (100 / cfg.thirstDuration) * mods.thirstMultiplier * dt);
   const light = clamp(state.light - (100 / cfg.lightDuration) * mods.lightMultiplier * dt);
   const deprivations = (hunger === 0 ? 1 : 0) + (thirst === 0 ? 1 : 0);
-  const health = clamp(state.health - deprivations * (mods.maxHealth / cfg.starvingDuration) * dt, mods.maxHealth);
+  const starving = mods.starvingMultiplier ?? 1;
+  const health = clamp(state.health - deprivations * starving * (mods.maxHealth / cfg.starvingDuration) * dt, mods.maxHealth);
   return { health, hunger, thirst, light };
 }
 

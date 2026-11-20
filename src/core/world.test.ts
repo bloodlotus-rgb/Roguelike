@@ -39,6 +39,8 @@ function place(world: World, kind: EnemyKind, dx: number, dy: number, state: Ene
     watching: false,
     wax: 0,
     waxTick: 0,
+    bleed: 0,
+    bleedTick: 0,
   };
   world.enemies.push(enemy);
   return enemy;
