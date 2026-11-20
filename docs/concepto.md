@@ -187,7 +187,7 @@ Cada clase toca la supervivencia de una forma distinta. **[Propuesta]**
 - **Mapa desplegable** con lo explorado, dibujado como boceto. **[Supuesto]** No pausa el juego: mirarlo en la oscuridad es un riesgo.
 - **Visión**: un cono hacia adelante (unos 116°) que sale del cuerpo del héroe, con bordes nítidos y recortado por las paredes: se ve el frente de los muros y las columnas, nunca lo que hay detrás ni hacia atrás. La luz tiene un tinte cálido de llama. El héroe se dibuja siempre sobre la oscuridad.
 - **Ojos en la oscuridad**: los horrores que te miran desde fuera de la vista muestran los ojos, del mismo color que en su dibujo. Cada tipo tiene ojos distintos: el Rastrero tres puntos bajos en arco, el Hueco un solo ojo alto, la Plañidera dos ranuras tristes, el Apagavelas dos alfileres juntos (y solo de cerca).
-- Atmósfera opresiva en **2D** (no 3D por ahora): sombras de la llama, sonido generado por código (ambiente, pasos, latido, horrores que se oyen antes de verse), cámara cerrada y viñeta que aprieta con el peligro.
+- **Motor 3D** (three.js) con dos vistas del mismo mundo: **cenital** inclinada (paredes que se cortan a la rodilla del lado de la cámara) y **primera persona** (vertical en el celular, aprovecha el ancho en PC). Luz real de la llama con sombras, sombreado de tramas de tinta, sonido generado por código, viñeta que aprieta con el peligro.
 - Progresión por **rasgos adquiridos**, sin niveles de experiencia.
 - Tiempo real; medidores de hambre, sed y luz.
 - Una sola dinastía por jugador.

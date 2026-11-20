@@ -1,10 +1,9 @@
-import Phaser from 'phaser';
 import { Sound } from './audio/sound';
 import type { ClassId } from './core/classes';
 import { NO_INPUT, World, type ControlInput, type WorldEvent } from './core/world';
-import { DARK } from './game/art';
-import { DungeonScene, type SceneHost } from './game/DungeonScene';
-import { FirstPersonView } from './game/firstPerson';
+import type { SceneHost } from './game/DungeonScene';
+import type { ClassicEngine } from './game/classic';
+import type { FirstPersonView } from './game/firstPerson';
 import { ThreeView } from './game/threeView';
 import { t, type StringKey } from './i18n/i18n';
 import { Controls } from './ui/controls';
@@ -35,6 +34,12 @@ const VIEW_KEY = 'estirpe.view';
 /** Turning speed in first person, radians per second at full stick. */
 const TURN_SPEED = 2.6;
 
+const PICKUP_TOAST: Record<string, StringKey> = {
+  food: 'pickupFood',
+  water: 'pickupWater',
+  oil: 'pickupOil',
+};
+
 function storedView(): 'top' | 'first' {
   try {
     return localStorage.getItem(VIEW_KEY) === 'first' ? 'first' : 'top';
@@ -50,23 +55,27 @@ class Session implements SceneHost {
   private playing = false;
   private readonly controls: Controls;
   private readonly hud: Hud;
-  private game: Phaser.Game | null = null;
   private hudTimer = 0;
   private readonly sound = new Sound();
   private readonly vignette = document.getElementById('vignette')!;
   private readonly hurt = document.querySelector<HTMLElement>('#vignette .hurt')!;
   private danger = 0;
   view: 'top' | 'first' = storedView();
-  private fp: FirstPersonView | null = null;
-  /** `?engine=three` tries the experimental 3D renderer, which draws both views. */
-  readonly engine: 'classic' | 'three' = new URL(window.location.href).searchParams.get('engine') === 'three' ? 'three' : 'classic';
+  /**
+   * The 3D engine draws both views from one world and runs the game loop itself.
+   * `?engine=classic` brings back the hand-drawn Phaser view and the raycaster.
+   */
+  readonly engine: 'classic' | 'three' = new URL(window.location.href).searchParams.get('engine') === 'classic' ? 'classic' : 'three';
   private three: ThreeView | null = null;
+  private classic: ClassicEngine | null = null;
+  private fp: FirstPersonView | null = null;
   private fpAngle = 0;
   private lastInput = 0;
+  private lastFrame = 0;
 
   constructor(private readonly seed: string) {
     this.hud = new Hud(document.getElementById('hud')!, seed, {
-      onChooseClass: (classId) => this.start(classId),
+      onChooseClass: (classId) => void this.start(classId),
       onDescend: () => this.descend(),
       onChooseAgain: () => this.chooseAgain(),
       onResume: () => this.setPaused(false),
@@ -86,7 +95,7 @@ class Session implements SceneHost {
       this.hud.specialButton,
     );
     this.hud.showClassSelect(true);
-    this.applyView();
+    void this.applyView();
 
     // Leaving the app pauses it: the game never runs while nobody is looking.
     document.addEventListener('visibilitychange', () => {
@@ -118,7 +127,12 @@ class Session implements SceneHost {
     return { ...raw, move: { x: dir.x * forward, y: dir.y * forward }, aim: dir };
   }
 
-  /** Switches between the top view and the first-person prototype. */
+  /** The classic top view draws only when it is the active view. */
+  get drawTop(): boolean {
+    return this.engine === 'classic' && this.view === 'top';
+  }
+
+  /** Switches between the top view and first person. */
   private toggleView(): void {
     this.view = this.view === 'first' ? 'top' : 'first';
     try {
@@ -126,14 +140,10 @@ class Session implements SceneHost {
     } catch {
       // Only a preference.
     }
-    this.applyView();
+    void this.applyView();
   }
 
-  get drawTop(): boolean {
-    return this.engine === 'classic' && this.view === 'top';
-  }
-
-  private applyView(): void {
+  private async applyView(): Promise<void> {
     const first = this.view === 'first';
     this.hud.setFirstPerson(first);
     if (first && this.world) this.fpAngle = Math.atan2(this.world.facing.y, this.world.facing.x);
@@ -145,15 +155,29 @@ class Session implements SceneHost {
       return;
     }
     document.body.classList.toggle('first-person', first);
-    if (first && !this.fp) this.fp = new FirstPersonView(document.getElementById('fp')!);
+    if (first && !this.fp) {
+      const { FirstPersonView } = await import('./game/classic');
+      this.fp = new FirstPersonView(document.getElementById('fp')!);
+    }
   }
 
+  /** Called by the classic scene every frame it simulates. */
   onEvents(events: WorldEvent[]): void {
+    this.frame(events);
+    if (this.view === 'first' && this.fp) this.fp.render(this.world, events, this.fpAngle, performance.now());
+  }
+
+  /** Everything that reacts to a simulated frame, whatever draws it. */
+  private frame(events: WorldEvent[]): void {
     const world = this.world;
     this.sound.update(world, events, this.paused);
-    if (this.engine === 'three') this.three?.render(world, events, this.fpAngle, performance.now());
-    else if (this.view === 'first' && this.fp) this.fp.render(world, events, this.fpAngle, performance.now());
     this.updateDanger(world);
+    for (const e of events) {
+      if (e.type === 'pickup') this.hud.toast(PICKUP_TOAST[e.kind]);
+      else if (e.type === 'parry') this.hud.toast('parry');
+      else if (e.type === 'executed') this.hud.toast('executed');
+      else if (e.type === 'playerHit' && e.lightStolen > 0) this.hud.toast('lightStolen');
+    }
     if (events.some((e) => e.type === 'died')) {
       this.playing = false;
       this.hud.closeMap();
@@ -171,9 +195,19 @@ class Session implements SceneHost {
     }
   }
 
-  onToast(key: StringKey): void {
-    this.hud.toast(key);
-  }
+  /** The 3D engine's game loop: simulate, react, draw. */
+  private loop = (time: number): void => {
+    requestAnimationFrame(this.loop);
+    if (!this.world || !this.three) return;
+    const dt = this.lastFrame ? Math.min(0.1, (time - this.lastFrame) / 1000) : 0;
+    this.lastFrame = time;
+    let events: WorldEvent[] = [];
+    if (this.playing && !this.paused && !this.world.dead) {
+      events = this.world.update(dt, this.input);
+      this.frame(events);
+    }
+    this.three.render(this.world, events, this.fpAngle, time);
+  };
 
   /**
    * The screen closes in when horrors hunt you and turns red when you are hurt.
@@ -192,8 +226,9 @@ class Session implements SceneHost {
     this.hurt.style.opacity = String(health < 0.5 ? (0.5 - health) * 2 : 0);
   }
 
-  private start(classId: ClassId): void {
+  private async start(classId: ClassId): Promise<void> {
     this.sound.start();
+    const fresh = !this.world;
     this.world = new World(this.seed, classId, this.life);
     this.playing = true;
     this.paused = false;
@@ -202,30 +237,16 @@ class Session implements SceneHost {
     this.hud.hideDeath();
     this.hud.setDepth(this.world.depth);
     this.hud.setSurvival(this.world.survival, this.world.maxHealth);
-    if (this.game) this.restartScene();
-    else this.boot();
-    this.applyView();
+    await this.applyView();
+    if (this.engine === 'three') {
+      if (fresh) requestAnimationFrame(this.loop);
+    } else if (this.classic) {
+      this.classic.restart();
+    } else {
+      const { bootClassic } = await import('./game/classic');
+      this.classic = bootClassic(this, document.getElementById('game')!);
+    }
     this.showHint();
-  }
-
-  private boot(): void {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const parent = document.getElementById('game')!;
-    this.game = new Phaser.Game({
-      type: Phaser.AUTO,
-      parent,
-      width: parent.clientWidth * dpr,
-      height: parent.clientHeight * dpr,
-      backgroundColor: DARK,
-      scale: { mode: Phaser.Scale.NONE },
-      input: { keyboard: false, mouse: false, touch: false },
-      render: { antialias: true, roundPixels: false },
-      scene: [],
-    });
-    this.game.scene.add('dungeon', DungeonScene, true, { host: this });
-    window.addEventListener('resize', () => {
-      this.game?.scale.resize(parent.clientWidth * dpr, parent.clientHeight * dpr);
-    });
   }
 
   private showHint(): void {
@@ -247,7 +268,8 @@ class Session implements SceneHost {
     this.world.descend();
     this.hud.setDepth(this.world.depth);
     this.hud.setStairsAvailable(false);
-    this.restartScene();
+    this.controls.reset();
+    this.classic?.restart();
   }
 
   /** After a death: a new life, with the horrors and loot re-rolled. */
@@ -255,11 +277,6 @@ class Session implements SceneHost {
     this.life++;
     this.hud.hideDeath();
     this.hud.showClassSelect(true);
-  }
-
-  private restartScene(): void {
-    this.controls.reset();
-    this.game!.scene.getScene('dungeon')!.scene.restart({ host: this });
   }
 
   private setPaused(paused: boolean): void {

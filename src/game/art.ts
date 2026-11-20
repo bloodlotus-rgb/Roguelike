@@ -147,29 +147,7 @@ export function drawLevel(level: Level, tile: number): HTMLCanvasElement {
     }
   }
 
-  // Ink pooling along the foot of the walls gives the rooms depth.
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (!isFloor(level, x, y)) continue;
-      const l = x * tile;
-      const t = y * tile;
-      const band = tile * 0.42;
-      const sides: Array<[boolean, number, number, number, number]> = [
-        [!isFloor(level, x, y - 1), l, t, l, t + band],
-        [!isFloor(level, x, y + 1), l, t + tile, l, t + tile - band * 0.6],
-        [!isFloor(level, x - 1, y), l, t, l + band, t],
-        [!isFloor(level, x + 1, y), l + tile, t, l + tile - band, t],
-      ];
-      for (const [wall, x0, y0, x1, y1] of sides) {
-        if (!wall) continue;
-        const g = ctx.createLinearGradient(x0, y0, x1, y1);
-        g.addColorStop(0, 'rgba(33, 27, 23, 0.32)');
-        g.addColorStop(1, 'rgba(33, 27, 23, 0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(l, t, tile, tile);
-      }
-    }
-  }
+  drawWallFootShade(level, ctx, tile);
 
   // Rock near the rooms: hatching.
   ctx.strokeStyle = INK;
@@ -297,6 +275,33 @@ function drawColumn(ctx: CanvasRenderingContext2D, rng: Rng, x: number, y: numbe
   ctx.restore();
 }
 
+/** Ink pooling along the foot of the walls gives the rooms depth. */
+function drawWallFootShade(level: Level, ctx: CanvasRenderingContext2D, tile: number): void {
+  const { width, height } = level;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!isFloor(level, x, y)) continue;
+      const l = x * tile;
+      const t = y * tile;
+      const band = tile * 0.42;
+      const sides: Array<[boolean, number, number, number, number]> = [
+        [!isFloor(level, x, y - 1), l, t, l, t + band],
+        [!isFloor(level, x, y + 1), l, t + tile, l, t + tile - band * 0.6],
+        [!isFloor(level, x - 1, y), l, t, l + band, t],
+        [!isFloor(level, x + 1, y), l + tile, t, l + tile - band, t],
+      ];
+      for (const [wall, x0, y0, x1, y1] of sides) {
+        if (!wall) continue;
+        const g = ctx.createLinearGradient(x0, y0, x1, y1);
+        g.addColorStop(0, 'rgba(33, 27, 23, 0.32)');
+        g.addColorStop(1, 'rgba(33, 27, 23, 0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(l, t, tile, tile);
+      }
+    }
+  }
+}
+
 /** Bones, rubble, stains, chains and the remains of earlier delvers. Purely decorative. */
 function drawDecor(level: Level, ctx: CanvasRenderingContext2D, rng: Rng, tile: number): void {
   const s = tile / 32;
@@ -410,6 +415,19 @@ function drawStairs(ctx: CanvasRenderingContext2D, rng: Rng, x: number, y: numbe
 }
 
 /** Tileable paper used to cover what has not been seen yet. */
+/**
+ * The floor's decoration for the 3D engine, on a transparent canvas covering the whole
+ * level: ink pooling at the foot of the walls, and the bones, rubble, stains and remains.
+ */
+export function drawFloorDecor(level: Level, tile: number): HTMLCanvasElement {
+  const [c, ctx] = canvas(level.width * tile, level.height * tile);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  drawWallFootShade(level, ctx, tile);
+  drawDecor(level, ctx, Rng.derive(level.seed, 'art', level.depth), tile);
+  return c;
+}
+
 export function drawPaper(size: number, seed: string): HTMLCanvasElement {
   const [c, ctx] = canvas(size, size);
   paintPaper(ctx, size, size, Rng.derive(seed, 'paper'));

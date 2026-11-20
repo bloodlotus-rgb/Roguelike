@@ -15,9 +15,10 @@ El concepto vigente está en `docs/concepto.md`. Ante contradicciones mandan las
 ## Stack
 
 - Vite + TypeScript, PWA.
-- **Phaser 4** solo para la mazmorra (render, cámara, colisiones, entrada, escenas).
+- **three.js** para la mazmorra: un único mundo 3D con dos cámaras (cenital inclinada y primera persona), luz de llama con sombras reales, personajes planos y sombreado de tramas de tinta (`src/game/threeView.ts`, `threeEffects.ts`).
+- Motor clásico (Phaser 2D + raycaster) disponible con `?engine=classic`; se carga aparte y no entra en el paquete por defecto.
 - **HTML/CSS** para la interfaz, encima del canvas.
-- **Lógica en TypeScript puro** (`src/core/`), sin dependencias de Phaser ni del DOM, testeada con vitest.
+- **Lógica en TypeScript puro** (`src/core/`), sin dependencias de motores gráficos ni del DOM, testeada con vitest.
 - IndexedDB para guardar. Sin backend.
 
 ## Reglas técnicas
@@ -30,7 +31,7 @@ El concepto vigente está en `docs/concepto.md`. Ante contradicciones mandan las
 ## Contenido y derechos
 
 - Todo el contenido es original. Se toman ideas de mecánicas de otros juegos (supervivencia, roguelikes, linajes), pero nunca sus nombres, personajes, arte, música ni su estilo visual reconocible.
-- Arte provisorio hasta definir el arte final. Estilo objetivo: tinta y papel oscuro (la oscuridad es tinta; el papel solo bajo la llama), vista cenital 3/4.
+- Arte por código. Estilo objetivo: tinta y papel oscuro (la oscuridad es tinta; el papel solo bajo la llama), con dos vistas: cenital inclinada y primera persona.
 - Sonido generado con Web Audio en `src/audio/`, sin archivos de audio de terceros.
 
 ## Git

@@ -4,7 +4,6 @@ import type { EnemyKind } from '../core/enemies';
 import { isFloor } from '../core/dungeon';
 import { castWallRay } from '../core/geometry';
 import { COMBAT, NO_INPUT, type ControlInput, type Enemy, type World, type WorldEvent } from '../core/world';
-import type { StringKey } from '../i18n/i18n';
 import {
   drawItem,
   drawLevel,
@@ -54,14 +53,8 @@ export interface SceneHost {
   /** When another renderer draws, this scene only simulates. */
   readonly drawTop: boolean;
   onEvents(events: WorldEvent[]): void;
-  onToast(key: StringKey): void;
 }
 
-const PICKUP_TOAST: Record<string, StringKey> = {
-  food: 'pickupFood',
-  water: 'pickupWater',
-  oil: 'pickupOil',
-};
 
 interface Effect {
   kind: 'swing' | 'ring' | 'drop' | 'spark' | 'slash';
@@ -199,7 +192,6 @@ export class DungeonScene extends Phaser.Scene {
         case 'pickup':
           this.itemSprites.get(event.itemId)?.destroy();
           this.itemSprites.delete(event.itemId);
-          this.host.onToast(PICKUP_TOAST[event.kind]);
           break;
         case 'drop':
           this.addItemSprite(event.item.id, event.item.kind, event.item.x, event.item.y);
@@ -229,7 +221,6 @@ export class DungeonScene extends Phaser.Scene {
           this.effects.push({ kind: 'ring', pos: this.host.world.player, radius: 0.6, ttl: 0.4, life: 0.4, color: BLOOD_HEX });
           break;
         case 'executed':
-          this.host.onToast('executed');
           break;
         case 'enemyDied': {
           const sprite = this.enemySprites.get(event.id);
@@ -246,12 +237,10 @@ export class DungeonScene extends Phaser.Scene {
           this.playerFlashUntil = this.time.now + 140;
           this.cameras.main.shake(140, 0.006);
           this.splatter(this.host.world.player, 6, BLOOD_HEX);
-          if (event.lightStolen > 0) this.host.onToast('lightStolen');
           break;
         case 'parry':
           this.effects.push({ kind: 'spark', pos: this.host.world.player, ttl: 0.3, life: 0.3 });
           this.cameras.main.shake(80, 0.003);
-          this.host.onToast('parry');
           break;
         case 'dodge':
           break;
