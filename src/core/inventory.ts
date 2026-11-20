@@ -12,7 +12,11 @@ export type ItemKind =
   | 'bandage'
   | 'mushroom'
   | 'horrorMeat'
-  | 'campKit';
+  | 'campKit'
+  | 'torch'
+  | 'chalk'
+  | 'planks'
+  | 'rope';
 
 export interface ItemDef {
   /** Cells across and down, unturned. */
@@ -36,6 +40,10 @@ export const ITEMS: Record<ItemKind, ItemDef> = {
   mushroom: { w: 1, h: 1, campOnly: true },
   horrorMeat: { w: 1, h: 2, campOnly: true },
   campKit: { w: 2, h: 3 },
+  torch: { w: 1, h: 2 },
+  chalk: { w: 1, h: 1, charges: 5 },
+  planks: { w: 1, h: 3 },
+  rope: { w: 2, h: 2 },
 };
 
 export const ITEM_KINDS = Object.keys(ITEMS) as ItemKind[];

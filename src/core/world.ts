@@ -7,7 +7,7 @@ import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
 import { hasLineOfSight, moveWithCollision, visibleTiles } from './geometry';
 import { Rng } from './rng';
-import { packTiles, unpackTiles, type CampSite, type DeathCause } from './dynasty';
+import { packTiles, unpackTiles, type CampSite, type ChalkSign, type DeathCause, type Work } from './dynasty';
 import { freshSurvival, isDead, lightRadius, tickSurvival, type Survival } from './survival';
 import { combineEffects, compatible, TRAIT_CAP, traitDef, type TraitEffects } from './traits';
 
@@ -125,6 +125,8 @@ export type WorldEvent =
   | { type: 'campBuilt'; camp: CampSite }
   | { type: 'cantBuild'; reason: 'danger' | 'corridor' | 'taken' }
   | { type: 'campLost'; camp: CampSite }
+  | { type: 'workBuilt'; work: Work }
+  | { type: 'torchFilled' }
   | { type: 'campUsed'; kind: ItemKind; sick?: boolean; poisoned?: boolean; nightmares?: boolean }
   | { type: 'needFire' }
   | { type: 'boiled' }
@@ -155,16 +157,18 @@ export interface LifeOptions {
   inventory?: Inventory;
   /** The family's camps, shared with the dynasty (camps pitched now are added to it). */
   camps?: CampSite[];
+  /** The family's torches, marks, barricades and ropes, shared with the dynasty. */
+  works?: Work[];
   /** Who is down there and in which generation, for the camps they pitch. */
   builder?: number;
   generation?: number;
 }
 
 /** Things the player asks for between frames; the world carries them out in its update. */
-type Command = { type: 'interact' } | { type: 'use'; uid: number } | { type: 'drop'; uid: number };
+type Command = { type: 'interact' } | { type: 'use'; uid: number; sign?: ChalkSign } | { type: 'drop'; uid: number };
 
 /** What the hero can do where they stand. */
-export type Interaction = 'stairs' | 'up' | 'camp' | 'fountain' | 'drip' | 'search' | null;
+export type Interaction = 'stairs' | 'up' | 'camp' | 'torch' | 'fountain' | 'drip' | 'search' | null;
 
 /** Counters behind the acquired traits. */
 export interface LifeCounters {
@@ -297,6 +301,7 @@ export class World {
   /** Horror flesh brings bad dreams: the next night heals less. */
   nightmares = false;
   camps: CampSite[];
+  works: Work[];
   private readonly builder: number;
   private readonly generation: number;
   /** Seconds without danger nearby; healing starts after a while. */
@@ -361,6 +366,7 @@ export class World {
     this.exploredByDepth = options.explored ?? {};
     this.inventory = options.inventory ? JSON.parse(JSON.stringify(options.inventory)) : starterKit();
     this.camps = options.camps ?? [];
+    this.works = options.works ?? [];
     this.builder = options.builder ?? 0;
     this.generation = options.generation ?? 1;
     this.survival = freshSurvival(this.maxHealth);
@@ -696,8 +702,10 @@ export class World {
       maxHealth: this.maxHealth,
       hungerMultiplier: this.cls.hungerMultiplier * Math.max(0.2, 1 + (fx.hunger ?? 0)),
       thirstMultiplier: this.cls.thirstMultiplier * Math.max(0.2, 1 + (fx.thirst ?? 0)),
-      lightMultiplier:
-        (passive.kind === 'devoutFlame' ? passive.lightDrain : 1) * Math.max(0.2, 1 + (fx.light ?? 0)) * (this.isNight ? CONFIG.time.nightLight : 1),
+      // In a torch's light the lamp can rest.
+      lightMultiplier: this.inTorchLight(this.player)
+        ? 0
+        : (passive.kind === 'devoutFlame' ? passive.lightDrain : 1) * Math.max(0.2, 1 + (fx.light ?? 0)) * (this.isNight ? CONFIG.time.nightLight : 1),
       starvingMultiplier: Math.max(0.2, 1 + (fx.starvingDrain ?? 0)),
     });
     if (this.survival.health < before.health) this.lastCause = before.hunger <= 0 || this.survival.hunger <= 0 ? { type: 'hunger' } : { type: 'thirst' };
@@ -1234,7 +1242,8 @@ export class World {
     for (let i = 0; i < count; i++) {
       const { room, index } = rng.pick(far);
       const pos = { x: rng.int(room.x, room.x + room.w - 1) + 0.5, y: rng.int(room.y, room.y + room.h - 1) + 0.5 };
-      if (!isFloor(this.level, Math.floor(pos.x), Math.floor(pos.y))) continue;
+      // Torchlit rooms are left alone.
+      if (!isFloor(this.level, Math.floor(pos.x), Math.floor(pos.y)) || this.inTorchLight(pos)) continue;
       this.enemies.push(this.makeEnemy(rng.pick<EnemyKind>(['crawler', 'crawler', 'husk', 'snuffer']), pos, index, true, rng));
     }
     events.push({ type: 'nightfall' });
@@ -1249,6 +1258,8 @@ export class World {
       camp.condition -= CONFIG.camp.emptyDamage;
       if (camp.condition <= 0) this.loseCamp(camp, events);
     }
+    // Torches burn down, a day at a time.
+    for (const w of this.works) if (w.kind === 'torch') w.condition = Math.max(0, w.condition - CONFIG.works.torchBurn);
     events.push({ type: 'dawn' });
   }
 
@@ -1267,6 +1278,71 @@ export class World {
 
   private roomAt(x: number, y: number): number {
     return this.level.rooms.findIndex((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+  }
+
+  // Works -----------------------------------------------------------------------------
+
+  /** Whether a point lies in the light of a burning torch on this level. */
+  inTorchLight(p: Point): boolean {
+    const r = CONFIG.works.torchRadius;
+    return this.works.some((w) => w.kind === 'torch' && w.depth === this.depth && w.condition > 0 && dist(p, { x: w.x + 0.5, y: w.y + 0.5 }) <= r);
+  }
+
+  /** A torch within reach that is not full, when there is oil to fill it. */
+  get torchToRefill(): Work | null {
+    if (!this.inventory.items.some((it) => it.kind === 'oil')) return null;
+    return (
+      this.works.find(
+        (w) => w.kind === 'torch' && w.depth === this.depth && w.condition < 100 && dist(this.player, { x: w.x + 0.5, y: w.y + 0.5 }) <= CONFIG.works.reach,
+      ) ?? null
+    );
+  }
+
+  private newWork(kind: Work['kind'], extra: Partial<Work> = {}): Work {
+    const work: Work = {
+      id: Math.max(0, ...this.works.map((w) => w.id)) + 1,
+      kind,
+      depth: this.depth,
+      x: Math.floor(this.player.x),
+      y: Math.floor(this.player.y),
+      built: this.generation,
+      builder: this.builder,
+      condition: 100,
+      ...extra,
+    };
+    this.works.push(work);
+    return work;
+  }
+
+  /** Sets a torch on the floor, or draws a chalk mark, where the hero stands. */
+  private placeWork(uid: number, events: WorldEvent[], sign?: ChalkSign): void {
+    const item = this.inventory.items.find((it) => it.uid === uid);
+    if (!item) return;
+    const x = Math.floor(this.player.x);
+    const y = Math.floor(this.player.y);
+    const here = this.works.filter((w) => w.depth === this.depth && w.x === x && w.y === y);
+    if (item.kind === 'torch') {
+      if (here.some((w) => w.kind === 'torch')) return void events.push({ type: 'cantBuild', reason: 'taken' });
+      removeItem(this.inventory, uid);
+      events.push({ type: 'workBuilt', work: this.newWork('torch') });
+      return;
+    }
+    // Chalk: one mark per tile; a new one replaces the old.
+    for (const old of here) if (old.kind === 'chalk') this.works.splice(this.works.indexOf(old), 1);
+    const angle = Math.atan2(this.facing.y, this.facing.x);
+    events.push({ type: 'workBuilt', work: this.newWork('chalk', { sign: sign ?? 'arrow', angle }) });
+    item.charges = (item.charges ?? 1) - 1;
+    if (item.charges <= 0) removeItem(this.inventory, uid);
+  }
+
+  /** Fills the torch at hand with a flask of oil. */
+  private refillTorch(events: WorldEvent[]): void {
+    const torch = this.torchToRefill;
+    const oil = this.inventory.items.find((it) => it.kind === 'oil');
+    if (!torch || !oil) return;
+    removeItem(this.inventory, oil.uid);
+    torch.condition = 100;
+    events.push({ type: 'torchFilled' });
   }
 
   /** Pitches a camp where the hero stands: inside a room, out of danger, one per room. */
@@ -1497,6 +1573,7 @@ export class World {
     if (this.atStairs) return 'stairs';
     if (this.atUpStairs) return 'up';
     if (this.campInReach) return 'camp';
+    if (this.torchToRefill) return 'torch';
     const f = this.featureInReach();
     if (!f) return null;
     return f.kind === 'fountain' || f.kind === 'drip' ? f.kind : 'search';
@@ -1507,8 +1584,9 @@ export class World {
     this.commands.push({ type: 'interact' });
   }
 
-  useItem(uid: number): void {
-    this.commands.push({ type: 'use', uid });
+  /** Uses an item from the backpack; chalk needs the sign to draw. */
+  useItem(uid: number, sign?: ChalkSign): void {
+    this.commands.push({ type: 'use', uid, sign });
   }
 
   /** Drops an item where the hero stands, at once (it is only moving data, like rearranging). */
@@ -1522,11 +1600,12 @@ export class World {
     for (const c of commands) {
       if (c.type === 'interact') this.doInteract(events);
       else if (c.type === 'drop') this.doDrop(c.uid);
-      else this.startUse(c.uid, events);
+      else this.startUse(c.uid, events, c.sign);
     }
   }
 
   private doInteract(events: WorldEvent[]): void {
+    if (this.torchToRefill) return this.refillTorch(events);
     const f = this.featureInReach();
     if (!f) return;
     if (f.kind === 'fountain' || f.kind === 'drip') {
@@ -1581,7 +1660,7 @@ export class World {
   }
 
   /** Eating, drinking and filling the lamp take a moment standing still; march rations don't. */
-  private startUse(uid: number, events: WorldEvent[]): void {
+  private startUse(uid: number, events: WorldEvent[], sign?: ChalkSign): void {
     const item = this.inventory.items.find((it) => it.uid === uid);
     if (!item) return;
     if (item.kind === 'waterskin' && !item.charges) {
@@ -1593,6 +1672,10 @@ export class World {
       return;
     }
     // Food, water, bandages: only by the fire. A camp kit is pitched where you stand.
+    if (item.kind === 'torch' || item.kind === 'chalk') {
+      this.placeWork(item.uid, events, sign);
+      return;
+    }
     if (item.kind === 'campKit') {
       this.buildCamp(uid, events);
       return;
@@ -1932,6 +2015,8 @@ export class World {
     let speed = enemy.def.speed;
     const passive = this.cls.passive;
     if (passive.kind === 'devoutFlame' && d <= this.lightRadius) speed *= passive.hesitation;
+    // Horrors hesitate in torchlight.
+    if (this.inTorchLight(enemy.pos)) speed *= 0.6;
     let dir: Point;
     if (sees && d < 7) {
       dir = { x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y };

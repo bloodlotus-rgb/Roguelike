@@ -103,8 +103,8 @@ class Session implements SceneHost {
         this.lineage.showRoster();
       },
       onDescend: () => this.act(),
-      onUseItem: (uid) => {
-        this.world.useItem(uid);
+      onUseItem: (uid, sign) => {
+        this.world.useItem(uid, sign);
         this.setPaused(false);
       },
       onDropItem: (uid) => {
@@ -282,7 +282,9 @@ class Session implements SceneHost {
       } else if (e.type === 'campLost') {
         this.dynasty.chronicle.push({ type: 'campLost', generation: this.dynasty.generation, depth: e.camp.depth, reason: 'night' });
         this.hud.toastText(t('toast_campLost', { depth: e.camp.depth }), true);
-      } else if (e.type === 'slept') this.hud.toastText(t(`slept_${e.outcome}` as StringKey), true);
+      } else if (e.type === 'workBuilt') this.hud.toast(e.work.kind === 'torch' ? 'toast_torchSet' : 'toast_chalk');
+      else if (e.type === 'torchFilled') this.hud.toast('toast_torchFilled');
+      else if (e.type === 'slept') this.hud.toastText(t(`slept_${e.outcome}` as StringKey), true);
       else if (e.type === 'parry') this.hud.toast('parry');
       else if (e.type === 'executed') this.hud.toast('executed');
       else if (e.type === 'playerHit' && e.lightStolen > 0) this.hud.toast('lightStolen');
@@ -361,6 +363,7 @@ class Session implements SceneHost {
       World.restore(life.world, {
         explored: this.dynasty.explored,
         camps: this.dynasty.camps,
+        works: this.dynasty.works,
         builder: life.memberId,
         generation: this.dynasty.generation,
       }),
@@ -387,6 +390,7 @@ class Session implements SceneHost {
         traits: [...member.traits],
         explored: this.dynasty.explored,
         camps: this.dynasty.camps,
+        works: this.dynasty.works,
         builder: member.id,
         generation: this.dynasty.generation,
       }),

@@ -173,6 +173,37 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     ctx.stroke();
   }
 
+  // The family's torches and chalk marks on this level.
+  for (const w of world.works) {
+    if (w.depth !== world.depth) continue;
+    const p = at(w.x + 0.5, w.y + 0.5);
+    const r = Math.max(3, size * 0.32);
+    ctx.lineWidth = Math.max(1, size / 10);
+    if (w.kind === 'torch') {
+      ctx.fillStyle = w.condition > 0 ? '#d9822b' : PAPER_DARK;
+      ctx.strokeStyle = INK;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else if (w.kind === 'chalk') {
+      ctx.strokeStyle = BLOOD;
+      ctx.beginPath();
+      if (w.sign === 'arrow') {
+        const a = w.angle ?? 0;
+        ctx.moveTo(p.x - Math.cos(a) * r, p.y - Math.sin(a) * r);
+        ctx.lineTo(p.x + Math.cos(a) * r, p.y + Math.sin(a) * r);
+        ctx.lineTo(p.x + Math.cos(a + 2.5) * r * 0.6, p.y + Math.sin(a + 2.5) * r * 0.6);
+      } else {
+        ctx.font = `bold ${Math.max(9, size * 0.6)}px Georgia, serif`;
+        ctx.fillStyle = BLOOD;
+        ctx.textAlign = 'center';
+        ctx.fillText(w.sign === 'danger' ? '!' : w.sign === 'water' ? '~' : w.sign === 'camp' ? '^' : '=', p.x, p.y + r * 0.5);
+      }
+      ctx.stroke();
+    }
+  }
+
   // Drips, once seen: turbid water.
   for (const f of level.features) {
     if (f.kind !== 'drip' || !seen(f.x, f.y)) continue;

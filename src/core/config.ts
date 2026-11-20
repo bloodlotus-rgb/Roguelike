@@ -63,7 +63,7 @@ export const CONFIG = {
       max: 3,
       table: { ration: 25, oil: 18, gold: 15, marchRation: 8, waterskin: 7, bandage: 10, campKit: 7, firewood: 10 },
     },
-    crate: { min: 0, max: 2, table: { ration: 35, oil: 18, gold: 12, firewood: 25, bandage: 10 } },
+    crate: { min: 0, max: 2, table: { ration: 30, oil: 16, gold: 10, firewood: 20, bandage: 8, planks: 8, torch: 5, chalk: 3 } },
     /** Chance that a slain Crawler or Husk leaves flesh worth eating (if cooked). */
     horrorMeat: 0.2,
     /** Reach of fountains and containers, in tiles. */
@@ -78,6 +78,17 @@ export const CONFIG = {
     firewood: 3,
     bandage: 6,
     campKit: 25,
+    torch: 6,
+    chalk: 3,
+    planks: 5,
+    rope: 15,
+  },
+  works: {
+    /** Tiles a torch lights; inside it the lamp rests and horrors hesitate. */
+    torchRadius: 3,
+    /** Condition a torch loses each dawn (about three days on a full load). */
+    torchBurn: 34,
+    reach: 1.2,
   },
   /** A day below ground: long enough to explore, then a short, dangerous night. */
   time: {

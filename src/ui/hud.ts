@@ -18,7 +18,7 @@ export interface HudHandlers {
   onResume: () => void;
   onPause: () => void;
   onAbandon: () => void;
-  onUseItem: (uid: number) => void;
+  onUseItem: (uid: number, sign?: import('../core/dynasty').ChalkSign) => void;
   onDropItem: (uid: number) => void;
   onToggleSound: () => boolean;
   onOpenMap: () => void;
@@ -233,6 +233,7 @@ export class Hud {
       stairs: 'descend',
       up: 'action_up',
       camp: 'action_camp',
+      torch: 'action_torch',
       fountain: 'action_fountain',
       drip: 'action_drip',
       search: 'action_search',

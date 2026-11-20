@@ -889,3 +889,40 @@ describe('climbing and the mansion', () => {
   });
 });
 
+describe('works', () => {
+  it('a torch set on the floor stays for the family; the lamp rests in its light', () => {
+    const works: import('./dynasty').Work[] = [];
+    const world = new World('estirpe', 'headsman', 0, 1, { works });
+    world.enemies = [];
+    addItem(world.inventory, 'torch');
+    const torch = world.inventory.items.find((i) => i.kind === 'torch')!;
+    world.useItem(torch.uid);
+    run(world, 0.05);
+    expect(works).toHaveLength(1);
+    expect(works[0]).toMatchObject({ kind: 'torch', condition: 100 });
+    const light = world.survival.light;
+    run(world, 5);
+    expect(world.survival.light).toBe(light);
+    // It burns down at dawn, and oil fills it again.
+    world.restAtMansion();
+    expect(works[0].condition).toBeLessThan(100);
+    world.returnFromSurface();
+    world.player = { x: works[0].x + 0.5, y: works[0].y + 0.5 };
+    expect(world.interaction === 'torch' || world.interaction === 'up').toBe(true);
+  });
+
+  it('chalk leaves a sign facing where you look, and runs out', () => {
+    const works: import('./dynasty').Work[] = [];
+    const world = new World('estirpe', 'headsman', 0, 1, { works });
+    world.enemies = [];
+    addItem(world.inventory, 'chalk');
+    const chalk = world.inventory.items.find((i) => i.kind === 'chalk')!;
+    world.facing = { x: 0, y: 1 };
+    world.useItem(chalk.uid, 'water');
+    run(world, 0.05);
+    expect(works[0]).toMatchObject({ kind: 'chalk', sign: 'water' });
+    expect(works[0].angle).toBeCloseTo(Math.PI / 2);
+    expect(chalk.charges).toBe(4);
+  });
+});
+
