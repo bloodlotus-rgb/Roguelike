@@ -12,6 +12,7 @@ import { ThreeView } from './game/threeView';
 import { t, type StringKey } from './i18n/i18n';
 import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
+import { CampUi } from './ui/camp';
 import { LineageUi, traitList } from './ui/lineage';
 import type { MapExtras } from './ui/map';
 import { traitName } from './ui/traitText';
@@ -66,6 +67,7 @@ class Session implements SceneHost {
   private chosen: number | null = null;
   private playing = false;
   private readonly lineage: LineageUi;
+  private readonly campUi: CampUi;
 
   private readonly controls: Controls;
   private readonly hud: Hud;
@@ -126,6 +128,14 @@ class Session implements SceneHost {
       this.hud.dodgeButton,
       this.hud.specialButton,
     );
+    this.campUi = new CampUi(hudRoot, {
+      onEvents: (events) => this.announce(events),
+      onLeave: () => {
+        this.paused = false;
+        this.controls.reset();
+        this.persist();
+      },
+    });
     this.lineage = new LineageUi(hudRoot, {
       onPick: (id) => this.pick(id),
       onAbandon: () => void this.abandon(),
@@ -213,31 +223,7 @@ class Session implements SceneHost {
     const world = this.world;
     this.sound.update(world, events, this.paused);
     this.updateDanger(world);
-    for (const e of events) {
-      if (e.type === 'pickup') {
-        this.hud.toastText(e.kind === 'gold' ? t('toast_gold', { n: e.amount ?? 0 }) : t(`item_${e.kind}` as StringKey));
-      } else if (e.type === 'noRoom') this.hud.toastText(t('toast_noRoom', { item: t(`item_${e.kind}` as StringKey) }));
-      else if (e.type === 'refilled') this.hud.toast(e.skins > 0 ? 'toast_refilled' : 'toast_noSkin');
-      else if (e.type === 'found') {
-        const names = e.kinds.filter((k) => k !== 'gold').map((k) => t(`item_${k}` as StringKey));
-        if (e.gold > 0) names.push(t('toast_gold', { n: e.gold }));
-        this.hud.toastText(names.length ? t('toast_found', { list: names.join(', ') }) : t('toast_foundNothing'), true);
-        if (e.dropped > 0) this.hud.toast('toast_droppedSome');
-      } else if (e.type === 'channel') {
-        this.hud.toast(e.kind === 'waterskin' ? 'toast_drinking' : e.kind === 'oil' ? 'toast_filling' : 'toast_eating');
-      } else if (e.type === 'interrupted') this.hud.toast('toast_interrupted');
-      else if (e.type === 'cantUse') this.hud.toast(e.reason === 'danger' ? 'toast_danger' : 'toast_empty');
-      else if (e.type === 'parry') this.hud.toast('parry');
-      else if (e.type === 'executed') this.hud.toast('executed');
-      else if (e.type === 'playerHit' && e.lightStolen > 0) this.hud.toast('lightStolen');
-      else if (e.type === 'hardToKill') this.hud.toast('hardToKillSaved');
-      else if (e.type === 'warning') this.hud.toast('warningBehind');
-      else if (e.type === 'traitGained' && this.memberId !== null) {
-        recordAcquired(this.dynasty, this.memberId, e.trait, world.depth);
-        this.hud.toastText(t('traitGained', { trait: traitName(e.trait) }), true);
-        this.persist();
-      }
-    }
+    this.announce(events);
     const died = events.find((e) => e.type === 'died');
     if (died && died.type === 'died') {
       this.die(died.cause);
@@ -250,8 +236,51 @@ class Session implements SceneHost {
       this.hud.setSurvival(world.survival, world.maxHealth);
       this.hud.setInteraction(world.interaction);
       this.hud.setGold(world.gold);
+      this.hud.setClock(world.day, world.isNight, world.phase);
       this.hud.setSpecial(world.specialCharge, world.specialReady);
       this.hud.setDodgeReady(world.dodgeCooldown <= 0);
+    }
+  }
+
+  /** Toasts and the chronicle for what happened in the world, in play or by the fire. */
+  private announce(events: WorldEvent[]): void {
+    const world = this.world;
+    for (const e of events) {
+      if (e.type === 'pickup') {
+        this.hud.toastText(e.kind === 'gold' ? t('toast_gold', { n: e.amount ?? 0 }) : t(`item_${e.kind}` as StringKey));
+      } else if (e.type === 'noRoom') this.hud.toastText(t('toast_noRoom', { item: t(`item_${e.kind}` as StringKey) }));
+      else if (e.type === 'refilled') this.hud.toast(e.skins === 0 ? 'toast_noSkin' : e.turbid ? 'toast_turbid' : 'toast_refilled');
+      else if (e.type === 'found') {
+        const names = e.kinds.filter((k) => k !== 'gold').map((k) => t(`item_${k}` as StringKey));
+        if (e.gold > 0) names.push(t('toast_gold', { n: e.gold }));
+        this.hud.toastText(names.length ? t('toast_found', { list: names.join(', ') }) : t('toast_foundNothing'), true);
+        if (e.dropped > 0) this.hud.toast('toast_droppedSome');
+      } else if (e.type === 'channel') {
+        this.hud.toast(e.kind === 'waterskin' ? 'toast_drinking' : e.kind === 'oil' ? 'toast_filling' : 'toast_eating');
+      } else if (e.type === 'interrupted') this.hud.toast('toast_interrupted');
+      else if (e.type === 'cantUse') {
+        this.hud.toast(e.reason === 'danger' ? 'toast_danger' : e.reason === 'camp' ? 'toast_onlyCamp' : 'toast_empty');
+      } else if (e.type === 'nightfall') this.hud.toastText(t('toast_nightfall'), true);
+      else if (e.type === 'dawn') this.hud.toast('toast_dawn');
+      else if (e.type === 'cantBuild') this.hud.toast(`toast_cantBuild_${e.reason}` as StringKey);
+      else if (e.type === 'campBuilt' && this.memberId !== null) {
+        this.dynasty.chronicle.push({ type: 'campBuilt', generation: this.dynasty.generation, memberId: this.memberId, depth: e.camp.depth });
+        this.hud.toast('toast_campBuilt');
+        this.persist();
+      } else if (e.type === 'campLost') {
+        this.dynasty.chronicle.push({ type: 'campLost', generation: this.dynasty.generation, depth: e.camp.depth, reason: 'night' });
+        this.hud.toastText(t('toast_campLost', { depth: e.camp.depth }), true);
+      } else if (e.type === 'slept') this.hud.toastText(t(`slept_${e.outcome}` as StringKey), true);
+      else if (e.type === 'parry') this.hud.toast('parry');
+      else if (e.type === 'executed') this.hud.toast('executed');
+      else if (e.type === 'playerHit' && e.lightStolen > 0) this.hud.toast('lightStolen');
+      else if (e.type === 'hardToKill') this.hud.toast('hardToKillSaved');
+      else if (e.type === 'warning') this.hud.toast('warningBehind');
+      else if (e.type === 'traitGained' && this.memberId !== null) {
+        recordAcquired(this.dynasty, this.memberId, e.trait, world.depth);
+        this.hud.toastText(t('traitGained', { trait: traitName(e.trait) }), true);
+        this.persist();
+      }
     }
   }
 
@@ -284,7 +313,8 @@ class Session implements SceneHost {
     let target = Math.min(1, hunters / Math.max(1, 3 - dread));
     if (dread > 0 && world.survival.light < 25) target = Math.max(target, 0.35 * dread);
     this.danger += (target - this.danger) * 0.05;
-    this.vignette.style.opacity = String(0.45 + this.danger * 0.5);
+    // Night presses in from the edges too.
+    this.vignette.style.opacity = String(Math.min(1, 0.45 + (world.isNight ? 0.18 : 0) + this.danger * 0.5));
     const health = world.survival.health / world.maxHealth;
     const threshold = Math.max(0.2, 0.5 + dread * 0.15);
     this.hurt.style.opacity = String(health < threshold ? ((threshold - health) / threshold) * 1 : 0);
@@ -315,7 +345,14 @@ class Session implements SceneHost {
     const life = save.life!;
     this.memberId = life.memberId;
     this.chronicleFrom = life.chronicleFrom ?? this.dynasty.chronicle.length;
-    void this.begin(World.restore(life.world, this.dynasty.explored)).then(() => this.setPaused(true));
+    void this.begin(
+      World.restore(life.world, {
+        explored: this.dynasty.explored,
+        camps: this.dynasty.camps,
+        builder: life.memberId,
+        generation: this.dynasty.generation,
+      }),
+    ).then(() => this.setPaused(true));
   }
 
   /** A member was chosen on the roster: now their class. */
@@ -334,7 +371,13 @@ class Session implements SceneHost {
     this.chosen = null;
     this.chronicleFrom = this.dynasty.chronicle.length;
     await this.begin(
-      new World(this.dynasty.seed, classId, this.dynasty.lives, 1, { traits: [...member.traits], explored: this.dynasty.explored }),
+      new World(this.dynasty.seed, classId, this.dynasty.lives, 1, {
+        traits: [...member.traits],
+        explored: this.dynasty.explored,
+        camps: this.dynasty.camps,
+        builder: member.id,
+        generation: this.dynasty.generation,
+      }),
     );
     this.persist();
     this.showHint();
@@ -439,8 +482,15 @@ class Session implements SceneHost {
   /** The action button: the stairs, a fountain or something to search, whatever is at hand. */
   private act(): void {
     if (!this.playing || this.world.dead) return;
-    if (this.world.interaction === 'stairs') this.descend();
-    else this.world.interact();
+    const interaction = this.world.interaction;
+    if (interaction === 'stairs') this.descend();
+    else if (interaction === 'camp') {
+      // The camp is a pause by the fire.
+      this.paused = true;
+      this.controls.reset();
+      this.hud.closeMap();
+      this.campUi.show(this.world);
+    } else this.world.interact();
   }
 
   private descend(): void {
@@ -463,7 +513,7 @@ class Session implements SceneHost {
       this.hud.setHeroInfo(
         `<p class="hero-line">${t('heroLine', { name: member.name, class: t(`className_${this.world.classId}` as StringKey) })}</p>${traitList({ ...member, traits: this.world.traits })}`,
       );
-      this.hud.backpack.show(this.world.inventory, this.world.gold);
+      this.hud.backpack.show(this.world.inventory, this.world.gold, this.world.knowsMushrooms);
     }
     this.hud.setPaused(paused);
   }

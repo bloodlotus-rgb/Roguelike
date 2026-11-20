@@ -191,3 +191,16 @@ Menos objetos sueltos y más **lugares** donde buscar:
 - Guardado versión 2: las vidas en curso reciben el kit inicial.
 - Pendiente: en el motor clásico (`?engine=classic`) no se dibujan las fuentes, restos ni cajones.
 
+
+## E2 implementada
+
+- Reloj: 7 min de día, 2,5 de noche; en el HUD, día y barra. De noche: la llama dura 40 % menos, los horrores pegan 20 % más y ven 25 % más lejos, salen cazadores de las salas lejanas (2 + profundidad/2) y la vida no se cura sola.
+- Campamento: se arma usando el kit desde la mochila, dentro de una sala despejada, uno por sala, nunca sobre la escalera ni sobre una fuente. Queda en la dinastía (crónica: quién y dónde) y en el mapa.
+- Pantalla del fogón (botón *Campamento*): comer, beber, hervir agua turbia y cocinar (hacen falta fuego), vendarse (+30 de vida), encender el fuego con leña, cargar la lámpara y dormir hasta el alba.
+- La noche se tira: ataque 18 % (+22 % sin fuego, −1,5 % por punto de Voluntad sobre 10), ruidos 25 %, tranquila el resto. Dormir con hambre y sed sobre la mitad cura todo; ruidos 70 %, ataque 40 %, pesadillas la mitad. La noche cuesta 10 de hambre y 12 de sed.
+- Ataque: te despertás en mitad de la noche con 2–3 horrores (más en lo hondo) entrando por los bordes de la sala; el campamento pierde 20 de estado.
+- Al alba, cada campamento vacío tiene 8 % de chance de ser atacado (−40). Entre generaciones, cada uno puede desaparecer (10 % por generación de antigüedad, hasta 60 %).
+- Comida y agua solo en el fogón, salvo la ración de marcha. Goteras: agua turbia (hervida es segura; sin hervir, 50 % de que caiga mal). Hongos en las cavernas (35 % venenosos; con Ingenio 12 o más se reconocen). Carne de horror de Rastreros y Huecos: cocinada da 50 de hambre, 30 % de pesadillas. Ingenio también rinde más al cocinar.
+- **[Supuesto]** Se puede dormir también de día: pasás directo al alba siguiente (perdés el resto del día).
+- Guardado versión 3.
+- Pendiente: en el motor clásico no se dibujan campamentos ni goteras.

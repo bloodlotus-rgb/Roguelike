@@ -12,7 +12,7 @@ export type Tile = (typeof Tile)[keyof typeof Tile];
 export type LootKind = ItemKind | 'gold';
 
 /** Fixed things in a level: fountains are part of its geography; remains and crates can be searched. */
-export type FeatureKind = 'fountain' | 'remains' | 'crate';
+export type FeatureKind = 'fountain' | 'drip' | 'remains' | 'crate';
 
 export interface Feature {
   id: number;
@@ -43,6 +43,8 @@ export interface LevelItem {
   amount?: number;
   /** Uses left, for a dropped waterskin. */
   charges?: number;
+  turbid?: boolean;
+  poison?: boolean;
   /** Tile coordinates. */
   x: number;
   y: number;
@@ -252,6 +254,8 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
   const fountains = placeSpots(level, Rng.derive(seed, 'fountains', depth), taken, rngCount(Rng.derive(seed, 'fountains-n', depth), CONFIG.features.fountain));
   const lootRng = Rng.derive(seed, 'items', depth, itemsRoll);
   const features: Feature[] = fountains.map(([x, y]) => ({ id: 0, kind: 'fountain' as const, x, y }));
+  const dripRng = Rng.derive(seed, 'drips', depth);
+  for (const [x, y] of placeSpots(level, dripRng, taken, rngCount(dripRng, CONFIG.features.drip))) features.push({ id: 0, kind: 'drip', x, y });
   for (const kind of ['remains', 'crate'] as const) {
     for (const [x, y] of placeSpots(level, lootRng, taken, rngCount(lootRng, CONFIG.features[kind]))) features.push({ id: 0, kind, x, y });
   }
@@ -299,6 +303,14 @@ function placeItems(level: Level, rng: Rng, taken: Set<string>): LevelItem[] {
   }
   if (rng.chance(CONFIG.items.marchRationChance)) {
     for (const [x, y] of placeSpots(level, rng, taken, 1)) items.push({ id: items.length, kind: 'marchRation', x, y });
+  }
+  // Mushrooms grow in caves; some are poisonous.
+  const caves = level.rooms.filter((r) => r.shape === 'cave');
+  if (caves.length > 0) {
+    const caveLevel = { ...level, rooms: caves };
+    for (const [x, y] of placeSpots(caveLevel, rng, taken, rngCount(rng, CONFIG.items.mushroom))) {
+      items.push({ id: items.length, kind: 'mushroom', x, y, poison: rng.chance(CONFIG.items.mushroomPoison) });
+    }
   }
   return items;
 }

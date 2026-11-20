@@ -462,7 +462,18 @@ export function drawLightMask(size: number, edge: number): HTMLCanvasElement {
 }
 
 /** Everything that can lie on the floor, in the order the views load them. */
-export const LOOT_KINDS: readonly LootKind[] = ['ration', 'marchRation', 'waterskin', 'oil', 'gold'];
+export const LOOT_KINDS: readonly LootKind[] = [
+  'ration',
+  'marchRation',
+  'waterskin',
+  'oil',
+  'gold',
+  'firewood',
+  'bandage',
+  'mushroom',
+  'horrorMeat',
+  'campKit',
+];
 
 export function drawItem(kind: LootKind, tile: number): HTMLCanvasElement {
   const s = tile / 32;
@@ -474,7 +485,69 @@ export function drawItem(kind: LootKind, tile: number): HTMLCanvasElement {
   ctx.strokeStyle = INK;
   ctx.fillStyle = PAPER;
   ctx.lineWidth = 1.8 * s;
-  if (kind === 'marchRation') {
+  if (kind === 'firewood') {
+    // Two logs, tied.
+    for (const [y, a] of [[10, -0.1], [15, 0.08]] as const) {
+      ctx.save();
+      ctx.translate(12 * s, y * s);
+      ctx.rotate(a);
+      ctx.fillStyle = '#b48a5a';
+      ctx.fillRect(-10 * s, -2.6 * s, 20 * s, 5.2 * s);
+      ctx.strokeRect(-10 * s, -2.6 * s, 20 * s, 5.2 * s);
+      ctx.beginPath();
+      ctx.arc(10 * s, 0, 2 * s, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  } else if (kind === 'bandage') {
+    ctx.beginPath();
+    ctx.ellipse(12 * s, 13 * s, 8 * s, 6 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(12 * s, 13 * s, 3.5 * s, 2.6 * s, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = 1 * s;
+    inkLine(ctx, rng, 18 * s, 15 * s, 23 * s, 20 * s, 0.3 * s);
+  } else if (kind === 'mushroom') {
+    for (const [x, h] of [[8, 9], [15, 12]] as const) {
+      ctx.fillStyle = PAPER;
+      ctx.fillRect((x - 1.2) * s, (20 - h) * s, 2.4 * s, h * s);
+      ctx.strokeRect((x - 1.2) * s, (20 - h) * s, 2.4 * s, h * s);
+      ctx.fillStyle = '#a8673f';
+      ctx.beginPath();
+      ctx.ellipse(x * s, (20 - h) * s, 5 * s, 3.5 * s, 0, Math.PI, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+  } else if (kind === 'horrorMeat') {
+    ctx.fillStyle = '#5a3a3a';
+    ctx.beginPath();
+    ctx.moveTo(5 * s, 14 * s);
+    ctx.quadraticCurveTo(8 * s, 4 * s, 16 * s, 7 * s);
+    ctx.quadraticCurveTo(22 * s, 12 * s, 17 * s, 19 * s);
+    ctx.quadraticCurveTo(9 * s, 22 * s, 5 * s, 14 * s);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = PAPER;
+    ctx.lineWidth = 1 * s;
+    inkLine(ctx, rng, 9 * s, 12 * s, 16 * s, 15 * s, 0.4 * s);
+  } else if (kind === 'campKit') {
+    // A rolled bedroll strapped to a bundle of stakes.
+    ctx.fillStyle = '#8f7a55';
+    ctx.beginPath();
+    ctx.roundRect(4 * s, 9 * s, 16 * s, 9 * s, 4 * s);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(19 * s, 13.5 * s, 4.5 * s, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.lineWidth = 1.2 * s;
+    for (const x of [8, 14]) inkLine(ctx, rng, x * s, 8 * s, x * s, 19 * s, 0.3 * s);
+    inkLine(ctx, rng, 3 * s, 21 * s, 21 * s, 6 * s, 0.4 * s);
+  } else if (kind === 'marchRation') {
     // A bundle wrapped in cloth and tied with string.
     ctx.beginPath();
     ctx.roundRect(5 * s, 7 * s, 14 * s, 11 * s, 3 * s);
@@ -535,6 +608,57 @@ export function drawItem(kind: LootKind, tile: number): HTMLCanvasElement {
 
 export const BLOOD = '#8b2a1f';
 
+/** A family camp: a bedroll by a ring of stones, with the fire burning or out. */
+export function drawCamp(tile: number, lit: boolean): HTMLCanvasElement {
+  const s = tile / 32;
+  const [c, ctx] = canvas(Math.ceil(40 * s), Math.ceil(32 * s));
+  const rng = new Rng('camp-art');
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1.6 * s;
+  // Bedroll.
+  ctx.fillStyle = '#8f7a55';
+  ctx.beginPath();
+  ctx.roundRect(2 * s, 20 * s, 20 * s, 8 * s, 3 * s);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = PAPER;
+  ctx.beginPath();
+  ctx.ellipse(6 * s, 22 * s, 3.5 * s, 2.5 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Stones and wood.
+  ctx.fillStyle = PAPER;
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.ellipse((30 + Math.cos(a) * 7) * s, (27 + Math.sin(a) * 2.6) * s, 2.2 * s, 1.6 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.lineWidth = 2 * s;
+  inkLine(ctx, rng, 26 * s, 28 * s, 34 * s, 24 * s, 0.3 * s);
+  inkLine(ctx, rng, 26 * s, 24 * s, 34 * s, 28 * s, 0.3 * s);
+  if (lit) {
+    ctx.fillStyle = FLAME;
+    ctx.beginPath();
+    ctx.moveTo(25 * s, 26 * s);
+    ctx.quadraticCurveTo(28 * s, 8 * s, 30 * s, 4 * s);
+    ctx.quadraticCurveTo(33 * s, 14 * s, 35 * s, 26 * s);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#f6dc9c';
+    ctx.beginPath();
+    ctx.moveTo(28 * s, 26 * s);
+    ctx.quadraticCurveTo(30 * s, 14 * s, 31 * s, 12 * s);
+    ctx.quadraticCurveTo(32 * s, 18 * s, 33 * s, 26 * s);
+    ctx.closePath();
+    ctx.fill();
+  }
+  return c;
+}
+
 /**
  * Places in a level, drawn upright: a fountain basin, an explorer's remains, a crate.
  * `spent` draws a searched container (an empty pack, a crate with its lid off).
@@ -548,7 +672,23 @@ export function drawFeature(kind: FeatureKind, tile: number, spent = false): HTM
   ctx.strokeStyle = INK;
   ctx.fillStyle = PAPER;
   ctx.lineWidth = 1.8 * s;
-  if (kind === 'fountain') {
+  if (kind === 'drip') {
+    // Water dripping from the ceiling into a dark puddle.
+    ctx.fillStyle = '#5d6f7d';
+    ctx.beginPath();
+    ctx.ellipse(16 * s, 27 * s, 11 * s, 3.5 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#7d93a3';
+    for (const [x, y] of [[13, 8], [18, 14], [15, 20]] as const) {
+      ctx.beginPath();
+      ctx.moveTo(x * s, (y - 3) * s);
+      ctx.quadraticCurveTo((x + 2) * s, (y + 1) * s, x * s, (y + 2) * s);
+      ctx.quadraticCurveTo((x - 2) * s, (y + 1) * s, x * s, (y - 3) * s);
+      ctx.fill();
+      ctx.stroke();
+    }
+  } else if (kind === 'fountain') {
     // A stone basin with a spout, water lines inside.
     ctx.beginPath();
     ctx.moveTo(4 * s, 16 * s);

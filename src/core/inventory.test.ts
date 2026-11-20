@@ -33,6 +33,6 @@ describe('backpack', () => {
     const inv = starterKit();
     const skin = inv.items.find((it) => it.kind === 'waterskin');
     expect(skin?.charges).toBe(4);
-    expect(inv.items.length).toBe(5);
+    expect(inv.items.length).toBe(7);
   });
 });

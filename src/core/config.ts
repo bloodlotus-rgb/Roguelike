@@ -15,9 +15,12 @@ export const CONFIG = {
     oil: { min: 1, max: 2 },
     gold: { min: 3, max: 5 },
     marchRationChance: 0.3,
+    mushroom: { min: 1, max: 3 },
+    mushroomPoison: 0.35,
   },
   features: {
     fountain: { min: 1, max: 2 },
+    drip: { min: 1, max: 3 },
     remains: { min: 2, max: 4 },
     crate: { min: 3, max: 5 },
   },
@@ -55,10 +58,43 @@ export const CONFIG = {
   },
   loot: {
     /** Searching a container: how many things, and what (weights). */
-    remains: { min: 1, max: 3, table: { ration: 35, oil: 25, gold: 20, marchRation: 10, waterskin: 10 } },
-    crate: { min: 0, max: 2, table: { ration: 50, oil: 30, gold: 20 } },
+    remains: {
+      min: 1,
+      max: 3,
+      table: { ration: 25, oil: 18, gold: 15, marchRation: 8, waterskin: 7, bandage: 10, campKit: 7, firewood: 10 },
+    },
+    crate: { min: 0, max: 2, table: { ration: 35, oil: 18, gold: 12, firewood: 25, bandage: 10 } },
+    /** Chance that a slain Crawler or Husk leaves flesh worth eating (if cooked). */
+    horrorMeat: 0.2,
     /** Reach of fountains and containers, in tiles. */
     reach: 1.1,
+  },
+  /** A day below ground: long enough to explore, then a short, dangerous night. */
+  time: {
+    day: 420,
+    night: 150,
+    /** At night the flame burns faster and horrors hit harder and see farther. */
+    nightLight: 1.4,
+    nightDamage: 1.2,
+    nightDetection: 1.25,
+  },
+  camp: {
+    reach: 1.3,
+    /** Chances for a night in camp, before fire and Will. */
+    attack: 0.18,
+    noFire: 0.22,
+    noises: 0.25,
+    /** What a night costs the body. */
+    nightHunger: 10,
+    nightThirst: 12,
+    /** Damage to a camp when attacked, and the chance an empty camp is attacked at dawn. */
+    attackDamage: 20,
+    emptyAttack: 0.08,
+    emptyDamage: 40,
+    bandage: 30,
+    mushroom: 20,
+    horrorMeat: 50,
+    nightmares: 0.3,
   },
   light: {
     /** Visibility radius in tiles with an empty and with a full light meter. */

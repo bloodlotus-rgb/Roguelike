@@ -15,7 +15,7 @@ import { isFloor } from '../core/dungeon';
 import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
-import { drawFeature, drawFloorDecor, drawItem, drawProjectile, LOOT_KINDS } from './art';
+import { drawCamp, drawFeature, drawFloorDecor, drawItem, drawProjectile, LOOT_KINDS } from './art';
 import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
 import { BRICK_DEPTH, layBricks } from './masonry';
 import { easeInOut, easeOut, swingPhase } from './swing';
@@ -543,6 +543,8 @@ export class ThreeView {
   /** Fountains, remains and crates; a container's drawing changes once searched. */
   private readonly features = new Map<number, { cutout: Cutout; key: string }>();
   private readonly featureTextures = new Map<string, { sheet: SpriteSheet; texture: THREE.CanvasTexture }>();
+  private readonly camps = new Map<number, { cutout: Cutout; key: string }>();
+  private readonly campLight: THREE.PointLight;
   private readonly projectiles = new Map<number, Cutout>();
   private readonly walks = new Map<number, { walked: number; last: Point }>();
   private readonly flashUntil = new Map<number, number>();
@@ -593,7 +595,14 @@ export class ThreeView {
       const sheet = sheetFromCanvas(drawItem(kind, 64));
       this.itemTextures.set(kind, { sheet, texture: canvasTexture(sheet.canvas) });
     }
-    for (const kind of ['fountain', 'remains', 'crate'] as const) {
+    for (const lit of [false, true]) {
+      const sheet = { ...sheetFromCanvas(drawCamp(64, lit)), originY: 0.92 };
+      this.featureTextures.set(`camp-${lit}`, { sheet, texture: canvasTexture(sheet.canvas) });
+    }
+    // The camp fire, when burning, lights the room around it.
+    this.campLight = new THREE.PointLight(0xffb070, 0, 5, 1.6);
+    this.scene.add(this.campLight);
+    for (const kind of ['fountain', 'drip', 'remains', 'crate'] as const) {
       for (const spent of [false, true]) {
         const sheet = { ...sheetFromCanvas(drawFeature(kind, 64, spent)), originY: 0.92 };
         this.featureTextures.set(`${kind}-${spent}`, { sheet, texture: canvasTexture(sheet.canvas) });
@@ -636,6 +645,7 @@ export class ThreeView {
     this.syncEnemies(world, now);
     this.syncItems(world);
     this.syncFeatures(world);
+    this.syncCamps(world, now);
     this.syncProjectiles(world);
     this.renderer.render(this.scene, this.camera);
     this.drawHandsOverlay(world, now, moved > 0.002);
@@ -653,6 +663,8 @@ export class ThreeView {
     this.scene.add(this.levelGroup);
     for (const f of this.features.values()) this.scene.remove(f.cutout.mesh);
     this.features.clear();
+    for (const c of this.camps.values()) this.scene.remove(c.cutout.mesh);
+    this.camps.clear();
     for (const map of [this.items, this.projectiles]) {
       for (const c of map.values()) this.scene.remove(c.mesh);
       map.clear();
@@ -1194,6 +1206,41 @@ export class ThreeView {
       const tile = f.y * world.level.width + f.x;
       const d = Math.hypot(f.x + 0.5 - world.player.x, f.y + 0.5 - world.player.y);
       entry.cutout.shade(entry.cutout.mesh.material as THREE.MeshBasicMaterial, world.visibleNow.has(tile) ? this.falloff(world, d) : 0);
+    }
+  }
+
+  private syncCamps(world: World, now: number): void {
+    const here = world.campInReach;
+    const seen = new Set<number>();
+    this.campLight.intensity = 0;
+    for (const camp of world.camps) {
+      if (camp.depth !== world.depth) continue;
+      seen.add(camp.id);
+      const lit = here === camp && world.campfire;
+      const key = `camp-${lit}`;
+      let entry = this.camps.get(camp.id);
+      if (!entry || entry.key !== key) {
+        if (entry) this.scene.remove(entry.cutout.mesh);
+        const { sheet, texture } = this.featureTextures.get(key)!;
+        const cutout = new Cutout(sheet, new THREE.MeshBasicMaterial({ map: texture, alphaTest: 0.5, side: THREE.DoubleSide }), 0.9);
+        this.scene.add(cutout.mesh);
+        entry = { cutout, key };
+        this.camps.set(camp.id, entry);
+      }
+      entry.cutout.place({ x: camp.x + 0.5, y: camp.y + 0.5 }, this.camera, false, this.mode);
+      const tile = camp.y * world.level.width + camp.x;
+      const d = Math.hypot(camp.x + 0.5 - world.player.x, camp.y + 0.5 - world.player.y);
+      entry.cutout.shade(entry.cutout.mesh.material as THREE.MeshBasicMaterial, lit ? 1 : world.visibleNow.has(tile) ? this.falloff(world, d) : 0);
+      if (lit) {
+        const flicker = 1 + Math.sin(now / 90) * 0.08 + Math.sin(now / 37) * 0.05;
+        this.campLight.position.set(camp.x + 0.5, 0.6, camp.y + 0.5);
+        this.campLight.intensity = 3 * flicker;
+      }
+    }
+    for (const [id, entry] of this.camps) {
+      if (seen.has(id)) continue;
+      this.scene.remove(entry.cutout.mesh);
+      this.camps.delete(id);
     }
   }
 

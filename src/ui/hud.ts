@@ -68,6 +68,7 @@ export class Hud {
         </div>
         <div class="hud-side">
           <div class="depth"></div>
+          <div class="clock"><span class="clock-label"></span><span class="clock-bar"><span></span></span></div>
           <button class="map-button" type="button" data-i18n="map"></button>
           <button class="map-button pause-button" type="button" data-i18n="pause"></button>
           <button class="view-button map-button" type="button"></button>
@@ -184,6 +185,7 @@ export class Hud {
       this.renderDepth();
       this.renderClassTitle();
       this.renderInteraction();
+      this.renderClock();
     };
     onLangChange(translate);
     translate();
@@ -227,9 +229,33 @@ export class Hud {
   }
 
   private renderInteraction(): void {
-    const key: StringKey =
-      this.interaction === 'fountain' ? 'action_fountain' : this.interaction === 'search' ? 'action_search' : 'descend';
+    const keys: Record<NonNullable<Interaction>, StringKey> = {
+      stairs: 'descend',
+      camp: 'action_camp',
+      fountain: 'action_fountain',
+      drip: 'action_drip',
+      search: 'action_search',
+    };
+    const key = this.interaction ? keys[this.interaction] : 'descend';
     this.descendButton.textContent = t(key);
+  }
+
+  private clockState = { day: 1, night: false, phase: 0 };
+
+  /** The day below ground: which day, day or night, and how far through it. */
+  setClock(day: number, night: boolean, phase: number): void {
+    const c = this.clockState;
+    const changed = c.day !== day || c.night !== night;
+    this.clockState = { day, night, phase };
+    const el = this.root.querySelector<HTMLElement>('.clock')!;
+    el.classList.toggle('night', night);
+    (el.querySelector('.clock-bar span') as HTMLElement).style.transform = `scaleX(${1 - phase})`;
+    if (changed) this.renderClock();
+  }
+
+  private renderClock(): void {
+    const { day, night } = this.clockState;
+    this.root.querySelector('.clock-label')!.textContent = `${t('day', { n: day })} · ${t(night ? 'night' : 'daytime')}`;
   }
 
   setGold(gold: number): void {

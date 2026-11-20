@@ -102,3 +102,18 @@ describe('acquired traits and ages', () => {
     expect(ageStage(d, m)).toBe('old');
   });
 });
+
+describe('family camps', () => {
+  it('old camps fall apart as generations pass', () => {
+    const d = createDynasty('estirpe');
+    for (let i = 0; i < 20; i++) d.camps.push({ id: i + 1, depth: 2, x: 5, y: 5, built: 1, builder: 1, condition: 100 });
+    let alive = livingMembers(d);
+    for (let g = 0; g < 4; g++) {
+      recordDeath(d, alive[0].id, death);
+      alive = livingMembers(d);
+    }
+    expect(d.camps.length).toBeLessThan(20);
+    expect(d.chronicle.some((e) => e.type === 'campLost' && e.reason === 'time')).toBe(true);
+  });
+});
+
