@@ -4,14 +4,16 @@ Roguelike de supervivencia y exploración en tiempo real, para celular y navegad
 
 ## Estado actual
 
-Etapas 1 (prototipo) y 2 (combate), con arte provisorio:
+Etapas 1 (prototipo), 2 (combate) y atmósfera, con arte provisorio:
 
 - Nivel generado desde una semilla (`?seed=...` en la URL; si no hay, se sortea una).
 - Elección de clase: **Verdugo**, **Saqueador** o **Cirial**, cada una con atributos, combo propio, especial con su forma de cargarse y una pasiva.
 - Joystick virtual (tocando cualquier parte de la pantalla) y tres botones: **Atacar** (golpe o parry), **Especial** y **Esquivar** (mantener: correr, que gasta sed y hambre y hace ruido).
 - Cuatro horrores (Rastrero, Hueco, Plañidera, Apagavelas) que avisan antes de atacar, se alertan entre sí y a veces deambulan entre salas. Tu luz te delata.
 - Salas rectangulares, cavernas y salas con columnas, con decorado.
-- La luz revela el mapa como tinta sobre papel; lo ya visto queda tenue fuera de la luz.
+- Atmósfera oscura: lo que no viste es tinta negra, el papel aparece solo bajo tu llama, y muros y columnas proyectan sombras. Lo ya visto queda apagado.
+- Sonido generado por código: ambiente, pasos, la llama, latido con poca vida, avisos de cada ataque y horrores que se oyen antes de verse. Botón ♪ para silenciar.
+- Viñeta que se cierra cuando te cazan y se tiñe de rojo con poca vida.
 - Hambre, sed y luz bajan con el tiempo; atacar y esquivar gastan sed.
 - Escalera para bajar al siguiente nivel (`semilla + profundidad`).
 - Pausa al salir de la app o con Escape. Idioma español / inglés.
@@ -43,3 +45,4 @@ Cloudflare Workers (assets estáticos) con Workers Builds conectado al repo. Con
 - `src/game/`: escena de Phaser y arte provisorio dibujado con Canvas.
 - `src/ui/`: interfaz en HTML/CSS (HUD, controles, selección de clase, pantallas).
 - `src/i18n/`: textos en español e inglés.
+- `src/audio/`: sonido procedural con Web Audio.

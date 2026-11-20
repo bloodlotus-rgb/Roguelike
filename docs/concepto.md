@@ -183,7 +183,8 @@ Cada clase toca la supervivencia de una forma distinta. **[Propuesta]**
 - Un jefe por nivel como máximo; un nivel con jefe es más peligroso. Quien muere en un nivel con jefe se suma a su escolta.
 - Mazmorra infinita; un final queda para más adelante.
 - Vista **cenital 3/4**.
-- Estilo **tinta y papel**: la oscuridad es papel en blanco y la luz "dibuja" lo que se ve. Arte provisorio para arrancar.
+- Estilo **tinta y papel, oscuro**: lo que no se ve es tinta negra; el papel aparece solo donde llega la llama y lo recordado queda apagado. Muros y columnas proyectan sombras. Arte provisorio para arrancar.
+- Atmósfera opresiva en **2D** (no 3D por ahora): sombras de la llama, sonido generado por código (ambiente, pasos, latido, horrores que se oyen antes de verse), cámara cerrada y viñeta que aprieta con el peligro.
 - Progresión por **rasgos adquiridos**, sin niveles de experiencia.
 - Tiempo real; medidores de hambre, sed y luz.
 - Una sola dinastía por jugador.

@@ -10,6 +10,8 @@ export const PAPER_RGB = [236, 226, 203] as const;
 export const INK = '#211b17';
 export const INK_FADED = 'rgba(33, 27, 23, 0.35)';
 export const FLAME = '#d9822b';
+export const DARK = '#110e0c';
+export const DARK_RGB = [17, 14, 12] as const;
 
 function canvas(width: number, height: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement('canvas');
@@ -90,6 +92,17 @@ export function drawLevel(level: Level, tile: number): HTMLCanvasElement {
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (isFloor(level, x + dx, y + dy)) return true;
     return false;
   };
+
+  // Deep rock, far from any floor, is solid ink that bleeds a little into its neighbors.
+  ctx.fillStyle = DARK;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (isFloor(level, x, y) || nearFloor(x, y)) continue;
+      ctx.beginPath();
+      ctx.arc((x + 0.5) * tile, (y + 0.5) * tile, tile * rng.range(0.72, 0.85), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
   // Floor: faint flagstone joints.
   ctx.strokeStyle = INK_FADED;
@@ -349,21 +362,48 @@ export function drawBrush(size: number): HTMLCanvasElement {
   return c;
 }
 
+/** Tileable ink darkness: what has never been seen. Mostly black, with faint fibers. */
+export function drawDarkness(size: number, seed: string): HTMLCanvasElement {
+  const [c, ctx] = canvas(size, size);
+  const rng = Rng.derive(seed, 'darkness');
+  ctx.fillStyle = DARK;
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < (size * size) / 60; i++) {
+    ctx.fillStyle = `rgba(70, 58, 46, ${rng.range(0.03, 0.1)})`;
+    ctx.fillRect(rng.range(0, size), rng.range(0, size), rng.range(0.6, 2.4), rng.range(0.6, 1.2));
+  }
+  return c;
+}
+
 /**
- * Light falloff around the player: clear inside `holeFraction` of the radius,
- * then a wash of paper that leaves the remembered map faint, like old pencil.
+ * Light falloff around the player: clear and slightly warm inside the flame, then ink
+ * darkness that leaves the remembered map faint. The edge is ragged like ink bleeding
+ * into paper; rotating the image slowly makes it crawl.
  */
-export function drawLightMask(size: number, holeFraction: number, wash: number): HTMLCanvasElement {
+export function drawLightMask(size: number, holeFraction: number, darkness: number): HTMLCanvasElement {
   const [c, ctx] = canvas(size, size);
   const r = size / 2;
-  const [pr, pg, pb] = PAPER_RGB;
+  const hole = r * holeFraction;
+  const [dr, dg, db] = DARK_RGB;
   const g = ctx.createRadialGradient(r, r, 0, r, r, r);
-  g.addColorStop(0, `rgba(${pr},${pg},${pb},0)`);
-  g.addColorStop(holeFraction * 0.6, `rgba(${pr},${pg},${pb},0)`);
-  g.addColorStop(holeFraction, `rgba(${pr},${pg},${pb},${wash})`);
-  g.addColorStop(1, `rgba(${pr},${pg},${pb},${wash})`);
+  g.addColorStop(0, 'rgba(255, 190, 120, 0.07)');
+  g.addColorStop(holeFraction * 0.45, `rgba(${dr},${dg},${db},0)`);
+  g.addColorStop(holeFraction * 0.75, `rgba(${dr},${dg},${db},${darkness * 0.45})`);
+  g.addColorStop(holeFraction, `rgba(${dr},${dg},${db},${darkness})`);
+  g.addColorStop(1, `rgba(${dr},${dg},${db},${darkness})`);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, size, size);
+  // Ragged ink blots around the edge of the light.
+  const rng = new Rng('light-edge');
+  for (let i = 0; i < 260; i++) {
+    const a = rng.range(0, Math.PI * 2);
+    const d = hole * rng.range(0.62, 1.05);
+    const blot = hole * rng.range(0.03, 0.12);
+    ctx.fillStyle = `rgba(${dr},${dg},${db},${rng.range(0.08, 0.3)})`;
+    ctx.beginPath();
+    ctx.arc(r + Math.cos(a) * d, r + Math.sin(a) * d, blot, 0, Math.PI * 2);
+    ctx.fill();
+  }
   return c;
 }
 

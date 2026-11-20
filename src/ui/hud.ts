@@ -11,6 +11,7 @@ export interface HudHandlers {
   onDescend: () => void;
   onChooseAgain: () => void;
   onResume: () => void;
+  onToggleSound: () => boolean;
 }
 
 /** HTML overlay on top of the canvas: meters, depth, buttons and screens. */
@@ -28,6 +29,8 @@ export class Hud {
   private readonly specialRing: HTMLElement;
   private readonly root: HTMLElement;
   private depth = 1;
+  /** Shows whether sound is on. */
+  setSoundOn: (on: boolean) => void = () => {};
   private deathDepth = 1;
 
   constructor(root: HTMLElement, seed: string, handlers: HudHandlers) {
@@ -44,7 +47,10 @@ export class Hud {
         </div>
         <div class="hud-side">
           <div class="depth"></div>
-          <button class="lang" type="button" aria-label="Language"></button>
+          <div class="hud-toggles">
+            <button class="sound" type="button" aria-label="Sound"></button>
+            <button class="lang" type="button" aria-label="Language"></button>
+          </div>
         </div>
       </header>
       <div class="toasts" aria-live="polite"></div>
@@ -110,6 +116,13 @@ export class Hud {
     root.querySelectorAll<HTMLButtonElement>('.class-card').forEach((card) => {
       card.addEventListener('click', () => handlers.onChooseClass(card.dataset.class as ClassId));
     });
+    const soundButton = root.querySelector<HTMLButtonElement>('.sound')!;
+    const renderSound = (on: boolean) => {
+      soundButton.textContent = on ? '♪' : '♪̸';
+      soundButton.classList.toggle('off', !on);
+    };
+    this.setSoundOn = renderSound;
+    soundButton.addEventListener('click', () => renderSound(handlers.onToggleSound()));
     const langButton = root.querySelector<HTMLButtonElement>('.lang')!;
     langButton.addEventListener('click', () => setLang(getLang() === 'es' ? 'en' : 'es'));
 
