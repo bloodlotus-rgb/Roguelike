@@ -1,4 +1,4 @@
-# Roguelike — instrucciones para Claude
+# La Estirpe — instrucciones para Claude
 
 Roguelike de supervivencia y exploración en tiempo real, para celular y navegador. Mazmorra persistente generada desde una semilla, muerte permanente y un linaje de herederos con rasgos. Proyecto aparte de Graphite (DnD-tools); no usa reglas de D&D.
 
@@ -21,6 +21,7 @@ Pendiente de aprobación (ver "Plataforma y stack" en `docs/concepto.md`). Hasta
 - **Determinismo**: toda la generación (niveles, loot, monstruos, rasgos, herederos) sale de un PRNG con semilla. Nunca `Math.random()` en la lógica del juego.
 - **Guardado**: autoguardado continuo; no tiene que existir forma de volver a un estado anterior.
 - Todo dato persistido lleva versión de esquema y migraciones.
+- Interfaz y contenido en inglés y español: todos los textos son localizables, nada de texto fijo en el código.
 
 ## Contenido y derechos
 

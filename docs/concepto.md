@@ -1,10 +1,24 @@
-# Concepto — borrador v5
+# La Estirpe — concepto, borrador v6
 
 > Estado: **borrador para revisar**. Lo marcado como **[Propuesta]** es una sugerencia mía que hay que validar; lo que está en **Decisiones abiertas** todavía no tiene respuesta.
 
 ## Pitch
 
 Un roguelike de supervivencia y exploración en tiempo real, para celular y navegador. Bajás a **tu** mazmorra —generada a partir de una semilla y persistente— con un integrante de **tu linaje**. La meta es llegar lo más profundo posible. Si morís, no hay vuelta atrás: pasa una generación, la familia cambia, y el que murió te espera abajo convertido en jefe.
+
+## Lore
+
+Una familia antigua vive en su mansión, construida sobre una mazmorra maldita. Desde hace generaciones, la familia custodia la mazmorra y contiene a las hordas de horrores que surgen de ella. Pero la maldición cobra su precio: cada integrante que muere ahí abajo pasa a engrosar las filas de los malditos.
+
+Esto le da sentido a las mecánicas:
+- **La mansión es la superficie**: el lugar seguro donde empieza cada vida.
+- **Los caídos se vuelven jefes** porque la maldición los reclama.
+- **La noche** es cuando los horrores suben con más fuerza.
+
+**[Propuesta]** Ideas para la mansión:
+- **Galería de retratos** como árbol genealógico. Los retratos de los caídos se ennegrecen y se restauran cuando su jefe descansa en paz.
+- La crónica familiar y el mapa heredado son libros de la biblioteca de la mansión.
+- La tienda la atiende un personaje de la casa (un mayordomo, un proveedor del pueblo).
 
 ## Pilares
 
@@ -28,9 +42,9 @@ Un roguelike de supervivencia y exploración en tiempo real, para celular y nave
 - **Semilla compartible**: dos jugadores con la misma semilla tienen la misma mazmorra, cada uno con sus propios caídos.
 - **Siempre se empieza desde la superficie.**
 
-## La superficie
+## La mansión (superficie)
 
-Base segura arriba de la mazmorra: lugar de descanso y tienda. Es donde empieza cada vida.
+La casa de la familia, arriba de la mazmorra: lugar de descanso y tienda. Es donde empieza cada vida.
 
 - **Tienda**: armas, armaduras, fuentes de luz, comida y agua, mochilas.
 - **Moneda**: oro que se lootea en la mazmorra.
@@ -48,7 +62,9 @@ Base segura arriba de la mazmorra: lugar de descanso y tienda. Es donde empieza 
 - Al morir, el personaje queda como **jefe en el nivel donde murió**, con su clase y el equipo que llevaba. Pasa con cualquier causa de muerte: combate, hambre, sed o trampa.
 - **Cada rasgo tiene un análogo de jefe.** Los atributos especiales del jefe salen de los rasgos que tuvo en vida; otros atributos dependen de la profundidad.
 - Si lo derrotás, **descansa en paz**: desaparece para siempre y suelta su equipo.
-- Si un héroe muere a manos de un héroe caído, también se convierte en jefe.
+- **Un jefe por nivel**: si en ese nivel ya hay un jefe, el que muere ahí no se vuelve jefe.
+- **[Propuesta]** En ese caso se suma a la escolta maldita del jefe, con su equipo y su oro.
+- **Un nivel con jefe se vuelve más peligroso** mientras el jefe siga ahí. Cuando el jefe descansa en paz, el nivel vuelve a la normalidad y puede volver a tener un jefe.
 
 ## Linaje
 
@@ -142,6 +158,7 @@ Cada clase toca la supervivencia de una forma distinta. **[Propuesta]**
 **[Propuesta, a aprobar]**
 
 - PWA instalable y offline, para celular y navegador.
+- Interfaz y textos en **inglés y español**, con selector.
 - TypeScript + Vite.
 - Render 2D con un motor liviano (Phaser o PixiJS, a decidir).
 - Persistencia local en IndexedDB, sin backend.
@@ -150,12 +167,15 @@ Cada clase toca la supervivencia de una forma distinta. **[Propuesta]**
 
 ## Decisiones abiertas
 
-1. **Idioma**: ¿el juego sale en español, en inglés o con selector? Define cómo se nombran clases y rasgos.
-2. **Héroes caídos**: ¿hay un tope de jefes por nivel?
-3. **Nombre del juego.**
+1. **Muerte en un nivel con jefe**: ¿el héroe se suma a la escolta del jefe o pasa otra cosa?
+2. **¿Hay un final?** ¿Existe el corazón de la maldición en algún lugar, o la mazmorra es infinita y la meta es solo la profundidad?
+3. **Nombres en inglés**: del juego y de las clases.
 
 ## Decisiones tomadas
 
+- Nombre: **La Estirpe**.
+- Idiomas: inglés y español, con selector.
+- Un jefe por nivel como máximo; un nivel con jefe es más peligroso.
 - Vista **cenital 3/4**.
 - Estilo **tinta y papel**: la oscuridad es papel en blanco y la luz "dibuja" lo que se ve. Arte provisorio para arrancar.
 - Progresión por **rasgos adquiridos**, sin niveles de experiencia.
