@@ -15,6 +15,7 @@ export interface HudHandlers {
   onResume: () => void;
   onToggleSound: () => boolean;
   onOpenMap: () => void;
+  onToggleView: () => void;
 }
 
 /** HTML overlay on top of the canvas: meters, depth, buttons and screens. */
@@ -35,6 +36,8 @@ export class Hud {
   private readonly mapCanvas: HTMLCanvasElement;
   private readonly mapTitle: HTMLElement;
   private mapWorld: World | null = null;
+  private viewButton!: HTMLButtonElement;
+  private firstPerson = false;
   private mapTimer = 0;
   private depth = 1;
   /** Shows whether sound is on. */
@@ -56,6 +59,7 @@ export class Hud {
         <div class="hud-side">
           <div class="depth"></div>
           <button class="map-button" type="button" data-i18n="map"></button>
+          <button class="view-button map-button" type="button"></button>
           <div class="hud-toggles">
             <button class="sound" type="button" aria-label="Sound"></button>
             <button class="lang" type="button" aria-label="Language"></button>
@@ -127,7 +131,9 @@ export class Hud {
     this.mapScreen = root.querySelector('.map-screen')!;
     this.mapCanvas = root.querySelector('.map-canvas')!;
     this.mapTitle = root.querySelector('.map-title')!;
-    root.querySelector('.map-button')!.addEventListener('click', handlers.onOpenMap);
+    root.querySelector('.map-button:not(.view-button)')!.addEventListener('click', handlers.onOpenMap);
+    this.viewButton = root.querySelector('.view-button')!;
+    this.viewButton.addEventListener('click', handlers.onToggleView);
     this.mapScreen.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       this.closeMap();
@@ -155,6 +161,7 @@ export class Hud {
         el.textContent = t(el.dataset.i18n as StringKey);
       });
       langButton.textContent = getLang() === 'es' ? 'EN' : 'ES';
+      this.viewButton.textContent = t(this.firstPerson ? 'viewFirst' : 'viewTop');
       document.title = t('title');
       this.renderDepth();
       root.querySelector('.death-depth')!.textContent = t('diedDepth', { depth: this.deathDepth });
@@ -220,6 +227,11 @@ export class Hud {
 
   hideDeath(): void {
     this.deathScreen.hidden = true;
+  }
+
+  setFirstPerson(on: boolean): void {
+    this.firstPerson = on;
+    this.viewButton.textContent = t(on ? 'viewFirst' : 'viewTop');
   }
 
   get mapOpen(): boolean {

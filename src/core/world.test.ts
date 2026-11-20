@@ -253,6 +253,14 @@ describe('parry', () => {
   });
 });
 
+describe('first-person aim', () => {
+  it('faces where the camera looks, even when walking backwards', () => {
+    const world = arena('headsman');
+    world.update(0.02, input({ move: { x: -1, y: 0 }, aim: { x: 1, y: 0 } }));
+    expect(world.facing.x).toBeCloseTo(1);
+  });
+});
+
 describe('dodge and running', () => {
   it('avoids a hit while invulnerable and has a cooldown', () => {
     const world = arena('headsman');

@@ -14,6 +14,7 @@ Etapas 1 (prototipo), 2 (combate) y atmósfera, con arte provisorio:
 - Personajes animados por código, con silueta propia por clase y por horror; la llama del héroe con chispas.
 - Atmósfera oscura: solo ves en un cono hacia adelante, dentro de tu luz, recortado por las paredes. Los horrores que te miran desde la oscuridad (o desde atrás) muestran los ojos.
 - Mapa desplegable con lo explorado (botón Mapa o tecla `M`); no pausa el juego.
+- **Prototipo de primera persona** (botón Vista o tecla `V`): raycaster en baja resolución con texturas de tinta, controles de tanque (joystick arriba/abajo camina, a los costados gira). La vista cenital sigue siendo la principal.
 - Sonido generado por código: ambiente, pasos, la llama, latido con poca vida, avisos de cada ataque y horrores que se oyen antes de verse. Botón ♪ para silenciar.
 - Viñeta que se cierra cuando te cazan y se tiñe de rojo con poca vida.
 - Hambre, sed y luz bajan con el tiempo; atacar y esquivar gastan sed.
