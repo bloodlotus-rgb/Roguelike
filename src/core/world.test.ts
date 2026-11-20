@@ -926,3 +926,56 @@ describe('works', () => {
   });
 });
 
+describe('doors and barricades', () => {
+  /** A world standing next to a doorway, with nothing else around. */
+  function atDoorway(): { world: World; d: { x: number; y: number } } {
+    const world = arena();
+    const d = world.level.doorways[0];
+    // Stand on the room side of it.
+    const room = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dy]) => world.level.rooms.some((r) => d.x + dx >= r.x && d.x + dx < r.x + r.w && d.y + dy >= r.y && d.y + dy < r.y + r.h))!;
+    world.player = { x: d.x + room[0] + 0.5, y: d.y + room[1] + 0.5 };
+    return { world, d };
+  }
+
+  it('levels have narrow doorways, and some have doors', () => {
+    const world = arena();
+    expect(world.level.doorways.length).toBeGreaterThan(0);
+    expect(world.level.doors.length).toBeGreaterThan(0);
+  });
+
+  it('a barricade shuts a doorway for the family, opens and shuts again', () => {
+    const works: import('./dynasty').Work[] = [];
+    const { world, d } = (() => {
+      const w = new World('estirpe', 'headsman', 0, 1, { works });
+      w.enemies = [];
+      const dw = w.level.doorways[0];
+      const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dy]) => w.level.rooms.some((r) => dw.x + dx >= r.x && dw.x + dx < r.x + r.w && dw.y + dy >= r.y && dw.y + dy < r.y + r.h))!;
+      w.player = { x: dw.x + side[0] + 0.5, y: dw.y + side[1] + 0.5 };
+      return { world: w, d: dw };
+    })();
+    world.inventory.items = world.inventory.items.filter((i) => i.kind !== 'campKit');
+    addItem(world.inventory, 'planks');
+    const planks = world.inventory.items.find((i) => i.kind === 'planks')!;
+    world.useItem(planks.uid);
+    run(world, 0.05);
+    expect(works).toHaveLength(1);
+    expect(world.level.closed?.has(d.y * world.level.width + d.x)).toBe(true);
+    expect(world.interaction).toBe('openDoor');
+    world.interact();
+    run(world, 0.05);
+    expect(world.level.closed?.has(d.y * world.level.width + d.x)).toBe(false);
+  });
+
+  it('horrors batter a shut barricade until it gives', () => {
+    const { world, d } = atDoorway();
+    world.works.push({ id: 1, kind: 'barricade', depth: 1, x: d.x, y: d.y, built: 1, builder: 1, condition: 10, open: false });
+    world['refreshShut']();
+    const brute = place(world, 'husk', 0, 0);
+    brute.pos = { x: d.x + 0.5 + (world.player.x - (d.x + 0.5)) * -1, y: d.y + 0.5 + (world.player.y - (d.y + 0.5)) * -1 };
+    brute.alerted = true;
+    const events = run(world, 3);
+    expect(events.some((e) => e.type === 'shutBroken')).toBe(true);
+    expect(world.works).toHaveLength(0);
+  });
+});
+

@@ -62,6 +62,12 @@ export interface Level {
   stairs: Point;
   items: LevelItem[];
   features: Feature[];
+  /** Narrow entrances to rooms: where doors hang and barricades go. */
+  doorways: Point[];
+  /** Doorways that have a door (part of the level's geography). */
+  doors: Point[];
+  /** Tiles shut right now (closed doors, barricades): floor, but nothing gets through. */
+  closed?: Set<number>;
 }
 
 export function tileAt(level: Level, x: number, y: number): Tile {
@@ -71,6 +77,11 @@ export function tileAt(level: Level, x: number, y: number): Tile {
 
 export function isFloor(level: Level, x: number, y: number): boolean {
   return tileAt(level, x, y) === Tile.Floor;
+}
+
+/** Floor that can be crossed and seen through right now (not behind a shut door). */
+export function isPassable(level: Level, x: number, y: number): boolean {
+  return isFloor(level, x, y) && !level.closed?.has(y * level.width + x);
 }
 
 function center(room: Room): Point {
@@ -161,7 +172,7 @@ export function floorDistances(level: Level, origin: Point): Int32Array {
     ]) {
       const nx = x + dx;
       const ny = y + dy;
-      if (!isFloor(level, nx, ny)) continue;
+      if (!isPassable(level, nx, ny)) continue;
       const next = ny * width + nx;
       if (dist[next] !== -1) continue;
       dist[next] = dist[index] + 1;
@@ -236,6 +247,8 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
     stairs: centers[0],
     items: [],
     features: [],
+    doorways: [],
+    doors: [],
   };
 
   removeUnreachable(level, level.start);
@@ -260,9 +273,32 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
     for (const [x, y] of placeSpots(level, lootRng, taken, rngCount(lootRng, CONFIG.features[kind]))) features.push({ id: 0, kind, x, y });
   }
   features.forEach((f, i) => (f.id = i));
+  level.doorways = findDoorways(level);
+  const doorRng = Rng.derive(seed, 'doors', depth);
+  level.doors = level.doorways.filter(() => doorRng.chance(CONFIG.features.doorChance));
   level.features = features;
   level.items = placeItems(level, lootRng, taken);
   return level;
+}
+
+/**
+ * Room entrances one tile wide: corridor tiles (outside every room) next to a room tile,
+ * with wall on both sides across the passage.
+ */
+function findDoorways(level: Level): Point[] {
+  const inRoom = (x: number, y: number) => level.rooms.some((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+  const result: Point[] = [];
+  for (let y = 1; y < level.height - 1; y++) {
+    for (let x = 1; x < level.width - 1; x++) {
+      if (!isFloor(level, x, y) || inRoom(x, y)) continue;
+      const nextToRoom = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => isFloor(level, x + dx, y + dy) && inRoom(x + dx, y + dy));
+      if (!nextToRoom) continue;
+      const walledX = !isFloor(level, x - 1, y) && !isFloor(level, x + 1, y);
+      const walledY = !isFloor(level, x, y - 1) && !isFloor(level, x, y + 1);
+      if (walledX || walledY) result.push({ x, y });
+    }
+  }
+  return result;
 }
 
 function rngCount(rng: Rng, range: { min: number; max: number }): number {

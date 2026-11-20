@@ -282,7 +282,12 @@ class Session implements SceneHost {
       } else if (e.type === 'campLost') {
         this.dynasty.chronicle.push({ type: 'campLost', generation: this.dynasty.generation, depth: e.camp.depth, reason: 'night' });
         this.hud.toastText(t('toast_campLost', { depth: e.camp.depth }), true);
-      } else if (e.type === 'workBuilt') this.hud.toast(e.work.kind === 'torch' ? 'toast_torchSet' : 'toast_chalk');
+      } else if (e.type === 'workBuilt') {
+        this.hud.toast(e.work.kind === 'torch' ? 'toast_torchSet' : e.work.kind === 'barricade' ? 'toast_barricade' : 'toast_chalk');
+      } else if (e.type === 'bashing') this.hud.toast(e.barricade ? 'toast_bashingBarricade' : 'toast_bashingDoor');
+      else if (e.type === 'shutBroken') {
+        this.hud.toastText(e.barricade ? t('toast_barricadeBroken', { depth: e.depth }) : t('toast_doorBroken'), e.barricade);
+      }
       else if (e.type === 'torchFilled') this.hud.toast('toast_torchFilled');
       else if (e.type === 'slept') this.hud.toastText(t(`slept_${e.outcome}` as StringKey), true);
       else if (e.type === 'parry') this.hud.toast('parry');

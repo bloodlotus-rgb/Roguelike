@@ -550,6 +550,9 @@ export class ThreeView {
   private readonly works = new Map<number, { obj: THREE.Mesh; key: string; cutout?: Cutout }>();
   private readonly torchLights: THREE.PointLight[] = [];
   private readonly chalkTextures = new Map<string, THREE.Texture>();
+  /** Doors and barricades, rebuilt when their state changes. */
+  private doors = new Map<number, { obj: THREE.Object3D; key: string }>();
+  private readonly woodMaterial = inkMaterial(new THREE.MeshLambertMaterial({ color: 0x9a7448 }), { cut: true, outline: true });
   private readonly projectiles = new Map<number, Cutout>();
   private readonly walks = new Map<number, { walked: number; last: Point }>();
   private readonly flashUntil = new Map<number, number>();
@@ -662,6 +665,7 @@ export class ThreeView {
     this.syncFeatures(world);
     this.syncCamps(world, now);
     this.syncWorks(world, now);
+    this.syncDoors(world);
     this.syncProjectiles(world);
     this.renderer.render(this.scene, this.camera);
     this.drawHandsOverlay(world, now, moved > 0.002);
@@ -683,6 +687,8 @@ export class ThreeView {
     this.camps.clear();
     for (const w of this.works.values()) this.scene.remove(w.obj);
     this.works.clear();
+    for (const d of this.doors.values()) this.scene.remove(d.obj);
+    this.doors.clear();
     for (const map of [this.items, this.projectiles]) {
       for (const c of map.values()) this.scene.remove(c.mesh);
       map.clear();
@@ -1224,6 +1230,56 @@ export class ThreeView {
       const tile = f.y * world.level.width + f.x;
       const d = Math.hypot(f.x + 0.5 - world.player.x, f.y + 0.5 - world.player.y);
       entry.cutout.shade(entry.cutout.mesh.material as THREE.MeshBasicMaterial, world.visibleNow.has(tile) ? this.falloff(world, d) : 0);
+    }
+  }
+
+  /** A door hangs across a doorway, or stands open against its wall; a barricade is planks. */
+  private syncDoors(world: World): void {
+    const level = world.level;
+    const seen = new Set<number>();
+    const H = 1.5;
+    for (const d of level.doorways) {
+      const tile = d.y * level.width + d.x;
+      const barricade = world.works.find((w) => w.kind === 'barricade' && w.depth === world.depth && w.x === d.x && w.y === d.y);
+      const door = world.doorStates.get(tile);
+      if (!barricade && (!door || door.state === 'broken')) continue;
+      seen.add(tile);
+      const shut = level.closed?.has(tile) ?? false;
+      const key = `${barricade ? 'b' : 'd'}-${shut}`;
+      const entry = this.doors.get(tile);
+      if (entry && entry.key === key) continue;
+      if (entry) this.scene.remove(entry.obj);
+      // Walls on the left and right: the passage runs north–south and the door spans x.
+      const acrossX = !isFloor(level, d.x - 1, d.y) && !isFloor(level, d.x + 1, d.y);
+      const group = new THREE.Group();
+      group.position.set(d.x + 0.5, 0, d.y + 0.5);
+      if (!acrossX) group.rotation.y = Math.PI / 2;
+      const box = (w: number, h: number, depth: number, x: number, y: number, z: number, rz = 0) => {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, depth), this.woodMaterial);
+        mesh.position.set(x, y, z);
+        mesh.rotation.z = rz;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        group.add(mesh);
+      };
+      if (barricade) {
+        if (shut) {
+          box(1, 0.16, 0.08, 0, 0.45, 0, 0.12);
+          box(1, 0.16, 0.08, 0, 0.9, 0.02, -0.15);
+          box(1, 0.16, 0.08, 0, 1.3, 0, 0.08);
+        } else {
+          // Opened: the planks lean against the wall.
+          box(0.08, 1.2, 0.16, -0.45, 0.6, 0.2, 0.15);
+        }
+      } else if (shut) box(0.98, H, 0.1, 0, H / 2, 0);
+      else box(0.1, H, 0.9, -0.44, H / 2, 0);
+      this.scene.add(group);
+      this.doors.set(tile, { obj: group, key });
+    }
+    for (const [tile, entry] of this.doors) {
+      if (seen.has(tile)) continue;
+      this.scene.remove(entry.obj);
+      this.doors.delete(tile);
     }
   }
 

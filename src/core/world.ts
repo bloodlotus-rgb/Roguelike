@@ -1,7 +1,7 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { floorDistances, generateLevel, goldPile, isFloor, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { floorDistances, generateLevel, goldPile, isFloor, isPassable, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
 import { addItem, ITEMS, removeItem, starterKit, type Inventory, type ItemKind } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
@@ -127,6 +127,9 @@ export type WorldEvent =
   | { type: 'campLost'; camp: CampSite }
   | { type: 'workBuilt'; work: Work }
   | { type: 'torchFilled' }
+  | { type: 'door'; open: boolean; barricade: boolean }
+  | { type: 'bashing'; barricade: boolean }
+  | { type: 'shutBroken'; barricade: boolean; depth: number }
   | { type: 'campUsed'; kind: ItemKind; sick?: boolean; poisoned?: boolean; nightmares?: boolean }
   | { type: 'needFire' }
   | { type: 'boiled' }
@@ -168,7 +171,7 @@ export interface LifeOptions {
 type Command = { type: 'interact' } | { type: 'use'; uid: number; sign?: ChalkSign } | { type: 'drop'; uid: number };
 
 /** What the hero can do where they stand. */
-export type Interaction = 'stairs' | 'up' | 'camp' | 'torch' | 'fountain' | 'drip' | 'search' | null;
+export type Interaction = 'stairs' | 'up' | 'camp' | 'torch' | 'openDoor' | 'closeDoor' | 'fountain' | 'drip' | 'search' | null;
 
 /** Counters behind the acquired traits. */
 export interface LifeCounters {
@@ -202,8 +205,15 @@ const freshCounters = (): LifeCounters => ({
 export interface LevelMemory {
   taken: number[];
   searched: number[];
+  /** Doors by tile: open, shut or broken, and how much they can still take. */
+  doors?: Array<[number, DoorState]>;
   drops: LevelItem[];
   enemies: WorldSnapshot['enemies'];
+}
+
+export interface DoorState {
+  state: 'open' | 'shut' | 'broken';
+  hp: number;
 }
 
 /** Everything needed to bring a life back exactly where it was. */
@@ -237,6 +247,7 @@ export interface WorldSnapshot {
   clock?: number;
   /** Levels walked in this life, other than the current one. */
   memory?: Array<[number, LevelMemory]>;
+  doors?: Array<[number, DoorState]>;
   fire?: boolean;
   nightmares?: boolean;
   /** This level's explored tiles, packed. */
@@ -379,7 +390,7 @@ export class World {
     world.player = { ...snapshot.player };
     world.facing = { ...snapshot.facing };
     world.survival = { ...snapshot.survival };
-    world.applyLevel({ taken: snapshot.taken, searched: snapshot.searched ?? [], drops: snapshot.drops, enemies: snapshot.enemies });
+    world.applyLevel({ taken: snapshot.taken, searched: snapshot.searched ?? [], drops: snapshot.drops, enemies: snapshot.enemies, doors: snapshot.doors });
     world.memory = new Map(snapshot.memory ?? []);
     world.specialCharge = snapshot.specialCharge;
     world.specialCooldown = snapshot.specialCooldown;
@@ -431,6 +442,7 @@ export class World {
       facing: { ...this.facing },
       survival: { ...this.survival },
       taken: here.taken,
+      doors: here.doors,
       drops: here.drops,
       enemies: here.enemies,
       memory: [...this.memory].map(([d, m]) => [d, JSON.parse(JSON.stringify(m))] as [number, LevelMemory]),
@@ -630,6 +642,7 @@ export class World {
     return {
       taken: [...this.taken],
       searched: [...this.searched],
+      doors: [...this.doorStates].map(([k, v]) => [k, { ...v }] as [number, DoorState]),
       drops: this.level.items.slice(this.baseItems).map((i) => ({ ...i })),
       enemies: this.enemies.map(({ def: _def, roamField, ...rest }) => ({ ...rest, pos: { ...rest.pos }, roaming: roamField !== null })),
     };
@@ -638,6 +651,8 @@ export class World {
   private applyLevel(mem: LevelMemory): void {
     this.taken = new Set(mem.taken);
     this.searched = new Set(mem.searched);
+    if (mem.doors) this.doorStates = new Map(mem.doors.map(([k, v]) => [k, { ...v }]));
+    this.refreshShut();
     this.level.items.splice(this.baseItems);
     this.level.items.push(...mem.drops.map((i) => ({ ...i })));
     this.enemies = mem.enemies.map(({ roaming, ...e }) => {
@@ -676,6 +691,12 @@ export class World {
       if (isFloor(this.level, x, y)) this.level.items.push({ id: 900 + depth, kind: extraRng.pick<LootKind>(['ration', 'oil', 'gold']), amount: goldPile(extraRng, depth), x, y });
     }
     this.baseItems = this.level.items.length;
+    // Doors: some stand open, some shut, as this life finds them.
+    const doorRng = Rng.derive(this.seed, 'doorstate', this.life, depth);
+    this.doorStates = new Map(
+      this.level.doors.map((d) => [d.y * this.level.width + d.x, { state: doorRng.chance(0.5) ? 'open' : 'shut', hp: CONFIG.works.doorHp } as DoorState]),
+    );
+    this.refreshShut();
     // A level already walked in this life is found as it was left.
     const mem = this.memory?.get(depth);
     if (mem) this.applyLevel(mem);
@@ -729,6 +750,7 @@ export class World {
     if (revealed.length > 0) events.push({ type: 'revealed', tiles: revealed });
 
     this.updateEnemies(dt, events);
+    this.bashShut(dt, events);
     this.updateProjectiles(dt, events);
 
     this.checkAcquired(dt, events);
@@ -1258,8 +1280,18 @@ export class World {
       camp.condition -= CONFIG.camp.emptyDamage;
       if (camp.condition <= 0) this.loseCamp(camp, events);
     }
-    // Torches burn down, a day at a time.
-    for (const w of this.works) if (w.kind === 'torch') w.condition = Math.max(0, w.condition - CONFIG.works.torchBurn);
+    // Torches burn down, a day at a time; barricades take a beating some nights.
+    for (const w of [...this.works]) {
+      if (w.kind === 'torch') w.condition = Math.max(0, w.condition - CONFIG.works.torchBurn);
+      if (w.kind === 'barricade' && rng.chance(CONFIG.works.nightBarricade)) {
+        w.condition -= 30;
+        if (w.condition <= 0) {
+          this.works.splice(this.works.indexOf(w), 1);
+          if (w.depth === this.depth) this.refreshShut();
+          events.push({ type: 'shutBroken', barricade: true, depth: w.depth });
+        }
+      }
+    }
     events.push({ type: 'dawn' });
   }
 
@@ -1333,6 +1365,147 @@ export class World {
     events.push({ type: 'workBuilt', work: this.newWork('chalk', { sign: sign ?? 'arrow', angle }) });
     item.charges = (item.charges ?? 1) - 1;
     if (item.charges <= 0) removeItem(this.inventory, uid);
+  }
+
+  // Doors and barricades -----------------------------------------------------------------
+
+  /** Generated doors on this level, by tile. */
+  doorStates = new Map<number, DoorState>();
+
+  private barricadeAt(x: number, y: number): Work | undefined {
+    return this.works.find((w) => w.kind === 'barricade' && w.depth === this.depth && w.x === x && w.y === y);
+  }
+
+  /** Marks shut doors and barricades in the level, so nothing passes or sees through. */
+  private refreshShut(): void {
+    const shut = new Set<number>();
+    for (const [tile, door] of this.doorStates) if (door.state === 'shut') shut.add(tile);
+    for (const w of this.works) {
+      if (w.kind !== 'barricade' || w.depth !== this.depth) continue;
+      const tile = w.y * this.level.width + w.x;
+      if (w.open) shut.delete(tile);
+      else shut.add(tile);
+    }
+    this.level.closed = shut;
+    // Paths and sight have changed.
+    this.flowTile = -1;
+    this.lastViewTile = -1;
+    for (const e of this.enemies ?? []) e.roamField = null;
+  }
+
+  /** The nearest door or barricade within reach (not the one the hero stands in). */
+  private doorInReach(): { x: number; y: number; shut: boolean; barricade: Work | undefined } | null {
+    const px = Math.floor(this.player.x);
+    const py = Math.floor(this.player.y);
+    let best: { x: number; y: number; shut: boolean; barricade: Work | undefined } | null = null;
+    let bestD = 1.25;
+    for (const d of this.level.doorways) {
+      const barricade = this.barricadeAt(d.x, d.y);
+      const door = this.doorStates.get(d.y * this.level.width + d.x);
+      if (!barricade && (!door || door.state === 'broken')) continue;
+      if (d.x === px && d.y === py) continue;
+      const dd = dist(this.player, { x: d.x + 0.5, y: d.y + 0.5 });
+      if (dd > bestD) continue;
+      bestD = dd;
+      best = { x: d.x, y: d.y, barricade, shut: barricade ? !barricade.open : door!.state === 'shut' };
+    }
+    return best;
+  }
+
+  /** Opens or shuts the door at hand. Doors are loud: horrors close by hear it. */
+  private toggleDoor(events: WorldEvent[]): void {
+    const d = this.doorInReach();
+    if (!d) return;
+    const tile = d.y * this.level.width + d.x;
+    // Nothing can be shut on top of a horror.
+    if (d.shut === false && this.enemies.some((e) => e.state !== 'dead' && Math.floor(e.pos.x) === d.x && Math.floor(e.pos.y) === d.y)) return;
+    if (d.barricade) d.barricade.open = d.shut;
+    else this.doorStates.get(tile)!.state = d.shut ? 'open' : 'shut';
+    this.refreshShut();
+    for (const e of this.enemies) {
+      if (e.state === 'dead' || e.alerted || dist(e.pos, { x: d.x + 0.5, y: d.y + 0.5 }) > 4) continue;
+      e.alerted = true;
+      e.forgetTimer = 0;
+    }
+    events.push({ type: 'door', open: d.shut, barricade: !!d.barricade });
+  }
+
+  /** Nails planks across the nearest doorway: a barricade the family keeps. */
+  private buildBarricade(uid: number, events: WorldEvent[]): void {
+    const px = Math.floor(this.player.x);
+    const py = Math.floor(this.player.y);
+    let target: Point | null = null;
+    let bestD = 1.6;
+    for (const d of this.level.doorways) {
+      if (this.barricadeAt(d.x, d.y) || (d.x === px && d.y === py)) continue;
+      const dd = dist(this.player, { x: d.x + 0.5, y: d.y + 0.5 });
+      if (dd < bestD) {
+        bestD = dd;
+        target = d;
+      }
+    }
+    if (!target) return void events.push({ type: 'cantBuild', reason: 'corridor' });
+    removeItem(this.inventory, uid);
+    // A door there is reinforced: the barricade takes its place.
+    const door = this.doorStates.get(target.y * this.level.width + target.x);
+    if (door) door.state = 'broken';
+    const work = this.newWork('barricade', { x: target.x, y: target.y, open: false });
+    this.refreshShut();
+    events.push({ type: 'workBuilt', work });
+  }
+
+  /** Hunting horrors at a shut door or barricade batter it until it gives. */
+  private bashTimer = 0;
+  private bashShut(dt: number, events: WorldEvent[]): void {
+    const shut = this.level.closed;
+    if (!shut || shut.size === 0) return;
+    this.bashTimer -= dt;
+    for (const tile of [...shut]) {
+      const x = tile % this.level.width;
+      const y = Math.floor(tile / this.level.width);
+      const centre = { x: x + 0.5, y: y + 0.5 };
+      // Hunting horrors that reach it stay pressed against it, battering.
+      const near = this.enemies.filter((e) => e.state !== 'dead' && e.alerted && dist(e.pos, centre) < 1.8);
+      for (const e of near) {
+        const d = dist(e.pos, centre);
+        if (d > 0.95) {
+          const k = (d - 0.95) / d;
+          e.pos = { x: e.pos.x + (centre.x - e.pos.x) * k, y: e.pos.y + (centre.y - e.pos.y) * k };
+        }
+      }
+      const bashers = near.length;
+      if (bashers === 0) continue;
+      const barricade = this.barricadeAt(x, y);
+      if (this.bashTimer <= 0 && dist(this.player, centre) < 10) {
+        events.push({ type: 'bashing', barricade: !!barricade });
+        this.bashTimer = 4;
+      }
+      if (barricade) {
+        barricade.condition -= CONFIG.works.bashBarricade * bashers * dt;
+        if (barricade.condition <= 0) {
+          this.works.splice(this.works.indexOf(barricade), 1);
+          events.push({ type: 'shutBroken', barricade: true, depth: this.depth });
+          this.refreshShut();
+        }
+      } else {
+        const door = this.doorStates.get(tile);
+        if (!door) continue;
+        door.hp -= CONFIG.works.bashDoor * bashers * dt;
+        if (door.hp <= 0) {
+          door.state = 'broken';
+          events.push({ type: 'shutBroken', barricade: false, depth: this.depth });
+          this.refreshShut();
+        }
+      }
+    }
+  }
+
+  /** Whether every way into a room is shut: a camp there is far safer at night. */
+  private roomSealed(room: number): boolean {
+    const r = this.level.rooms[room];
+    if (!r) return false;
+    const ways = this.level.doorways.filter((d) => d.x >= r.x - 1 && d.x <= r.x + r.w && d.y >= r.y - 1 && d.y <= r.y + r.h);
+    return ways.length > 0 && ways.every((d) => this.level.closed?.has(d.y * this.level.width + d.x));
   }
 
   /** Fills the torch at hand with a flask of oil. */
@@ -1477,7 +1650,9 @@ export class World {
     const events: WorldEvent[] = [];
     const cfg = CONFIG.camp;
     const rng = Rng.derive(this.seed, 'night', this.life, this.depth, this.day, Math.floor(this.clock));
-    const attackChance = Math.min(0.6, Math.max(0.03, cfg.attack + (this.campfire ? 0 : cfg.noFire) - (this.attrs.wil - 10) * 0.015));
+    let attackChance = Math.min(0.6, Math.max(0.03, cfg.attack + (this.campfire ? 0 : cfg.noFire) - (this.attrs.wil - 10) * 0.015));
+    // A room with every entrance shut is hard to get into.
+    if (this.roomSealed(this.roomAt(camp.x, camp.y))) attackChance *= 0.35;
     const roll = rng.next();
     const outcome = roll < attackChance ? 'attack' : roll < attackChance + cfg.noises ? 'noises' : 'quiet';
     // Rest: whole with a full belly and throat, less on an empty one, bad dreams or a broken night.
@@ -1574,6 +1749,8 @@ export class World {
     if (this.atUpStairs) return 'up';
     if (this.campInReach) return 'camp';
     if (this.torchToRefill) return 'torch';
+    const door = this.doorInReach();
+    if (door) return door.shut ? 'openDoor' : 'closeDoor';
     const f = this.featureInReach();
     if (!f) return null;
     return f.kind === 'fountain' || f.kind === 'drip' ? f.kind : 'search';
@@ -1606,6 +1783,7 @@ export class World {
 
   private doInteract(events: WorldEvent[]): void {
     if (this.torchToRefill) return this.refillTorch(events);
+    if (this.doorInReach()) return this.toggleDoor(events);
     const f = this.featureInReach();
     if (!f) return;
     if (f.kind === 'fountain' || f.kind === 'drip') {
@@ -1672,6 +1850,10 @@ export class World {
       return;
     }
     // Food, water, bandages: only by the fire. A camp kit is pitched where you stand.
+    if (item.kind === 'planks') {
+      this.buildBarricade(uid, events);
+      return;
+    }
     if (item.kind === 'torch' || item.kind === 'chalk') {
       this.placeWork(item.uid, events, sign);
       return;
@@ -1958,7 +2140,7 @@ export class World {
     this.projectiles = this.projectiles.filter((p) => {
       p.ttl -= dt;
       p.pos = { x: p.pos.x + p.vel.x * dt, y: p.pos.y + p.vel.y * dt };
-      if (p.ttl <= 0 || !isFloor(this.level, Math.floor(p.pos.x), Math.floor(p.pos.y))) return false;
+      if (p.ttl <= 0 || !isPassable(this.level, Math.floor(p.pos.x), Math.floor(p.pos.y))) return false;
       if (dist(p.pos, this.player) > COMBAT.projectile.radius + CONFIG.player.radius) return true;
       if (this.invulnerableTimer > 0) return true;
       // Steady Hand: spit cannot reach you as a blow begins.

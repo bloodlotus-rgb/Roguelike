@@ -234,6 +234,8 @@ export class Hud {
       up: 'action_up',
       camp: 'action_camp',
       torch: 'action_torch',
+      openDoor: 'action_openDoor',
+      closeDoor: 'action_closeDoor',
       fountain: 'action_fountain',
       drip: 'action_drip',
       search: 'action_search',

@@ -21,6 +21,8 @@ export const CONFIG = {
   features: {
     fountain: { min: 1, max: 2 },
     drip: { min: 1, max: 3 },
+    /** Share of room entrances that have a door. */
+    doorChance: 0.4,
     remains: { min: 2, max: 4 },
     crate: { min: 3, max: 5 },
   },
@@ -89,6 +91,12 @@ export const CONFIG = {
     /** Condition a torch loses each dawn (about three days on a full load). */
     torchBurn: 34,
     reach: 1.2,
+    /** A plain door's strength, and how fast hunting horrors batter doors and barricades. */
+    doorHp: 60,
+    bashDoor: 20,
+    bashBarricade: 8,
+    /** Chance a barricade is battered on any night. */
+    nightBarricade: 0.1,
   },
   /** A day below ground: long enough to explore, then a short, dangerous night. */
   time: {

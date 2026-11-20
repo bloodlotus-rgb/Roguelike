@@ -173,6 +173,29 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     ctx.stroke();
   }
 
+  // Doors and barricades in seen doorways.
+  for (const d of level.doorways) {
+    if (!seen(d.x, d.y)) continue;
+    const tile = d.y * level.width + d.x;
+    const barricade = world.works.some((w) => w.kind === 'barricade' && w.depth === world.depth && w.x === d.x && w.y === d.y);
+    const door = world.doorStates.get(tile);
+    if (!barricade && (!door || door.state === 'broken')) continue;
+    const shut = level.closed?.has(tile) ?? false;
+    const p = at(d.x, d.y);
+    const acrossX = !isFloor(level, d.x - 1, d.y) && !isFloor(level, d.x + 1, d.y);
+    ctx.strokeStyle = barricade ? BLOOD : INK;
+    ctx.lineWidth = Math.max(1.5, size / (shut ? 4 : 9));
+    ctx.beginPath();
+    if (acrossX) {
+      ctx.moveTo(p.x, p.y + size / 2);
+      ctx.lineTo(p.x + size, p.y + size / 2);
+    } else {
+      ctx.moveTo(p.x + size / 2, p.y);
+      ctx.lineTo(p.x + size / 2, p.y + size);
+    }
+    ctx.stroke();
+  }
+
   // The family's torches and chalk marks on this level.
   for (const w of world.works) {
     if (w.depth !== world.depth) continue;
