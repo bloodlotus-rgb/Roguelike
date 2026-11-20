@@ -1,13 +1,13 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { floorDistances, generateLevel, goldPile, isFloor, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { floorDistances, generateLevel, goldPile, isFloor, isPassable, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
 import { addItem, ITEMS, removeItem, starterKit, type Inventory, type ItemKind } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
 import { hasLineOfSight, moveWithCollision, visibleTiles } from './geometry';
 import { Rng } from './rng';
-import { packTiles, unpackTiles, type CampSite, type DeathCause } from './dynasty';
+import { packTiles, unpackTiles, type CampSite, type ChalkSign, type DeathCause, type Work } from './dynasty';
 import { freshSurvival, isDead, lightRadius, tickSurvival, type Survival } from './survival';
 import { combineEffects, compatible, TRAIT_CAP, traitDef, type TraitEffects } from './traits';
 
@@ -125,6 +125,11 @@ export type WorldEvent =
   | { type: 'campBuilt'; camp: CampSite }
   | { type: 'cantBuild'; reason: 'danger' | 'corridor' | 'taken' }
   | { type: 'campLost'; camp: CampSite }
+  | { type: 'workBuilt'; work: Work }
+  | { type: 'torchFilled' }
+  | { type: 'door'; open: boolean; barricade: boolean }
+  | { type: 'bashing'; barricade: boolean }
+  | { type: 'shutBroken'; barricade: boolean; depth: number }
   | { type: 'campUsed'; kind: ItemKind; sick?: boolean; poisoned?: boolean; nightmares?: boolean }
   | { type: 'needFire' }
   | { type: 'boiled' }
@@ -155,16 +160,30 @@ export interface LifeOptions {
   inventory?: Inventory;
   /** The family's camps, shared with the dynasty (camps pitched now are added to it). */
   camps?: CampSite[];
+  /** The family's torches, marks, barricades and ropes, shared with the dynasty. */
+  works?: Work[];
   /** Who is down there and in which generation, for the camps they pitch. */
   builder?: number;
   generation?: number;
 }
 
 /** Things the player asks for between frames; the world carries them out in its update. */
-type Command = { type: 'interact' } | { type: 'use'; uid: number } | { type: 'drop'; uid: number };
+type Command = { type: 'interact' } | { type: 'use'; uid: number; sign?: ChalkSign } | { type: 'drop'; uid: number };
 
 /** What the hero can do where they stand. */
-export type Interaction = 'stairs' | 'camp' | 'fountain' | 'drip' | 'search' | null;
+export type Interaction =
+  | 'stairs'
+  | 'up'
+  | 'ropeDown'
+  | 'ropeUp'
+  | 'camp'
+  | 'torch'
+  | 'openDoor'
+  | 'closeDoor'
+  | 'fountain'
+  | 'drip'
+  | 'search'
+  | null;
 
 /** Counters behind the acquired traits. */
 export interface LifeCounters {
@@ -193,6 +212,21 @@ const freshCounters = (): LifeCounters => ({
   belowTenth: false,
   earned: [],
 });
+
+/** What a life left behind on a level it walked: so going back finds it as it was. */
+export interface LevelMemory {
+  taken: number[];
+  searched: number[];
+  /** Doors by tile: open, shut or broken, and how much they can still take. */
+  doors?: Array<[number, DoorState]>;
+  drops: LevelItem[];
+  enemies: WorldSnapshot['enemies'];
+}
+
+export interface DoorState {
+  state: 'open' | 'shut' | 'broken';
+  hp: number;
+}
 
 /** Everything needed to bring a life back exactly where it was. */
 export interface WorldSnapshot {
@@ -223,6 +257,9 @@ export interface WorldSnapshot {
   searched?: number[];
   calm?: number;
   clock?: number;
+  /** Levels walked in this life, other than the current one. */
+  memory?: Array<[number, LevelMemory]>;
+  doors?: Array<[number, DoorState]>;
   fire?: boolean;
   nightmares?: boolean;
   /** This level's explored tiles, packed. */
@@ -287,6 +324,7 @@ export class World {
   /** Horror flesh brings bad dreams: the next night heals less. */
   nightmares = false;
   camps: CampSite[];
+  works: Work[];
   private readonly builder: number;
   private readonly generation: number;
   /** Seconds without danger nearby; healing starts after a while. */
@@ -351,6 +389,7 @@ export class World {
     this.exploredByDepth = options.explored ?? {};
     this.inventory = options.inventory ? JSON.parse(JSON.stringify(options.inventory)) : starterKit();
     this.camps = options.camps ?? [];
+    this.works = options.works ?? [];
     this.builder = options.builder ?? 0;
     this.generation = options.generation ?? 1;
     this.survival = freshSurvival(this.maxHealth);
@@ -363,13 +402,8 @@ export class World {
     world.player = { ...snapshot.player };
     world.facing = { ...snapshot.facing };
     world.survival = { ...snapshot.survival };
-    world.taken = new Set(snapshot.taken);
-    world.level.items.push(...snapshot.drops);
-    world.enemies = snapshot.enemies.map(({ roaming, ...e }) => {
-      const room = world.level.rooms[e.roamRoom];
-      const roamField = roaming && room ? floorDistances(world.level, { x: room.x + Math.floor(room.w / 2), y: room.y + Math.floor(room.h / 2) }) : null;
-      return { ...e, pos: { ...e.pos }, def: ENEMIES[e.kind], roamField };
-    });
+    world.applyLevel({ taken: snapshot.taken, searched: snapshot.searched ?? [], drops: snapshot.drops, enemies: snapshot.enemies, doors: snapshot.doors });
+    world.memory = new Map(snapshot.memory ?? []);
     world.specialCharge = snapshot.specialCharge;
     world.specialCooldown = snapshot.specialCooldown;
     world.comboIndex = snapshot.comboIndex;
@@ -379,7 +413,7 @@ export class World {
     world.time = snapshot.time;
     if (snapshot.inventory) world.inventory = JSON.parse(JSON.stringify(snapshot.inventory));
     world.gold = snapshot.gold ?? 0;
-    world.searched = new Set(snapshot.searched ?? []);
+
     world.calm = snapshot.calm ?? 0;
     world.clock = snapshot.clock ?? 0;
     world.campfire = snapshot.fire ?? false;
@@ -408,7 +442,7 @@ export class World {
   }
 
   snapshot(): WorldSnapshot {
-    const generated = generateLevel(this.seed, this.depth, this.life).items.length;
+    const here = this.captureLevel();
     return {
       v: 1,
       seed: this.seed,
@@ -419,9 +453,11 @@ export class World {
       player: { ...this.player },
       facing: { ...this.facing },
       survival: { ...this.survival },
-      taken: [...this.taken],
-      drops: this.level.items.slice(generated).map((i) => ({ ...i })),
-      enemies: this.enemies.map(({ def: _def, roamField, ...rest }) => ({ ...rest, pos: { ...rest.pos }, roaming: roamField !== null })),
+      taken: here.taken,
+      doors: here.doors,
+      drops: here.drops,
+      enemies: here.enemies,
+      memory: [...this.memory].map(([d, m]) => [d, JSON.parse(JSON.stringify(m))] as [number, LevelMemory]),
       specialCharge: this.specialCharge,
       specialCooldown: this.specialCooldown,
       comboIndex: this.comboIndex,
@@ -431,7 +467,7 @@ export class World {
       time: this.time,
       inventory: JSON.parse(JSON.stringify(this.inventory)),
       gold: this.gold,
-      searched: [...this.searched],
+      searched: here.searched,
       calm: this.calm,
       clock: this.clock,
       fire: this.campfire,
@@ -547,13 +583,103 @@ export class World {
 
   /** Goes one level down, keeping the survival meters and the special charge. */
   descend(): void {
-    this.storeExplored();
+    this.leaveLevel();
     this.enterLevel(this.level.depth + 1);
   }
 
-  private enterLevel(depth: number): void {
-    this.level = generateLevel(this.seed, depth, this.life);
+  /** Whether the hero stands by the way up (where they came in). */
+  get atUpStairs(): boolean {
+    const { start } = this.level;
+    return dist(this.player, { x: start.x + 0.5, y: start.y + 0.5 }) <= CONFIG.player.stairsDistance;
+  }
+
+  /**
+   * Climbs to the level above, arriving by its stairs down. From depth 1 the way up leads
+   * out to the mansion: the world stays at depth 1, and the session takes over.
+   */
+  ascend(): 'mansion' | 'climbed' {
+    if (this.depth <= 1) return 'mansion';
+    this.leaveLevel();
+    this.enterLevel(this.level.depth - 1, 'below');
+    return 'climbed';
+  }
+
+  /** A night at the mansion: safe sleep, a full belly, full waterskins; below, the night passes. */
+  restAtMansion(): WorldEvent[] {
+    const events: WorldEvent[] = [];
+    this.survival = { ...this.survival, health: this.maxHealth, hunger: 100, thirst: 100 };
+    for (const it of this.inventory.items) {
+      if (it.kind !== 'waterskin') continue;
+      it.charges = ITEMS.waterskin.charges;
+      it.turbid = false;
+    }
+    const cycle = CONFIG.time.day + CONFIG.time.night;
+    this.clock = Math.floor(this.clock / cycle) * cycle + cycle;
+    this.nightmares = false;
+    this.dawn(events, null);
+    return events;
+  }
+
+  /** Leaves an item behind for good (at the mansion there is no floor to drop it on). */
+  discardItem(uid: number): void {
+    removeItem(this.inventory, uid);
+  }
+
+  /** Buys from the mansion's shop with the hero's gold. */
+  buy(kind: ItemKind): 'bought' | 'gold' | 'room' {
+    const price = CONFIG.shop[kind as keyof typeof CONFIG.shop];
+    if (price === undefined || this.gold < price) return 'gold';
+    if (!addItem(this.inventory, kind)) return 'room';
+    this.gold -= price;
+    return 'bought';
+  }
+
+  /** Back from the mansion: in by the way down, where every life begins. */
+  returnFromSurface(): void {
     this.player = { x: this.level.start.x + 0.5, y: this.level.start.y + 0.5 };
+    this.lastViewTile = -1;
+  }
+
+  /** Levels this life has walked, as they were left. */
+  private memory = new Map<number, LevelMemory>();
+  /** Items generated with the level (the rest were dropped during this life). */
+  private baseItems = 0;
+
+  private leaveLevel(): void {
+    this.storeExplored();
+    this.memory.set(this.depth, this.captureLevel());
+  }
+
+  private captureLevel(): LevelMemory {
+    return {
+      taken: [...this.taken],
+      searched: [...this.searched],
+      doors: [...this.doorStates].map(([k, v]) => [k, { ...v }] as [number, DoorState]),
+      drops: this.level.items.slice(this.baseItems).map((i) => ({ ...i })),
+      enemies: this.enemies.map(({ def: _def, roamField, ...rest }) => ({ ...rest, pos: { ...rest.pos }, roaming: roamField !== null })),
+    };
+  }
+
+  private applyLevel(mem: LevelMemory): void {
+    this.taken = new Set(mem.taken);
+    this.searched = new Set(mem.searched);
+    if (mem.doors) this.doorStates = new Map(mem.doors.map(([k, v]) => [k, { ...v }]));
+    this.refreshShut();
+    this.level.items.splice(this.baseItems);
+    this.level.items.push(...mem.drops.map((i) => ({ ...i })));
+    this.enemies = mem.enemies.map(({ roaming, ...e }) => {
+      const room = this.level.rooms[e.roamRoom];
+      const roamField = roaming && room ? floorDistances(this.level, { x: room.x + Math.floor(room.w / 2), y: room.y + Math.floor(room.h / 2) }) : null;
+      return { ...e, pos: { ...e.pos }, def: ENEMIES[e.kind], roamField };
+    });
+  }
+
+  private enterLevel(depth: number, from: 'above' | 'below' | 'ropeDown' | 'ropeUp' = 'above'): void {
+    this.level = generateLevel(this.seed, depth, this.life);
+    // By rope you arrive at the landing below, or beside the pit above.
+    const arrival =
+      from === 'below' ? this.level.stairs : from === 'ropeDown' ? this.level.landing : from === 'ropeUp' ? this.besidePit() : this.level.start;
+    this.player = { x: arrival.x + 0.5, y: arrival.y + 0.5 };
     // The dynasty's map: whatever any ancestor saw here is already known.
     this.explored = unpackTiles(this.exploredByDepth[depth], this.level.width * this.level.height);
     this.visibleNow.clear();
@@ -578,6 +704,16 @@ export class World {
       const y = extraRng.int(room.y, room.y + room.h - 1);
       if (isFloor(this.level, x, y)) this.level.items.push({ id: 900 + depth, kind: extraRng.pick<LootKind>(['ration', 'oil', 'gold']), amount: goldPile(extraRng, depth), x, y });
     }
+    this.baseItems = this.level.items.length;
+    // Doors: some stand open, some shut, as this life finds them.
+    const doorRng = Rng.derive(this.seed, 'doorstate', this.life, depth);
+    this.doorStates = new Map(
+      this.level.doors.map((d) => [d.y * this.level.width + d.x, { state: doorRng.chance(0.5) ? 'open' : 'shut', hp: CONFIG.works.doorHp } as DoorState]),
+    );
+    this.refreshShut();
+    // A level already walked in this life is found as it was left.
+    const mem = this.memory?.get(depth);
+    if (mem) this.applyLevel(mem);
   }
 
   update(dt: number, input: ControlInput): WorldEvent[] {
@@ -601,8 +737,10 @@ export class World {
       maxHealth: this.maxHealth,
       hungerMultiplier: this.cls.hungerMultiplier * Math.max(0.2, 1 + (fx.hunger ?? 0)),
       thirstMultiplier: this.cls.thirstMultiplier * Math.max(0.2, 1 + (fx.thirst ?? 0)),
-      lightMultiplier:
-        (passive.kind === 'devoutFlame' ? passive.lightDrain : 1) * Math.max(0.2, 1 + (fx.light ?? 0)) * (this.isNight ? CONFIG.time.nightLight : 1),
+      // In a torch's light the lamp can rest.
+      lightMultiplier: this.inTorchLight(this.player)
+        ? 0
+        : (passive.kind === 'devoutFlame' ? passive.lightDrain : 1) * Math.max(0.2, 1 + (fx.light ?? 0)) * (this.isNight ? CONFIG.time.nightLight : 1),
       starvingMultiplier: Math.max(0.2, 1 + (fx.starvingDrain ?? 0)),
     });
     if (this.survival.health < before.health) this.lastCause = before.hunger <= 0 || this.survival.hunger <= 0 ? { type: 'hunger' } : { type: 'thirst' };
@@ -626,6 +764,7 @@ export class World {
     if (revealed.length > 0) events.push({ type: 'revealed', tiles: revealed });
 
     this.updateEnemies(dt, events);
+    this.bashShut(dt, events);
     this.updateProjectiles(dt, events);
 
     this.checkAcquired(dt, events);
@@ -1139,7 +1278,8 @@ export class World {
     for (let i = 0; i < count; i++) {
       const { room, index } = rng.pick(far);
       const pos = { x: rng.int(room.x, room.x + room.w - 1) + 0.5, y: rng.int(room.y, room.y + room.h - 1) + 0.5 };
-      if (!isFloor(this.level, Math.floor(pos.x), Math.floor(pos.y))) continue;
+      // Torchlit rooms are left alone.
+      if (!isFloor(this.level, Math.floor(pos.x), Math.floor(pos.y)) || this.inTorchLight(pos)) continue;
       this.enemies.push(this.makeEnemy(rng.pick<EnemyKind>(['crawler', 'crawler', 'husk', 'snuffer']), pos, index, true, rng));
     }
     events.push({ type: 'nightfall' });
@@ -1153,6 +1293,22 @@ export class World {
       if (camp === slept || !rng.chance(CONFIG.camp.emptyAttack)) continue;
       camp.condition -= CONFIG.camp.emptyDamage;
       if (camp.condition <= 0) this.loseCamp(camp, events);
+    }
+    // Torches burn down, a day at a time; ropes rot; barricades take a beating some nights.
+    for (const w of [...this.works]) {
+      if (w.kind === 'torch') w.condition = Math.max(0, w.condition - CONFIG.works.torchBurn);
+      if (w.kind === 'rope') {
+        w.condition -= CONFIG.works.ropeRot;
+        if (w.condition <= 0) this.works.splice(this.works.indexOf(w), 1);
+      }
+      if (w.kind === 'barricade' && rng.chance(CONFIG.works.nightBarricade)) {
+        w.condition -= 30;
+        if (w.condition <= 0) {
+          this.works.splice(this.works.indexOf(w), 1);
+          if (w.depth === this.depth) this.refreshShut();
+          events.push({ type: 'shutBroken', barricade: true, depth: w.depth });
+        }
+      }
     }
     events.push({ type: 'dawn' });
   }
@@ -1174,6 +1330,262 @@ export class World {
     return this.level.rooms.findIndex((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
   }
 
+  // Works -----------------------------------------------------------------------------
+
+  /** Whether a point lies in the light of a burning torch on this level. */
+  inTorchLight(p: Point): boolean {
+    const r = CONFIG.works.torchRadius;
+    return this.works.some((w) => w.kind === 'torch' && w.depth === this.depth && w.condition > 0 && dist(p, { x: w.x + 0.5, y: w.y + 0.5 }) <= r);
+  }
+
+  /** A torch within reach that is not full, when there is oil to fill it. */
+  get torchToRefill(): Work | null {
+    if (!this.inventory.items.some((it) => it.kind === 'oil')) return null;
+    return (
+      this.works.find(
+        (w) => w.kind === 'torch' && w.depth === this.depth && w.condition < 100 && dist(this.player, { x: w.x + 0.5, y: w.y + 0.5 }) <= CONFIG.works.reach,
+      ) ?? null
+    );
+  }
+
+  private newWork(kind: Work['kind'], extra: Partial<Work> = {}): Work {
+    const work: Work = {
+      id: Math.max(0, ...this.works.map((w) => w.id)) + 1,
+      kind,
+      depth: this.depth,
+      x: Math.floor(this.player.x),
+      y: Math.floor(this.player.y),
+      built: this.generation,
+      builder: this.builder,
+      condition: 100,
+      ...extra,
+    };
+    this.works.push(work);
+    return work;
+  }
+
+  /** Sets a torch on the floor, or draws a chalk mark, where the hero stands. */
+  private placeWork(uid: number, events: WorldEvent[], sign?: ChalkSign): void {
+    const item = this.inventory.items.find((it) => it.uid === uid);
+    if (!item) return;
+    const x = Math.floor(this.player.x);
+    const y = Math.floor(this.player.y);
+    const here = this.works.filter((w) => w.depth === this.depth && w.x === x && w.y === y);
+    if (item.kind === 'torch') {
+      if (here.some((w) => w.kind === 'torch')) return void events.push({ type: 'cantBuild', reason: 'taken' });
+      removeItem(this.inventory, uid);
+      events.push({ type: 'workBuilt', work: this.newWork('torch') });
+      return;
+    }
+    // Chalk: one mark per tile; a new one replaces the old.
+    for (const old of here) if (old.kind === 'chalk') this.works.splice(this.works.indexOf(old), 1);
+    const angle = Math.atan2(this.facing.y, this.facing.x);
+    events.push({ type: 'workBuilt', work: this.newWork('chalk', { sign: sign ?? 'arrow', angle }) });
+    item.charges = (item.charges ?? 1) - 1;
+    if (item.charges <= 0) removeItem(this.inventory, uid);
+  }
+
+  // Doors and barricades -----------------------------------------------------------------
+
+  /** Generated doors on this level, by tile. */
+  doorStates = new Map<number, DoorState>();
+
+  private barricadeAt(x: number, y: number): Work | undefined {
+    return this.works.find((w) => w.kind === 'barricade' && w.depth === this.depth && w.x === x && w.y === y);
+  }
+
+  /** Marks shut doors and barricades in the level, so nothing passes or sees through. */
+  private refreshShut(): void {
+    const shut = new Set<number>();
+    for (const [tile, door] of this.doorStates) if (door.state === 'shut') shut.add(tile);
+    // Nobody walks over the pit.
+    shut.add(this.level.pit.y * this.level.width + this.level.pit.x);
+    for (const w of this.works) {
+      if (w.kind !== 'barricade' || w.depth !== this.depth) continue;
+      const tile = w.y * this.level.width + w.x;
+      if (w.open) shut.delete(tile);
+      else shut.add(tile);
+    }
+    this.level.closed = shut;
+    // Paths and sight have changed.
+    this.flowTile = -1;
+    this.lastViewTile = -1;
+    for (const e of this.enemies ?? []) e.roamField = null;
+  }
+
+  /** The nearest door or barricade within reach (not the one the hero stands in). */
+  private doorInReach(): { x: number; y: number; shut: boolean; barricade: Work | undefined } | null {
+    const px = Math.floor(this.player.x);
+    const py = Math.floor(this.player.y);
+    let best: { x: number; y: number; shut: boolean; barricade: Work | undefined } | null = null;
+    let bestD = 1.25;
+    for (const d of this.level.doorways) {
+      const barricade = this.barricadeAt(d.x, d.y);
+      const door = this.doorStates.get(d.y * this.level.width + d.x);
+      if (!barricade && (!door || door.state === 'broken')) continue;
+      if (d.x === px && d.y === py) continue;
+      const dd = dist(this.player, { x: d.x + 0.5, y: d.y + 0.5 });
+      if (dd > bestD) continue;
+      bestD = dd;
+      best = { x: d.x, y: d.y, barricade, shut: barricade ? !barricade.open : door!.state === 'shut' };
+    }
+    return best;
+  }
+
+  /** Opens or shuts the door at hand. Doors are loud: horrors close by hear it. */
+  private toggleDoor(events: WorldEvent[]): void {
+    const d = this.doorInReach();
+    if (!d) return;
+    const tile = d.y * this.level.width + d.x;
+    // Nothing can be shut on top of a horror.
+    if (d.shut === false && this.enemies.some((e) => e.state !== 'dead' && Math.floor(e.pos.x) === d.x && Math.floor(e.pos.y) === d.y)) return;
+    if (d.barricade) d.barricade.open = d.shut;
+    else this.doorStates.get(tile)!.state = d.shut ? 'open' : 'shut';
+    this.refreshShut();
+    for (const e of this.enemies) {
+      if (e.state === 'dead' || e.alerted || dist(e.pos, { x: d.x + 0.5, y: d.y + 0.5 }) > 4) continue;
+      e.alerted = true;
+      e.forgetTimer = 0;
+    }
+    events.push({ type: 'door', open: d.shut, barricade: !!d.barricade });
+  }
+
+  /** Nails planks across the nearest doorway: a barricade the family keeps. */
+  private buildBarricade(uid: number, events: WorldEvent[]): void {
+    const px = Math.floor(this.player.x);
+    const py = Math.floor(this.player.y);
+    let target: Point | null = null;
+    let bestD = 1.6;
+    for (const d of this.level.doorways) {
+      if (this.barricadeAt(d.x, d.y) || (d.x === px && d.y === py)) continue;
+      const dd = dist(this.player, { x: d.x + 0.5, y: d.y + 0.5 });
+      if (dd < bestD) {
+        bestD = dd;
+        target = d;
+      }
+    }
+    if (!target) return void events.push({ type: 'cantBuild', reason: 'corridor' });
+    removeItem(this.inventory, uid);
+    // A door there is reinforced: the barricade takes its place.
+    const door = this.doorStates.get(target.y * this.level.width + target.x);
+    if (door) door.state = 'broken';
+    const work = this.newWork('barricade', { x: target.x, y: target.y, open: false });
+    this.refreshShut();
+    events.push({ type: 'workBuilt', work });
+  }
+
+  /** Hunting horrors at a shut door or barricade batter it until it gives. */
+  private bashTimer = 0;
+  private bashShut(dt: number, events: WorldEvent[]): void {
+    const shut = this.level.closed;
+    if (!shut || shut.size === 0) return;
+    this.bashTimer -= dt;
+    for (const tile of [...shut]) {
+      const x = tile % this.level.width;
+      const y = Math.floor(tile / this.level.width);
+      const centre = { x: x + 0.5, y: y + 0.5 };
+      // Hunting horrors that reach it stay pressed against it, battering.
+      const near = this.enemies.filter((e) => e.state !== 'dead' && e.alerted && dist(e.pos, centre) < 1.8);
+      for (const e of near) {
+        const d = dist(e.pos, centre);
+        if (d > 0.95) {
+          const k = (d - 0.95) / d;
+          e.pos = { x: e.pos.x + (centre.x - e.pos.x) * k, y: e.pos.y + (centre.y - e.pos.y) * k };
+        }
+      }
+      const bashers = near.length;
+      if (bashers === 0) continue;
+      const barricade = this.barricadeAt(x, y);
+      if (this.bashTimer <= 0 && dist(this.player, centre) < 10) {
+        events.push({ type: 'bashing', barricade: !!barricade });
+        this.bashTimer = 4;
+      }
+      if (barricade) {
+        barricade.condition -= CONFIG.works.bashBarricade * bashers * dt;
+        if (barricade.condition <= 0) {
+          this.works.splice(this.works.indexOf(barricade), 1);
+          events.push({ type: 'shutBroken', barricade: true, depth: this.depth });
+          this.refreshShut();
+        }
+      } else {
+        const door = this.doorStates.get(tile);
+        if (!door) continue;
+        door.hp -= CONFIG.works.bashDoor * bashers * dt;
+        if (door.hp <= 0) {
+          door.state = 'broken';
+          events.push({ type: 'shutBroken', barricade: false, depth: this.depth });
+          this.refreshShut();
+        }
+      }
+    }
+  }
+
+  /** Whether every way into a room is shut: a camp there is far safer at night. */
+  private roomSealed(room: number): boolean {
+    const r = this.level.rooms[room];
+    if (!r) return false;
+    const ways = this.level.doorways.filter((d) => d.x >= r.x - 1 && d.x <= r.x + r.w && d.y >= r.y - 1 && d.y <= r.y + r.h);
+    return ways.length > 0 && ways.every((d) => this.level.closed?.has(d.y * this.level.width + d.x));
+  }
+
+  // Pits and ropes ----------------------------------------------------------------------
+
+  private ropeAt(depth: number): Work | undefined {
+    return this.works.find((w) => w.kind === 'rope' && w.depth === depth && w.condition > 0);
+  }
+
+  /** A rope within reach: down the pit on this level, or up from the landing to the one above. */
+  private ropeHere(way: 'down' | 'up'): boolean {
+    const spot = way === 'down' ? this.level.pit : this.level.landing;
+    if (!this.ropeAt(way === 'down' ? this.depth : this.depth - 1)) return false;
+    if (way === 'up' && this.depth <= 1) return false;
+    return dist(this.player, { x: spot.x + 0.5, y: spot.y + 0.5 }) <= 1.5;
+  }
+
+  /** A floor tile next to the pit, to stand on after climbing out of it. */
+  private besidePit(): Point {
+    const { pit } = this.level;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (isFloor(this.level, pit.x + dx, pit.y + dy)) return { x: pit.x + dx, y: pit.y + dy };
+    }
+    return this.level.start;
+  }
+
+  /** Ties a rope at the pit: a shortcut down (and back up) for the whole family. */
+  private tieRope(uid: number, events: WorldEvent[]): void {
+    const { pit } = this.level;
+    if (dist(this.player, { x: pit.x + 0.5, y: pit.y + 0.5 }) > 1.6 || this.ropeAt(this.depth)) {
+      return void events.push({ type: 'cantBuild', reason: 'taken' });
+    }
+    removeItem(this.inventory, uid);
+    events.push({ type: 'workBuilt', work: this.newWork('rope', { x: pit.x, y: pit.y }) });
+  }
+
+  /** Down the rope to the landing below, or up it to the pit above. */
+  climbRope(): 'down' | 'up' | null {
+    if (this.ropeHere('down')) {
+      this.leaveLevel();
+      this.enterLevel(this.depth + 1, 'ropeDown');
+      return 'down';
+    }
+    if (this.ropeHere('up')) {
+      this.leaveLevel();
+      this.enterLevel(this.depth - 1, 'ropeUp');
+      return 'up';
+    }
+    return null;
+  }
+
+  /** Fills the torch at hand with a flask of oil. */
+  private refillTorch(events: WorldEvent[]): void {
+    const torch = this.torchToRefill;
+    const oil = this.inventory.items.find((it) => it.kind === 'oil');
+    if (!torch || !oil) return;
+    removeItem(this.inventory, oil.uid);
+    torch.condition = 100;
+    events.push({ type: 'torchFilled' });
+  }
+
   /** Pitches a camp where the hero stands: inside a room, out of danger, one per room. */
   private buildCamp(uid: number, events: WorldEvent[]): void {
     const x = Math.floor(this.player.x);
@@ -1182,7 +1594,9 @@ export class World {
     if (this.inDanger) return void events.push({ type: 'cantBuild', reason: 'danger' });
     if (room < 0) return void events.push({ type: 'cantBuild', reason: 'corridor' });
     const taken = this.camps.some((c) => c.depth === this.depth && this.roomAt(c.x, c.y) === room);
-    const onSomething = (x === this.level.stairs.x && y === this.level.stairs.y) || this.level.features.some((f) => f.x === x && f.y === y);
+    const { stairs, start } = this.level;
+    const onSomething =
+      (x === stairs.x && y === stairs.y) || (Math.abs(x - start.x) <= 1 && Math.abs(y - start.y) <= 1) || this.level.features.some((f) => f.x === x && f.y === y);
     if (taken || onSomething) return void events.push({ type: 'cantBuild', reason: 'taken' });
     removeItem(this.inventory, uid);
     const camp: CampSite = {
@@ -1304,7 +1718,9 @@ export class World {
     const events: WorldEvent[] = [];
     const cfg = CONFIG.camp;
     const rng = Rng.derive(this.seed, 'night', this.life, this.depth, this.day, Math.floor(this.clock));
-    const attackChance = Math.min(0.6, Math.max(0.03, cfg.attack + (this.campfire ? 0 : cfg.noFire) - (this.attrs.wil - 10) * 0.015));
+    let attackChance = Math.min(0.6, Math.max(0.03, cfg.attack + (this.campfire ? 0 : cfg.noFire) - (this.attrs.wil - 10) * 0.015));
+    // A room with every entrance shut is hard to get into.
+    if (this.roomSealed(this.roomAt(camp.x, camp.y))) attackChance *= 0.35;
     const roll = rng.next();
     const outcome = roll < attackChance ? 'attack' : roll < attackChance + cfg.noises ? 'noises' : 'quiet';
     // Rest: whole with a full belly and throat, less on an empty one, bad dreams or a broken night.
@@ -1398,7 +1814,13 @@ export class World {
   /** What the action button does here. */
   get interaction(): Interaction {
     if (this.atStairs) return 'stairs';
+    if (this.atUpStairs) return 'up';
+    if (this.ropeHere('down')) return 'ropeDown';
+    if (this.ropeHere('up')) return 'ropeUp';
     if (this.campInReach) return 'camp';
+    if (this.torchToRefill) return 'torch';
+    const door = this.doorInReach();
+    if (door) return door.shut ? 'openDoor' : 'closeDoor';
     const f = this.featureInReach();
     if (!f) return null;
     return f.kind === 'fountain' || f.kind === 'drip' ? f.kind : 'search';
@@ -1409,8 +1831,9 @@ export class World {
     this.commands.push({ type: 'interact' });
   }
 
-  useItem(uid: number): void {
-    this.commands.push({ type: 'use', uid });
+  /** Uses an item from the backpack; chalk needs the sign to draw. */
+  useItem(uid: number, sign?: ChalkSign): void {
+    this.commands.push({ type: 'use', uid, sign });
   }
 
   /** Drops an item where the hero stands, at once (it is only moving data, like rearranging). */
@@ -1424,11 +1847,13 @@ export class World {
     for (const c of commands) {
       if (c.type === 'interact') this.doInteract(events);
       else if (c.type === 'drop') this.doDrop(c.uid);
-      else this.startUse(c.uid, events);
+      else this.startUse(c.uid, events, c.sign);
     }
   }
 
   private doInteract(events: WorldEvent[]): void {
+    if (this.torchToRefill) return this.refillTorch(events);
+    if (this.doorInReach()) return this.toggleDoor(events);
     const f = this.featureInReach();
     if (!f) return;
     if (f.kind === 'fountain' || f.kind === 'drip') {
@@ -1483,7 +1908,7 @@ export class World {
   }
 
   /** Eating, drinking and filling the lamp take a moment standing still; march rations don't. */
-  private startUse(uid: number, events: WorldEvent[]): void {
+  private startUse(uid: number, events: WorldEvent[], sign?: ChalkSign): void {
     const item = this.inventory.items.find((it) => it.uid === uid);
     if (!item) return;
     if (item.kind === 'waterskin' && !item.charges) {
@@ -1495,6 +1920,18 @@ export class World {
       return;
     }
     // Food, water, bandages: only by the fire. A camp kit is pitched where you stand.
+    if (item.kind === 'rope') {
+      this.tieRope(uid, events);
+      return;
+    }
+    if (item.kind === 'planks') {
+      this.buildBarricade(uid, events);
+      return;
+    }
+    if (item.kind === 'torch' || item.kind === 'chalk') {
+      this.placeWork(item.uid, events, sign);
+      return;
+    }
     if (item.kind === 'campKit') {
       this.buildCamp(uid, events);
       return;
@@ -1777,7 +2214,7 @@ export class World {
     this.projectiles = this.projectiles.filter((p) => {
       p.ttl -= dt;
       p.pos = { x: p.pos.x + p.vel.x * dt, y: p.pos.y + p.vel.y * dt };
-      if (p.ttl <= 0 || !isFloor(this.level, Math.floor(p.pos.x), Math.floor(p.pos.y))) return false;
+      if (p.ttl <= 0 || !isPassable(this.level, Math.floor(p.pos.x), Math.floor(p.pos.y))) return false;
       if (dist(p.pos, this.player) > COMBAT.projectile.radius + CONFIG.player.radius) return true;
       if (this.invulnerableTimer > 0) return true;
       // Steady Hand: spit cannot reach you as a blow begins.
@@ -1834,6 +2271,8 @@ export class World {
     let speed = enemy.def.speed;
     const passive = this.cls.passive;
     if (passive.kind === 'devoutFlame' && d <= this.lightRadius) speed *= passive.hesitation;
+    // Horrors hesitate in torchlight.
+    if (this.inTorchLight(enemy.pos)) speed *= 0.6;
     let dir: Point;
     if (sees && d < 7) {
       dir = { x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y };

@@ -38,6 +38,30 @@ export type ChronicleEntry =
   | { type: 'campBuilt'; generation: number; memberId: number; depth: number }
   | { type: 'campLost'; generation: number; depth: number; reason: 'night' | 'time' };
 
+export type WorkKind = 'torch' | 'chalk' | 'barricade' | 'rope';
+export type ChalkSign = 'arrow' | 'danger' | 'water' | 'camp' | 'stairs';
+
+/**
+ * Something the family left in the dungeon to make the way easier: a torch on the floor,
+ * a chalk mark, a barricade in a doorway, a rope down a pit. All of it wears away.
+ */
+export interface Work {
+  id: number;
+  kind: WorkKind;
+  depth: number;
+  x: number;
+  y: number;
+  built: number;
+  builder: number;
+  /** 100 new, 0 gone (a torch at 0 is burnt out, but stays to be refilled). */
+  condition: number;
+  /** Chalk: which sign, and for an arrow, its direction in radians. */
+  sign?: ChalkSign;
+  angle?: number;
+  /** Barricade: open or shut. */
+  open?: boolean;
+}
+
 /** A camp pitched by someone of the family: it stays for everyone until it wears away. */
 export interface CampSite {
   id: number;
@@ -63,6 +87,8 @@ export interface Dynasty {
   explored: Record<number, string>;
   /** Camps the family keeps in the dungeon. */
   camps: CampSite[];
+  /** Torches, marks, barricades and ropes the family keeps in the dungeon. */
+  works: Work[];
   nextId: number;
 }
 
@@ -125,6 +151,7 @@ export function createDynasty(seed: string): Dynasty {
     chronicle: [{ type: 'founded', generation: 1 }],
     explored: {},
     camps: [],
+    works: [],
     nextId: 1,
   };
   const names = new Set<string>();
@@ -232,6 +259,13 @@ export function recordDeath(
     if (!rng.chance(Math.min(0.6, 0.1 * age))) return true;
     entries.push({ type: 'campLost', generation: next, depth: camp.depth, reason: 'time' });
     return false;
+  });
+
+  // Works wear with the years: chalk fades, ropes rot, torches burn down, barricades sag.
+  const yearly: Record<WorkKind, number> = { chalk: 34, rope: 20, torch: 50, barricade: 15 };
+  dynasty.works = (dynasty.works ?? []).filter((w) => {
+    w.condition -= yearly[w.kind];
+    return w.condition > 0 || w.kind === 'torch';
   });
 
   dynasty.chronicle.push(...entries);

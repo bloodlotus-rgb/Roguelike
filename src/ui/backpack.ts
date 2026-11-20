@@ -1,4 +1,7 @@
+import type { ChalkSign } from '../core/dynasty';
 import { footprint, itemAt, moveItem, turnItem, type Inventory, type Packed } from '../core/inventory';
+
+const SIGNS: ChalkSign[] = ['arrow', 'danger', 'water', 'camp', 'stairs'];
 import { drawItem } from '../game/art';
 import { t, type StringKey } from '../i18n/i18n';
 
@@ -6,7 +9,7 @@ const CELL = 46;
 
 export interface BackpackHandlers {
   /** Use an item: the game resumes and the hero eats, drinks or fills the lamp. */
-  onUse: (uid: number) => void;
+  onUse: (uid: number, sign?: ChalkSign) => void;
   /** Drop an item where the hero stands. */
   onDrop: (uid: number) => void;
 }
@@ -62,6 +65,7 @@ export class BackpackUi {
     if (act && this.selected !== null) {
       const uid = this.selected;
       if (act === 'use') this.handlers.onUse(uid);
+      else if (act.startsWith('sign-')) this.handlers.onUse(uid, act.slice(5) as ChalkSign);
       else if (act === 'drop') {
         this.handlers.onDrop(uid);
         this.selected = null;
@@ -102,9 +106,13 @@ export class BackpackUi {
     const detail = chosen
       ? `<div class="pack-detail">
           <b>${t(`item_${chosen.kind}` as StringKey)}</b>
-          <span>${t(`itemDesc_${chosen.kind}` as StringKey)}${chosen.kind === 'waterskin' ? ` (${t('sips', { n: chosen.charges ?? 0 })}${chosen.turbid ? `, ${t('turbid')}` : ''})` : ''}${chosen.kind === 'mushroom' && chosen.poison && this.knowsMushrooms ? ` (${t('poisonous')})` : ''}</span>
+          <span>${t(`itemDesc_${chosen.kind}` as StringKey)}${chosen.kind === 'waterskin' ? ` (${t('sips', { n: chosen.charges ?? 0 })}${chosen.turbid ? `, ${t('turbid')}` : ''})` : ''}${chosen.kind === 'mushroom' && chosen.poison && this.knowsMushrooms ? ` (${t('poisonous')})` : ''}${chosen.kind === 'chalk' ? ` (${t('uses', { n: chosen.charges ?? 0 })})` : ''}</span>
           <span class="pack-actions">
-            <button type="button" class="paper-button small" data-act="use">${t('act_use')}</button>
+            ${
+              chosen.kind === 'chalk'
+                ? SIGNS.map((sign) => `<button type="button" class="paper-button small" data-act="sign-${sign}">${t(`sign_${sign}` as StringKey)}</button>`).join('')
+                : `<button type="button" class="paper-button small" data-act="use">${t('act_use')}</button>`
+            }
             <button type="button" class="paper-button small" data-act="turn">${t('act_turn')}</button>
             <button type="button" class="paper-button small" data-act="drop">${t('act_drop')}</button>
           </span>

@@ -13,6 +13,7 @@ import { t, type StringKey } from './i18n/i18n';
 import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
 import { CampUi } from './ui/camp';
+import { MansionUi } from './ui/mansion';
 import { LineageUi, traitList } from './ui/lineage';
 import type { MapExtras } from './ui/map';
 import { traitName } from './ui/traitText';
@@ -68,6 +69,9 @@ class Session implements SceneHost {
   private playing = false;
   private readonly lineage: LineageUi;
   private readonly campUi: CampUi;
+  private readonly mansion: MansionUi;
+  /** Up at the mansion: the dungeon waits. */
+  private atMansion = false;
 
   private readonly controls: Controls;
   private readonly hud: Hud;
@@ -99,8 +103,8 @@ class Session implements SceneHost {
         this.lineage.showRoster();
       },
       onDescend: () => this.act(),
-      onUseItem: (uid) => {
-        this.world.useItem(uid);
+      onUseItem: (uid, sign) => {
+        this.world.useItem(uid, sign);
         this.setPaused(false);
       },
       onDropItem: (uid) => {
@@ -135,6 +139,14 @@ class Session implements SceneHost {
         this.controls.reset();
         this.persist();
       },
+    });
+    this.mansion = new MansionUi(hudRoot, {
+      onRest: (events) => {
+        this.announce(events);
+        this.persist();
+      },
+      onDescend: () => this.leaveMansion(),
+      onChange: () => this.persist(),
     });
     this.lineage = new LineageUi(hudRoot, {
       onPick: (id) => this.pick(id),
@@ -270,7 +282,15 @@ class Session implements SceneHost {
       } else if (e.type === 'campLost') {
         this.dynasty.chronicle.push({ type: 'campLost', generation: this.dynasty.generation, depth: e.camp.depth, reason: 'night' });
         this.hud.toastText(t('toast_campLost', { depth: e.camp.depth }), true);
-      } else if (e.type === 'slept') this.hud.toastText(t(`slept_${e.outcome}` as StringKey), true);
+      } else if (e.type === 'workBuilt') {
+        const keys = { torch: 'toast_torchSet', barricade: 'toast_barricade', chalk: 'toast_chalk', rope: 'toast_rope' } as const;
+        this.hud.toast(keys[e.work.kind]);
+      } else if (e.type === 'bashing') this.hud.toast(e.barricade ? 'toast_bashingBarricade' : 'toast_bashingDoor');
+      else if (e.type === 'shutBroken') {
+        this.hud.toastText(e.barricade ? t('toast_barricadeBroken', { depth: e.depth }) : t('toast_doorBroken'), e.barricade);
+      }
+      else if (e.type === 'torchFilled') this.hud.toast('toast_torchFilled');
+      else if (e.type === 'slept') this.hud.toastText(t(`slept_${e.outcome}` as StringKey), true);
       else if (e.type === 'parry') this.hud.toast('parry');
       else if (e.type === 'executed') this.hud.toast('executed');
       else if (e.type === 'playerHit' && e.lightStolen > 0) this.hud.toast('lightStolen');
@@ -349,10 +369,11 @@ class Session implements SceneHost {
       World.restore(life.world, {
         explored: this.dynasty.explored,
         camps: this.dynasty.camps,
+        works: this.dynasty.works,
         builder: life.memberId,
         generation: this.dynasty.generation,
       }),
-    ).then(() => this.setPaused(true));
+    ).then(() => (life.atMansion ? this.enterMansion() : this.setPaused(true)));
   }
 
   /** A member was chosen on the roster: now their class. */
@@ -375,12 +396,13 @@ class Session implements SceneHost {
         traits: [...member.traits],
         explored: this.dynasty.explored,
         camps: this.dynasty.camps,
+        works: this.dynasty.works,
         builder: member.id,
         generation: this.dynasty.generation,
       }),
     );
-    this.persist();
-    this.showHint();
+    // Every life sets out from the mansion.
+    this.enterMansion();
   }
 
   /** Puts a world in play, new or restored. */
@@ -388,6 +410,8 @@ class Session implements SceneHost {
     this.sound.start();
     const fresh = !this.world;
     this.world = world;
+    this.atMansion = false;
+    this.mansion.hide();
     this.playing = true;
     this.paused = false;
     this.controls.reset();
@@ -431,7 +455,7 @@ class Session implements SceneHost {
     let life: SaveData['life'] = null;
     if (this.world && this.playing && !this.world.dead && this.memberId !== null) {
       this.world.storeExplored();
-      life = { memberId: this.memberId, chronicleFrom: this.chronicleFrom, world: this.world.snapshot() };
+      life = { memberId: this.memberId, chronicleFrom: this.chronicleFrom, atMansion: this.atMansion, world: this.world.snapshot() };
     }
     void writeSave(makeSave(this.dynasty, life, Date.now()));
   }
@@ -484,6 +508,15 @@ class Session implements SceneHost {
     if (!this.playing || this.world.dead) return;
     const interaction = this.world.interaction;
     if (interaction === 'stairs') this.descend();
+    else if (interaction === 'up') this.climb();
+    else if (interaction === 'ropeDown' || interaction === 'ropeUp') {
+      this.world.climbRope();
+      this.hud.setDepth(this.world.depth);
+      this.hud.setInteraction(null);
+      this.controls.reset();
+      this.classic?.restart();
+      this.persist();
+    }
     else if (interaction === 'camp') {
       // The camp is a pause by the fire.
       this.paused = true;
@@ -491,6 +524,42 @@ class Session implements SceneHost {
       this.hud.closeMap();
       this.campUi.show(this.world);
     } else this.world.interact();
+  }
+
+  /** Up the stairs: to the level above, or out to the mansion from depth 1. */
+  private climb(): void {
+    if (this.world.ascend() === 'mansion') {
+      this.enterMansion();
+      return;
+    }
+    this.hud.setDepth(this.world.depth);
+    this.hud.setInteraction(null);
+    this.controls.reset();
+    this.classic?.restart();
+    this.persist();
+  }
+
+  private enterMansion(): void {
+    this.atMansion = true;
+    this.paused = true;
+    this.controls.reset();
+    this.hud.hideAll();
+    this.hud.setPlaying(false);
+    document.getElementById('hint')!.classList.add('gone');
+    const name = this.memberId !== null ? memberById(this.dynasty, this.memberId).name : '';
+    this.mansion.show(this.world, name);
+    this.persist();
+  }
+
+  private leaveMansion(): void {
+    this.atMansion = false;
+    this.world.returnFromSurface();
+    this.hud.setDepth(this.world.depth);
+    this.hud.setPlaying(true);
+    this.paused = false;
+    this.controls.reset();
+    this.persist();
+    this.showHint();
   }
 
   private descend(): void {

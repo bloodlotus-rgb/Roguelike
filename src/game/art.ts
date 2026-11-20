@@ -473,6 +473,10 @@ export const LOOT_KINDS: readonly LootKind[] = [
   'mushroom',
   'horrorMeat',
   'campKit',
+  'torch',
+  'chalk',
+  'planks',
+  'rope',
 ];
 
 export function drawItem(kind: LootKind, tile: number): HTMLCanvasElement {
@@ -485,7 +489,38 @@ export function drawItem(kind: LootKind, tile: number): HTMLCanvasElement {
   ctx.strokeStyle = INK;
   ctx.fillStyle = PAPER;
   ctx.lineWidth = 1.8 * s;
-  if (kind === 'firewood') {
+  if (kind === 'torch') {
+    ctx.fillStyle = '#9a7448';
+    ctx.fillRect(10.5 * s, 9 * s, 3 * s, 13 * s);
+    ctx.strokeRect(10.5 * s, 9 * s, 3 * s, 13 * s);
+    ctx.fillStyle = '#4a3a2a';
+    ctx.beginPath();
+    ctx.ellipse(12 * s, 8 * s, 3.5 * s, 3 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else if (kind === 'chalk') {
+    ctx.save();
+    ctx.translate(12 * s, 12 * s);
+    ctx.rotate(-0.6);
+    ctx.fillRect(-8 * s, -3 * s, 16 * s, 6 * s);
+    ctx.strokeRect(-8 * s, -3 * s, 16 * s, 6 * s);
+    ctx.restore();
+  } else if (kind === 'planks') {
+    for (const y of [7, 12, 17]) {
+      ctx.fillStyle = '#b48a5a';
+      ctx.fillRect(3 * s, y * s, 18 * s, 4 * s);
+      ctx.strokeRect(3 * s, y * s, 18 * s, 4 * s);
+    }
+  } else if (kind === 'rope') {
+    ctx.fillStyle = 'transparent';
+    ctx.lineWidth = 2.4 * s;
+    for (const r of [8, 5.5, 3]) {
+      ctx.beginPath();
+      ctx.ellipse(12 * s, 13 * s, r * s, r * 0.75 * s, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    inkLine(ctx, rng, 18 * s, 15 * s, 22 * s, 21 * s, 0.4 * s);
+  } else if (kind === 'firewood') {
     // Two logs, tied.
     for (const [y, a] of [[10, -0.1], [15, 0.08]] as const) {
       ctx.save();
@@ -607,6 +642,92 @@ export function drawItem(kind: LootKind, tile: number): HTMLCanvasElement {
 }
 
 export const BLOOD = '#8b2a1f';
+
+/** A torch set on the floor: burning, or burnt out. */
+export function drawTorch(tile: number, lit: boolean): HTMLCanvasElement {
+  const s = tile / 32;
+  const [c, ctx] = canvas(Math.ceil(16 * s), Math.ceil(40 * s));
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1.6 * s;
+  ctx.fillStyle = '#9a7448';
+  ctx.fillRect(6.5 * s, 14 * s, 3 * s, 24 * s);
+  ctx.strokeRect(6.5 * s, 14 * s, 3 * s, 24 * s);
+  ctx.fillStyle = '#4a3a2a';
+  ctx.beginPath();
+  ctx.ellipse(8 * s, 14 * s, 3.5 * s, 2.6 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  if (lit) {
+    ctx.fillStyle = FLAME;
+    ctx.beginPath();
+    ctx.moveTo(4 * s, 13 * s);
+    ctx.quadraticCurveTo(7 * s, 1 * s, 8 * s, 0);
+    ctx.quadraticCurveTo(10 * s, 6 * s, 12 * s, 13 * s);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#f6dc9c';
+    ctx.beginPath();
+    ctx.moveTo(6.5 * s, 13 * s);
+    ctx.quadraticCurveTo(8 * s, 6 * s, 9.5 * s, 13 * s);
+    ctx.closePath();
+    ctx.fill();
+  }
+  return c;
+}
+
+/** A chalk mark on the floor, white on transparent, drawn pointing right for arrows. */
+export function drawChalk(sign: 'arrow' | 'danger' | 'water' | 'camp' | 'stairs', size: number): HTMLCanvasElement {
+  const [c, ctx] = canvas(size, size);
+  const k = size / 32;
+  ctx.strokeStyle = 'rgba(236, 232, 222, 0.92)';
+  ctx.lineWidth = 2.4 * k;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  if (sign === 'arrow') {
+    ctx.moveTo(5 * k, 16 * k);
+    ctx.lineTo(27 * k, 16 * k);
+    ctx.moveTo(19 * k, 9 * k);
+    ctx.lineTo(27 * k, 16 * k);
+    ctx.lineTo(19 * k, 23 * k);
+  } else if (sign === 'danger') {
+    // A skull-like circle with crossed lines.
+    ctx.arc(16 * k, 13 * k, 7 * k, 0, Math.PI * 2);
+    ctx.moveTo(8 * k, 22 * k);
+    ctx.lineTo(24 * k, 29 * k);
+    ctx.moveTo(24 * k, 22 * k);
+    ctx.lineTo(8 * k, 29 * k);
+    ctx.moveTo(13 * k, 12 * k);
+    ctx.lineTo(13.5 * k, 12.5 * k);
+    ctx.moveTo(19 * k, 12 * k);
+    ctx.lineTo(19.5 * k, 12.5 * k);
+  } else if (sign === 'water') {
+    for (const y of [11, 17, 23]) {
+      ctx.moveTo(5 * k, y * k);
+      ctx.quadraticCurveTo(10 * k, (y - 4) * k, 16 * k, y * k);
+      ctx.quadraticCurveTo(22 * k, (y + 4) * k, 27 * k, y * k);
+    }
+  } else if (sign === 'camp') {
+    ctx.moveTo(6 * k, 26 * k);
+    ctx.lineTo(16 * k, 6 * k);
+    ctx.lineTo(26 * k, 26 * k);
+    ctx.closePath();
+    ctx.moveTo(16 * k, 6 * k);
+    ctx.lineTo(16 * k, 26 * k);
+  } else {
+    // Stairs: three steps.
+    ctx.moveTo(5 * k, 27 * k);
+    ctx.lineTo(5 * k, 20 * k);
+    ctx.lineTo(13 * k, 20 * k);
+    ctx.lineTo(13 * k, 13 * k);
+    ctx.lineTo(21 * k, 13 * k);
+    ctx.lineTo(21 * k, 6 * k);
+    ctx.lineTo(28 * k, 6 * k);
+  }
+  ctx.stroke();
+  return c;
+}
 
 /** A family camp: a bedroll by a ring of stones, with the fire burning or out. */
 export function drawCamp(tile: number, lit: boolean): HTMLCanvasElement {

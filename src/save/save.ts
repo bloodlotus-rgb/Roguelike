@@ -5,12 +5,14 @@ import type { WorldSnapshot } from '../core/world';
  * What is kept between sessions: the dynasty, and the life being played if there is one.
  * There is a single save and it is overwritten continuously: nothing can be undone.
  */
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 export interface CurrentLife {
   memberId: number;
   /** Where this life's part of the chronicle begins, to tell it when the life ends. */
   chronicleFrom?: number;
+  /** Up at the mansion, between expeditions. */
+  atMansion?: boolean;
   world: WorldSnapshot;
 }
 
@@ -48,6 +50,12 @@ const MIGRATIONS: Record<number, (data: Record<string, unknown>) => Record<strin
   2: (data) => {
     const dynasty = data.dynasty as Record<string, unknown> | undefined;
     if (dynasty && !Array.isArray(dynasty.camps)) dynasty.camps = [];
+    return data;
+  },
+  // 3 → 4: works (torches, marks, barricades, ropes).
+  3: (data) => {
+    const dynasty = data.dynasty as Record<string, unknown> | undefined;
+    if (dynasty && !Array.isArray(dynasty.works)) dynasty.works = [];
     return data;
   },
 };

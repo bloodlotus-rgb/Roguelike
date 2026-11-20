@@ -735,6 +735,7 @@ describe('camps and nights', () => {
   /** A world with a camp pitched in the first room, the hero at it. */
   function camped(): World {
     const world = arena();
+    world.player = { x: world.player.x + 2, y: world.player.y };
     const kit = world.inventory.items.find((i) => i.kind === 'campKit')!;
     world.useItem(kit.uid);
     const events = run(world, 0.05);
@@ -746,6 +747,7 @@ describe('camps and nights', () => {
     const camps: import('./dynasty').CampSite[] = [];
     const world = new World('estirpe', 'headsman', 0, 1, { camps, builder: 3, generation: 2 });
     world.enemies = [];
+    world.player = { x: world.player.x + 2, y: world.player.y };
     const kit = world.inventory.items.find((i) => i.kind === 'campKit')!;
     world.useItem(kit.uid);
     run(world, 0.05);
@@ -801,6 +803,7 @@ describe('camps and nights', () => {
     for (let life = 0; life < 30 && !attacked; life++) {
       const world = new World('estirpe-' + life, 'plunderer', life, 1);
       world.enemies = [];
+      world.player = { x: world.player.x + 2, y: world.player.y };
       const kit = world.inventory.items.find((i) => i.kind === 'campKit')!;
       world.useItem(kit.uid);
       run(world, 0.05);
@@ -837,6 +840,172 @@ describe('camps and nights', () => {
     const copy = World.restore(JSON.parse(JSON.stringify(world.snapshot())));
     expect(copy.clock).toBe(500);
     expect(copy.campfire).toBe(true);
+  });
+});
+
+describe('climbing and the mansion', () => {
+  it('climbing back finds a level as it was left, and loot does not come back', () => {
+    const world = arena();
+    const item = world.level.items[0];
+    world.taken.add(item.id);
+    world.descend();
+    expect(world.depth).toBe(2);
+    expect(world.ascend()).toBe('climbed');
+    expect(world.depth).toBe(1);
+    expect(world.taken.has(item.id)).toBe(true);
+    expect(world.atStairs).toBe(true);
+    // And the way up from depth 1 is the mansion.
+    world.returnFromSurface();
+    expect(world.interaction).toBe('up');
+    expect(world.ascend()).toBe('mansion');
+  });
+
+  it('a night at the mansion restores the body and passes the night below', () => {
+    const world = arena();
+    world.survival = { ...world.survival, health: 10, hunger: 5, thirst: 5 };
+    const day = world.day;
+    const events = world.restAtMansion();
+    expect(world.survival.health).toBe(world.maxHealth);
+    expect(world.survival.hunger).toBe(100);
+    expect(world.day).toBe(day + 1);
+    expect(events).toContainEqual({ type: 'dawn' });
+  });
+
+  it('the shop sells for gold, if there is room', () => {
+    const world = arena();
+    expect(world.buy('ration')).toBe('gold');
+    world.gold = 30;
+    expect(world.buy('ration')).toBe('bought');
+    expect(world.gold).toBe(30 - CONFIG.shop.ration);
+  });
+
+  it('walked levels survive a snapshot', () => {
+    const world = arena();
+    world.taken.add(world.level.items[0].id);
+    world.descend();
+    const copy = World.restore(JSON.parse(JSON.stringify(world.snapshot())));
+    copy.ascend();
+    expect(copy.taken.has(world['memory'].get(1)!.taken[0])).toBe(true);
+  });
+});
+
+describe('works', () => {
+  it('a torch set on the floor stays for the family; the lamp rests in its light', () => {
+    const works: import('./dynasty').Work[] = [];
+    const world = new World('estirpe', 'headsman', 0, 1, { works });
+    world.enemies = [];
+    addItem(world.inventory, 'torch');
+    const torch = world.inventory.items.find((i) => i.kind === 'torch')!;
+    world.useItem(torch.uid);
+    run(world, 0.05);
+    expect(works).toHaveLength(1);
+    expect(works[0]).toMatchObject({ kind: 'torch', condition: 100 });
+    const light = world.survival.light;
+    run(world, 5);
+    expect(world.survival.light).toBe(light);
+    // It burns down at dawn, and oil fills it again.
+    world.restAtMansion();
+    expect(works[0].condition).toBeLessThan(100);
+    world.returnFromSurface();
+    world.player = { x: works[0].x + 0.5, y: works[0].y + 0.5 };
+    expect(world.interaction === 'torch' || world.interaction === 'up').toBe(true);
+  });
+
+  it('chalk leaves a sign facing where you look, and runs out', () => {
+    const works: import('./dynasty').Work[] = [];
+    const world = new World('estirpe', 'headsman', 0, 1, { works });
+    world.enemies = [];
+    addItem(world.inventory, 'chalk');
+    const chalk = world.inventory.items.find((i) => i.kind === 'chalk')!;
+    world.facing = { x: 0, y: 1 };
+    world.useItem(chalk.uid, 'water');
+    run(world, 0.05);
+    expect(works[0]).toMatchObject({ kind: 'chalk', sign: 'water' });
+    expect(works[0].angle).toBeCloseTo(Math.PI / 2);
+    expect(chalk.charges).toBe(4);
+  });
+});
+
+describe('doors and barricades', () => {
+  /** A world standing next to a doorway, with nothing else around. */
+  function atDoorway(): { world: World; d: { x: number; y: number } } {
+    const world = arena();
+    const d = world.level.doorways[0];
+    // Stand on the room side of it.
+    const room = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dy]) => world.level.rooms.some((r) => d.x + dx >= r.x && d.x + dx < r.x + r.w && d.y + dy >= r.y && d.y + dy < r.y + r.h))!;
+    world.player = { x: d.x + room[0] + 0.5, y: d.y + room[1] + 0.5 };
+    return { world, d };
+  }
+
+  it('levels have narrow doorways, and some have doors', () => {
+    const world = arena();
+    expect(world.level.doorways.length).toBeGreaterThan(0);
+    expect(world.level.doors.length).toBeGreaterThan(0);
+  });
+
+  it('a barricade shuts a doorway for the family, opens and shuts again', () => {
+    const works: import('./dynasty').Work[] = [];
+    const { world, d } = (() => {
+      const w = new World('estirpe', 'headsman', 0, 1, { works });
+      w.enemies = [];
+      const dw = w.level.doorways[0];
+      const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dy]) => w.level.rooms.some((r) => dw.x + dx >= r.x && dw.x + dx < r.x + r.w && dw.y + dy >= r.y && dw.y + dy < r.y + r.h))!;
+      w.player = { x: dw.x + side[0] + 0.5, y: dw.y + side[1] + 0.5 };
+      return { world: w, d: dw };
+    })();
+    world.inventory.items = world.inventory.items.filter((i) => i.kind !== 'campKit');
+    addItem(world.inventory, 'planks');
+    const planks = world.inventory.items.find((i) => i.kind === 'planks')!;
+    world.useItem(planks.uid);
+    run(world, 0.05);
+    expect(works).toHaveLength(1);
+    expect(world.level.closed?.has(d.y * world.level.width + d.x)).toBe(true);
+    expect(world.interaction).toBe('openDoor');
+    world.interact();
+    run(world, 0.05);
+    expect(world.level.closed?.has(d.y * world.level.width + d.x)).toBe(false);
+  });
+
+  it('horrors batter a shut barricade until it gives', () => {
+    const { world, d } = atDoorway();
+    world.works.push({ id: 1, kind: 'barricade', depth: 1, x: d.x, y: d.y, built: 1, builder: 1, condition: 10, open: false });
+    world['refreshShut']();
+    const brute = place(world, 'husk', 0, 0);
+    brute.pos = { x: d.x + 0.5 + (world.player.x - (d.x + 0.5)) * -1, y: d.y + 0.5 + (world.player.y - (d.y + 0.5)) * -1 };
+    brute.alerted = true;
+    const events = run(world, 3);
+    expect(events.some((e) => e.type === 'shutBroken')).toBe(true);
+    expect(world.works).toHaveLength(0);
+  });
+});
+
+describe('pits and ropes', () => {
+  it('a rope tied at the pit is a shortcut down and back up, for the family', () => {
+    const works: import('./dynasty').Work[] = [];
+    const world = new World('estirpe', 'headsman', 0, 1, { works });
+    world.enemies = [];
+    world.inventory.items = world.inventory.items.filter((i) => i.kind !== 'campKit');
+    addItem(world.inventory, 'rope');
+    const pit = world.level.pit;
+    world.player = { x: pit.x + 1.5, y: pit.y + 0.5 };
+    if (!isFloor(world.level, pit.x + 1, pit.y)) world.player = { x: pit.x - 0.5, y: pit.y + 0.5 };
+    const rope = world.inventory.items.find((i) => i.kind === 'rope')!;
+    world.useItem(rope.uid);
+    run(world, 0.05);
+    expect(works).toMatchObject([{ kind: 'rope', depth: 1 }]);
+    expect(world.interaction).toBe('ropeDown');
+    expect(world.climbRope()).toBe('down');
+    expect(world.depth).toBe(2);
+    expect(Math.floor(world.player.x)).toBe(world.level.landing.x);
+    expect(world.interaction).toBe('ropeUp');
+    expect(world.climbRope()).toBe('up');
+    expect(world.depth).toBe(1);
+  });
+
+  it('nobody walks over the pit', () => {
+    const world = arena();
+    const { pit } = world.level;
+    expect(world.level.closed?.has(pit.y * world.level.width + pit.x)).toBe(true);
   });
 });
 

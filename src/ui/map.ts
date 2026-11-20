@@ -173,6 +173,86 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     ctx.stroke();
   }
 
+  // The pit, once seen, and its rope; a rope down from above at the landing.
+  if (seen(level.pit.x, level.pit.y)) {
+    const p = at(level.pit.x + 0.5, level.pit.y + 0.5);
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, Math.max(3, size * 0.4), 0, Math.PI * 2);
+    ctx.fill();
+    if (world.works.some((w) => w.kind === 'rope' && w.depth === world.depth)) {
+      ctx.strokeStyle = '#b48a5a';
+      ctx.lineWidth = Math.max(1.5, size / 8);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x, p.y - size * 0.8);
+      ctx.stroke();
+    }
+  }
+  if (world.depth > 1 && world.works.some((w) => w.kind === 'rope' && w.depth === world.depth - 1)) {
+    const p = at(level.landing.x + 0.5, level.landing.y + 0.5);
+    ctx.strokeStyle = '#b48a5a';
+    ctx.lineWidth = Math.max(1.5, size / 8);
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y + size * 0.4);
+    ctx.lineTo(p.x, p.y - size * 0.6);
+    ctx.stroke();
+  }
+
+  // Doors and barricades in seen doorways.
+  for (const d of level.doorways) {
+    if (!seen(d.x, d.y)) continue;
+    const tile = d.y * level.width + d.x;
+    const barricade = world.works.some((w) => w.kind === 'barricade' && w.depth === world.depth && w.x === d.x && w.y === d.y);
+    const door = world.doorStates.get(tile);
+    if (!barricade && (!door || door.state === 'broken')) continue;
+    const shut = level.closed?.has(tile) ?? false;
+    const p = at(d.x, d.y);
+    const acrossX = !isFloor(level, d.x - 1, d.y) && !isFloor(level, d.x + 1, d.y);
+    ctx.strokeStyle = barricade ? BLOOD : INK;
+    ctx.lineWidth = Math.max(1.5, size / (shut ? 4 : 9));
+    ctx.beginPath();
+    if (acrossX) {
+      ctx.moveTo(p.x, p.y + size / 2);
+      ctx.lineTo(p.x + size, p.y + size / 2);
+    } else {
+      ctx.moveTo(p.x + size / 2, p.y);
+      ctx.lineTo(p.x + size / 2, p.y + size);
+    }
+    ctx.stroke();
+  }
+
+  // The family's torches and chalk marks on this level.
+  for (const w of world.works) {
+    if (w.depth !== world.depth) continue;
+    const p = at(w.x + 0.5, w.y + 0.5);
+    const r = Math.max(3, size * 0.32);
+    ctx.lineWidth = Math.max(1, size / 10);
+    if (w.kind === 'torch') {
+      ctx.fillStyle = w.condition > 0 ? '#d9822b' : PAPER_DARK;
+      ctx.strokeStyle = INK;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else if (w.kind === 'chalk') {
+      ctx.strokeStyle = BLOOD;
+      ctx.beginPath();
+      if (w.sign === 'arrow') {
+        const a = w.angle ?? 0;
+        ctx.moveTo(p.x - Math.cos(a) * r, p.y - Math.sin(a) * r);
+        ctx.lineTo(p.x + Math.cos(a) * r, p.y + Math.sin(a) * r);
+        ctx.lineTo(p.x + Math.cos(a + 2.5) * r * 0.6, p.y + Math.sin(a + 2.5) * r * 0.6);
+      } else {
+        ctx.font = `bold ${Math.max(9, size * 0.6)}px Georgia, serif`;
+        ctx.fillStyle = BLOOD;
+        ctx.textAlign = 'center';
+        ctx.fillText(w.sign === 'danger' ? '!' : w.sign === 'water' ? '~' : w.sign === 'camp' ? '^' : '=', p.x, p.y + r * 0.5);
+      }
+      ctx.stroke();
+    }
+  }
+
   // Drips, once seen: turbid water.
   for (const f of level.features) {
     if (f.kind !== 'drip' || !seen(f.x, f.y)) continue;

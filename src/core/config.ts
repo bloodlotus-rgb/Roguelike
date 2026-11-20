@@ -21,6 +21,8 @@ export const CONFIG = {
   features: {
     fountain: { min: 1, max: 2 },
     drip: { min: 1, max: 3 },
+    /** Share of room entrances that have a door. */
+    doorChance: 0.4,
     remains: { min: 2, max: 4 },
     crate: { min: 3, max: 5 },
   },
@@ -63,11 +65,40 @@ export const CONFIG = {
       max: 3,
       table: { ration: 25, oil: 18, gold: 15, marchRation: 8, waterskin: 7, bandage: 10, campKit: 7, firewood: 10 },
     },
-    crate: { min: 0, max: 2, table: { ration: 35, oil: 18, gold: 12, firewood: 25, bandage: 10 } },
+    crate: { min: 0, max: 2, table: { ration: 30, oil: 16, gold: 10, firewood: 20, bandage: 8, planks: 8, torch: 5, chalk: 3 } },
     /** Chance that a slain Crawler or Husk leaves flesh worth eating (if cooked). */
     horrorMeat: 0.2,
     /** Reach of fountains and containers, in tiles. */
     reach: 1.1,
+  },
+  /** The mansion's shop: price in gold of what it sells. */
+  shop: {
+    ration: 4,
+    marchRation: 12,
+    waterskin: 10,
+    oil: 5,
+    firewood: 3,
+    bandage: 6,
+    campKit: 25,
+    torch: 6,
+    chalk: 3,
+    planks: 5,
+    rope: 15,
+  },
+  works: {
+    /** Tiles a torch lights; inside it the lamp rests and horrors hesitate. */
+    torchRadius: 3,
+    /** Condition a torch loses each dawn (about three days on a full load). */
+    torchBurn: 34,
+    reach: 1.2,
+    /** A plain door's strength, and how fast hunting horrors batter doors and barricades. */
+    doorHp: 60,
+    bashDoor: 20,
+    bashBarricade: 8,
+    /** Condition a rope loses each dawn. */
+    ropeRot: 4,
+    /** Chance a barricade is battered on any night. */
+    nightBarricade: 0.1,
   },
   /** A day below ground: long enough to explore, then a short, dangerous night. */
   time: {

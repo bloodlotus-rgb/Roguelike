@@ -11,11 +11,12 @@
  */
 import * as THREE from 'three';
 import type { Level, Point } from '../core/dungeon';
+import { CONFIG } from '../core/config';
 import { isFloor } from '../core/dungeon';
 import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
-import { drawCamp, drawFeature, drawFloorDecor, drawItem, drawProjectile, LOOT_KINDS } from './art';
+import { drawCamp, drawChalk, drawFeature, drawFloorDecor, drawItem, drawProjectile, drawTorch, LOOT_KINDS } from './art';
 import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
 import { BRICK_DEPTH, layBricks } from './masonry';
 import { easeInOut, easeOut, swingPhase } from './swing';
@@ -545,6 +546,13 @@ export class ThreeView {
   private readonly featureTextures = new Map<string, { sheet: SpriteSheet; texture: THREE.CanvasTexture }>();
   private readonly camps = new Map<number, { cutout: Cutout; key: string }>();
   private readonly campLight: THREE.PointLight;
+  /** Torches and chalk marks: cut-outs and floor decals, and a few lights for the nearest torches. */
+  private readonly works = new Map<number, { obj: THREE.Mesh; key: string; cutout?: Cutout }>();
+  private readonly torchLights: THREE.PointLight[] = [];
+  private readonly chalkTextures = new Map<string, THREE.Texture>();
+  /** Doors and barricades, rebuilt when their state changes. */
+  private doors = new Map<number, { obj: THREE.Object3D; key: string }>();
+  private readonly woodMaterial = inkMaterial(new THREE.MeshLambertMaterial({ color: 0x9a7448 }), { cut: true, outline: true });
   private readonly projectiles = new Map<number, Cutout>();
   private readonly walks = new Map<number, { walked: number; last: Point }>();
   private readonly flashUntil = new Map<number, number>();
@@ -602,6 +610,16 @@ export class ThreeView {
     // The camp fire, when burning, lights the room around it.
     this.campLight = new THREE.PointLight(0xffb070, 0, 5, 1.6);
     this.scene.add(this.campLight);
+    for (const lit of [false, true]) {
+      const sheet = { ...sheetFromCanvas(drawTorch(64, lit)), originY: 0.97 };
+      this.featureTextures.set(`torch-${lit}`, { sheet, texture: canvasTexture(sheet.canvas) });
+    }
+    for (const sign of ['arrow', 'danger', 'water', 'camp', 'stairs'] as const) this.chalkTextures.set(sign, canvasTexture(drawChalk(sign, 96)));
+    for (let i = 0; i < 3; i++) {
+      const light = new THREE.PointLight(0xffb070, 0, CONFIG.works.torchRadius + 1, 1.6);
+      this.torchLights.push(light);
+      this.scene.add(light);
+    }
     for (const kind of ['fountain', 'drip', 'remains', 'crate'] as const) {
       for (const spent of [false, true]) {
         const sheet = { ...sheetFromCanvas(drawFeature(kind, 64, spent)), originY: 0.92 };
@@ -646,6 +664,8 @@ export class ThreeView {
     this.syncItems(world);
     this.syncFeatures(world);
     this.syncCamps(world, now);
+    this.syncWorks(world, now);
+    this.syncDoors(world);
     this.syncProjectiles(world);
     this.renderer.render(this.scene, this.camera);
     this.drawHandsOverlay(world, now, moved > 0.002);
@@ -665,6 +685,10 @@ export class ThreeView {
     this.features.clear();
     for (const c of this.camps.values()) this.scene.remove(c.cutout.mesh);
     this.camps.clear();
+    for (const w of this.works.values()) this.scene.remove(w.obj);
+    this.works.clear();
+    for (const d of this.doors.values()) this.scene.remove(d.obj);
+    this.doors.clear();
     for (const map of [this.items, this.projectiles]) {
       for (const c of map.values()) this.scene.remove(c.mesh);
       map.clear();
@@ -762,6 +786,19 @@ export class ThreeView {
     decor.receiveShadow = true;
     this.levelGroup.add(decor);
     this.buildDebris(level);
+    // The pit: a hole of solid ink with a ragged rim.
+    const pitMesh = new THREE.Mesh(new THREE.CircleGeometry(0.46, 20), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    pitMesh.rotation.x = -Math.PI / 2;
+    pitMesh.position.set(level.pit.x + 0.5, 0.008, level.pit.y + 0.5);
+    this.levelGroup.add(pitMesh);
+    const rim = new THREE.Mesh(
+      new THREE.RingGeometry(0.46, 0.56, 20),
+      inkMaterial(new THREE.MeshLambertMaterial({ color: 0x8a7a62 })),
+    );
+    rim.rotation.x = -Math.PI / 2;
+    rim.position.set(level.pit.x + 0.5, 0.009, level.pit.y + 0.5);
+    rim.receiveShadow = true;
+    this.levelGroup.add(rim);
     this.effects.reset();
   }
 
@@ -1207,6 +1244,138 @@ export class ThreeView {
       const d = Math.hypot(f.x + 0.5 - world.player.x, f.y + 0.5 - world.player.y);
       entry.cutout.shade(entry.cutout.mesh.material as THREE.MeshBasicMaterial, world.visibleNow.has(tile) ? this.falloff(world, d) : 0);
     }
+  }
+
+  /** A door hangs across a doorway, or stands open against its wall; a barricade is planks. */
+  private syncDoors(world: World): void {
+    const level = world.level;
+    const seen = new Set<number>();
+    const H = 1.5;
+    for (const d of level.doorways) {
+      const tile = d.y * level.width + d.x;
+      const barricade = world.works.find((w) => w.kind === 'barricade' && w.depth === world.depth && w.x === d.x && w.y === d.y);
+      const door = world.doorStates.get(tile);
+      if (!barricade && (!door || door.state === 'broken')) continue;
+      seen.add(tile);
+      const shut = level.closed?.has(tile) ?? false;
+      const key = `${barricade ? 'b' : 'd'}-${shut}`;
+      const entry = this.doors.get(tile);
+      if (entry && entry.key === key) continue;
+      if (entry) this.scene.remove(entry.obj);
+      // Walls on the left and right: the passage runs north–south and the door spans x.
+      const acrossX = !isFloor(level, d.x - 1, d.y) && !isFloor(level, d.x + 1, d.y);
+      const group = new THREE.Group();
+      group.position.set(d.x + 0.5, 0, d.y + 0.5);
+      if (!acrossX) group.rotation.y = Math.PI / 2;
+      const box = (w: number, h: number, depth: number, x: number, y: number, z: number, rz = 0) => {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, depth), this.woodMaterial);
+        mesh.position.set(x, y, z);
+        mesh.rotation.z = rz;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        group.add(mesh);
+      };
+      if (barricade) {
+        if (shut) {
+          box(1, 0.16, 0.08, 0, 0.45, 0, 0.12);
+          box(1, 0.16, 0.08, 0, 0.9, 0.02, -0.15);
+          box(1, 0.16, 0.08, 0, 1.3, 0, 0.08);
+        } else {
+          // Opened: the planks lean against the wall.
+          box(0.08, 1.2, 0.16, -0.45, 0.6, 0.2, 0.15);
+        }
+      } else if (shut) box(0.98, H, 0.1, 0, H / 2, 0);
+      else box(0.1, H, 0.9, -0.44, H / 2, 0);
+      this.scene.add(group);
+      this.doors.set(tile, { obj: group, key });
+    }
+    for (const [tile, entry] of this.doors) {
+      if (seen.has(tile)) continue;
+      this.scene.remove(entry.obj);
+      this.doors.delete(tile);
+    }
+  }
+
+  private ropeMeshes: THREE.Mesh[] = [];
+
+  /** A rope tied at this level's pit, and one hanging at the landing from the level above. */
+  private syncRopes(world: World): void {
+    for (const m of this.ropeMeshes) this.scene.remove(m);
+    this.ropeMeshes = [];
+    const material = this.woodMaterial;
+    const ropeAt = (depth: number) => world.works.some((w) => w.kind === 'rope' && w.depth === depth && w.condition > 0);
+    const hang = (x: number, y: number, top: number) => {
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, top, 6), material);
+      mesh.position.set(x + 0.5, top / 2 - 0.05, y + 0.5);
+      mesh.castShadow = true;
+      this.scene.add(mesh);
+      this.ropeMeshes.push(mesh);
+    };
+    if (ropeAt(world.depth)) hang(world.level.pit.x, world.level.pit.y, 0.5);
+    if (world.depth > 1 && ropeAt(world.depth - 1)) hang(world.level.landing.x, world.level.landing.y, 3);
+  }
+
+  private ropeKey = '';
+
+  private syncWorks(world: World, now: number): void {
+    const ropeKey = `${world.depth}:${world.works.filter((w) => w.kind === 'rope').map((w) => `${w.depth}-${w.condition > 0}`).join(',')}`;
+    if (ropeKey !== this.ropeKey) {
+      this.ropeKey = ropeKey;
+      this.syncRopes(world);
+    }
+    const seen = new Set<number>();
+    const lit: Array<{ x: number; y: number; d: number }> = [];
+    for (const w of world.works) {
+      if (w.depth !== world.depth || (w.kind !== 'torch' && w.kind !== 'chalk')) continue;
+      seen.add(w.id);
+      const burning = w.kind === 'torch' && w.condition > 0;
+      const key = w.kind === 'torch' ? `torch-${burning}` : `chalk-${w.sign}`;
+      let entry = this.works.get(w.id);
+      if (!entry || entry.key !== key) {
+        if (entry) this.scene.remove(entry.obj);
+        if (w.kind === 'torch') {
+          const { sheet, texture } = this.featureTextures.get(key)!;
+          const cutout = new Cutout(sheet, new THREE.MeshBasicMaterial({ map: texture, alphaTest: 0.5, side: THREE.DoubleSide }), 1.1);
+          entry = { obj: cutout.mesh, key, cutout };
+        } else {
+          // Chalk lies on the floor, lit like it.
+          const decal = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.8, 0.8),
+            inkMaterial(new THREE.MeshLambertMaterial({ map: this.chalkTextures.get(w.sign ?? 'arrow')!, transparent: true, depthWrite: false })),
+          );
+          decal.rotation.set(-Math.PI / 2, 0, -(w.angle ?? 0));
+          decal.position.set(w.x + 0.5, 0.006, w.y + 0.5);
+          decal.receiveShadow = true;
+          entry = { obj: decal, key };
+        }
+        this.scene.add(entry.obj);
+        this.works.set(w.id, entry);
+      }
+      if (entry.cutout) {
+        entry.cutout.place({ x: w.x + 0.5, y: w.y + 0.5 }, this.camera, false, this.mode);
+        const tile = w.y * world.level.width + w.x;
+        const d = Math.hypot(w.x + 0.5 - world.player.x, w.y + 0.5 - world.player.y);
+        entry.cutout.shade(entry.cutout.mesh.material as THREE.MeshBasicMaterial, burning && world.visibleNow.has(tile) ? 1 : world.visibleNow.has(tile) ? this.falloff(world, d) : 0);
+        if (burning) lit.push({ x: w.x + 0.5, y: w.y + 0.5, d });
+      }
+    }
+    for (const [id, entry] of this.works) {
+      if (seen.has(id)) continue;
+      this.scene.remove(entry.obj);
+      this.works.delete(id);
+    }
+    // The nearest burning torches get a real light.
+    lit.sort((a, b) => a.d - b.d);
+    this.torchLights.forEach((light, i) => {
+      const torch = lit[i];
+      if (!torch || torch.d > 14) {
+        light.intensity = 0;
+        return;
+      }
+      const flicker = 1 + Math.sin(now / 80 + i * 2) * 0.07 + Math.sin(now / 31 + i) * 0.05;
+      light.position.set(torch.x, 1.05, torch.y);
+      light.intensity = 2.4 * flicker;
+    });
   }
 
   private syncCamps(world: World, now: number): void {
