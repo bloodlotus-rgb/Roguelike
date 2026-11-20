@@ -302,3 +302,137 @@ export function drawItem(kind: 'food' | 'water' | 'oil', tile: number): HTMLCanv
   }
   return c;
 }
+
+export const BLOOD = '#8b2a1f';
+
+function ctxFor(width: number, height: number, tile: number): [HTMLCanvasElement, CanvasRenderingContext2D, number] {
+  const s = tile / 32;
+  const [c, ctx] = canvas(Math.ceil(width * s), Math.ceil(height * s));
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = INK;
+  return [c, ctx, s];
+}
+
+/** Placeholder horrors: ink blots with a recognizable silhouette each. */
+export function drawEnemy(kind: 'crawler' | 'husk' | 'mourner' | 'snuffer', tile: number): HTMLCanvasElement {
+  const rng = new Rng(`enemy-art-${kind}`);
+  if (kind === 'crawler') {
+    const [c, ctx, s] = ctxFor(30, 24, tile);
+    ctx.lineWidth = 1.6 * s;
+    for (let i = 0; i < 6; i++) {
+      const side = i < 3 ? -1 : 1;
+      const k = i % 3;
+      const bx = 15 * s + side * 4 * s;
+      const by = (10 + k * 3) * s;
+      inkLine(ctx, rng, bx, by, bx + side * (9 + k) * s, by + (k - 1) * 4 * s + 4 * s, 1 * s);
+    }
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.ellipse(15 * s, 13 * s, 7 * s, 5.5 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(12 * s, 10 * s, 1.6 * s, 1.6 * s);
+    ctx.fillRect(16.5 * s, 10 * s, 1.6 * s, 1.6 * s);
+    return c;
+  }
+  if (kind === 'husk') {
+    const [c, ctx, s] = ctxFor(34, 46, tile);
+    ctx.fillStyle = PAPER;
+    ctx.lineWidth = 2.4 * s;
+    ctx.beginPath();
+    ctx.moveTo(10 * s, 44 * s);
+    ctx.quadraticCurveTo(4 * s, 26 * s, 12 * s, 14 * s);
+    ctx.quadraticCurveTo(20 * s, 8 * s, 27 * s, 16 * s);
+    ctx.quadraticCurveTo(32 * s, 28 * s, 26 * s, 44 * s);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.lineWidth = 1 * s;
+    for (let i = 0; i < 7; i++) {
+      const y = (20 + i * 3.4) * s;
+      inkLine(ctx, rng, 9 * s, y, 27 * s, y + rng.range(-2, 2) * s, 0.8 * s);
+    }
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.arc(14 * s, 12 * s, 5 * s, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 3 * s;
+    inkLine(ctx, rng, 27 * s, 18 * s, 32 * s, 32 * s, 0.6 * s);
+    return c;
+  }
+  if (kind === 'mourner') {
+    const [c, ctx, s] = ctxFor(26, 42, tile);
+    ctx.fillStyle = PAPER;
+    ctx.lineWidth = 2 * s;
+    ctx.beginPath();
+    ctx.moveTo(13 * s, 3 * s);
+    ctx.quadraticCurveTo(3 * s, 20 * s, 4 * s, 40 * s);
+    ctx.lineTo(22 * s, 40 * s);
+    ctx.quadraticCurveTo(23 * s, 20 * s, 13 * s, 3 * s);
+    ctx.fill();
+    ctx.stroke();
+    ctx.lineWidth = 1 * s;
+    for (const x of [7, 10, 13, 16, 19]) inkLine(ctx, rng, x * s, 12 * s, (x + rng.range(-1, 1)) * s, 40 * s, 0.5 * s);
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.ellipse(13 * s, 13 * s, 3.5 * s, 4.5 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.4 * s;
+    inkLine(ctx, rng, 11.5 * s, 17 * s, 11 * s, 24 * s, 0.3 * s);
+    inkLine(ctx, rng, 14.5 * s, 17 * s, 15 * s, 23 * s, 0.3 * s);
+    return c;
+  }
+  const [c, ctx, s] = ctxFor(24, 40, tile);
+  ctx.fillStyle = 'rgba(33, 27, 23, 0.85)';
+  ctx.beginPath();
+  ctx.moveTo(12 * s, 4 * s);
+  ctx.quadraticCurveTo(5 * s, 18 * s, 9 * s, 38 * s);
+  ctx.lineTo(15 * s, 38 * s);
+  ctx.quadraticCurveTo(19 * s, 18 * s, 12 * s, 4 * s);
+  ctx.fill();
+  ctx.lineWidth = 1.2 * s;
+  for (const side of [-1, 1]) {
+    inkLine(ctx, rng, 12 * s, 16 * s, (12 + side * 9) * s, 26 * s, 0.6 * s);
+    for (let f = 0; f < 3; f++) {
+      inkLine(ctx, rng, (12 + side * 9) * s, 26 * s, (12 + side * (9 + f)) * s, (30 + f) * s, 0.3 * s);
+    }
+  }
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(10.5 * s, 9 * s, 1.4 * s, 1.4 * s);
+  ctx.fillRect(13 * s, 9 * s, 1.4 * s, 1.4 * s);
+  return c;
+}
+
+/** Ink blot left where a horror falls. */
+export function drawSplat(tile: number, seed: string): HTMLCanvasElement {
+  const [c, ctx, s] = ctxFor(40, 32, tile);
+  const rng = new Rng(seed);
+  ctx.fillStyle = 'rgba(33, 27, 23, 0.75)';
+  ctx.beginPath();
+  ctx.ellipse(20 * s, 16 * s, 11 * s, 8 * s, rng.range(0, Math.PI), 0, Math.PI * 2);
+  ctx.fill();
+  for (let i = 0; i < 9; i++) {
+    const a = rng.range(0, Math.PI * 2);
+    const d = rng.range(10, 17);
+    ctx.beginPath();
+    ctx.arc(20 * s + Math.cos(a) * d * s, 16 * s + Math.sin(a) * d * 0.7 * s, rng.range(0.8, 2.6) * s, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return c;
+}
+
+/** The mourner's ink spit. */
+export function drawProjectile(tile: number): HTMLCanvasElement {
+  const [c, ctx, s] = ctxFor(14, 14, tile);
+  ctx.fillStyle = INK;
+  ctx.beginPath();
+  ctx.arc(7 * s, 7 * s, 4.5 * s, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = BLOOD;
+  ctx.beginPath();
+  ctx.arc(6 * s, 6 * s, 1.6 * s, 0, Math.PI * 2);
+  ctx.fill();
+  return c;
+}

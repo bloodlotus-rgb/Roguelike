@@ -1,6 +1,6 @@
-# Combate y enemigos — propuesta v1
+# Combate y enemigos — v2
 
-> Estado: **propuesta para revisar**. Nada de esto está aprobado todavía. Al final están las preguntas abiertas.
+> Estado: **aprobado**. Lo marcado como **[Supuesto]** son valores o detalles míos para validar al probar.
 
 ## Idea central
 
@@ -12,13 +12,14 @@ El combate es **tenso, no arcade**: pocos enemigos, que pegan fuerte y avisan an
 
 **Celular**:
 - Pulgar izquierdo: joystick (como ahora).
-- Pulgar derecho, tres botones:
-  - **Atacar** (grande).
-  - **Esquivar** (rueda corta con un instante de invulnerabilidad).
-  - **Habilidad** de la clase, con un aro que muestra la recarga.
+- Pulgar derecho, dos botones:
+  - **Atacar** (grande):
+    - **Toque**: ataque básico. Si el toque llega justo antes de un golpe enemigo, es un **parry**.
+    - **Mantener**: habilidad de la clase. Un aro en el botón muestra la recarga.
+  - **Esquivar**: rueda corta con un instante de invulnerabilidad.
 - Apuntado automático: el ataque va al enemigo más cercano dentro del cono hacia donde mirás. Si no hay ninguno, va hacia donde mirás.
 
-**Compu**: WASD o flechas para moverse, `Espacio` o `J` para atacar, `Shift` o `K` para esquivar, `L` o `Q` para la habilidad, `Enter` para usar la escalera.
+**Compu**: WASD o flechas para moverse, `Espacio` o `J` para atacar (mantener para la habilidad), `Shift` o `K` para esquivar, `Enter` para usar la escalera.
 
 ## Costo de pelear (en lugar de estamina)
 
@@ -28,6 +29,14 @@ Como el hambre y la sed cumplen el papel de la estamina:
 
 Así, pelear mucho te obliga a volver a buscar agua.
 
+## Parry
+
+- Tocar Atacar abre una ventana corta (**[Supuesto]** unos 0,2 segundos). Si un golpe cuerpo a cuerpo te llega dentro de esa ventana, lo desviás.
+- **Resultado**: no recibís daño, el enemigo queda aturdido y tu próximo golpe es crítico.
+- **Si fallás el tiempo**: estás a mitad de un ataque y el golpe entra.
+- **No se puede parar**: el golpe pesado del Hueco ni los escupitajos de la Plañidera. Hay que esquivarlos.
+- **Por clase**: el Saqueador tiene la ventana más amplia; el Verdugo la más corta, pero aturde más tiempo. La Agilidad ensancha la ventana.
+
 ## Clases
 
 Cada clase tiene un arma, un ataque básico, una habilidad y un rasgo pasivo.
@@ -36,7 +45,7 @@ Cada clase tiene un arma, un ataque básico, una habilidad y un rasgo pasivo.
 |---|---|---|---|
 | Arma | Hacha de dos manos | Dos dagas | Maza y cirio |
 | Ataque básico | Lento, arco amplio, mucho daño, empuja | Rápido, poco daño | Medio |
-| Habilidad | **Tajo cargado**: mantenés para cargar y golpeás en círculo | **Paso sombrío**: esquiva larga que te vuelve invisible un momento | **Llamarada**: quema luz para dañar y espantar a todos alrededor |
+| Habilidad (mantener Atacar) | **Tajo cargado**: seguís manteniendo para cargar y al soltar golpeás en círculo | **Paso sombrío**: salto largo hacia donde apunta el joystick que te vuelve invisible un momento | **Llamarada**: quema luz para dañar y espantar a todos alrededor |
 | Pasivo | Más vida; el hambre y la sed bajan un 25 % más rápido | Más velocidad; golpe por la espalda o sin ser detectado ×3 | Su luz delata menos; los horrores dudan antes de entrar en su luz |
 | Debilidad | Lento para esquivar | Poca vida | Sin luz, pierde su habilidad |
 
@@ -67,12 +76,12 @@ Cuatro tipos, cada uno con un comportamiento claro y una forma de enfrentarlo:
 
 ## Atributos
 
-Los atributos ya acordados entran en esta etapa con valores base por clase, sin rasgos todavía (los rasgos llegan con el linaje):
+Los atributos entran en esta etapa con valores base por clase, sin rasgos todavía (los rasgos llegan con el linaje):
 
 | Atributo | Efecto en esta etapa |
 |---|---|
 | Fuerza | Daño cuerpo a cuerpo |
-| Agilidad | Velocidad de ataque y de esquiva |
+| Agilidad | Velocidad de ataque y de esquiva; ventana de parry |
 | Vigor | Vida máxima |
 | Percepción | Distancia a la que ves a los sigilosos; probabilidad de crítico |
 | Ingenio | Sin efecto todavía (trampas y cerraduras, más adelante) |
@@ -91,13 +100,3 @@ Rasgos, guardado, linaje, armaduras, tienda, oro, noche, campamentos y jefes.
 - Toda la lógica de combate (vida, daño, estados de los enemigos, detección, recargas) va en `src/core/`, testeada con vitest.
 - Las tiradas (críticos, botín) salen de un PRNG derivado de la semilla y de la vida.
 - Phaser solo dibuja, anima y muestra los efectos.
-
-## Preguntas abiertas
-
-1. ¿Tres botones (atacar, esquivar, habilidad) o preferís menos?
-2. ¿Atacar y esquivar gastan sed?
-3. ¿La luz como delatora te cierra?
-4. ¿Te gustan las clases así planteadas (armas, habilidades, pasivos)?
-5. ¿Los cuatro horrores y sus nombres?
-6. ¿Sin números de daño ni barras de vida enemigas?
-7. ¿Metemos los atributos ya en esta etapa, o los dejamos para el linaje?

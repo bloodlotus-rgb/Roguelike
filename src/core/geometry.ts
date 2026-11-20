@@ -62,6 +62,21 @@ export function visibleTiles(level: Level, origin: Point, radius: number): numbe
   return [...seen];
 }
 
+/** True when every tile on the straight line between two points is floor. */
+export function hasLineOfSight(level: Level, a: Point, b: Point): boolean {
+  let clear = true;
+  const x1 = Math.floor(b.x);
+  const y1 = Math.floor(b.y);
+  castRay(Math.floor(a.x), Math.floor(a.y), x1, y1, (x, y) => {
+    if (!isFloor(level, x, y)) {
+      clear = false;
+      return false;
+    }
+    return true;
+  });
+  return clear;
+}
+
 /** Bresenham walk from (x0, y0) to (x1, y1); stops when `visit` returns false. */
 function castRay(x0: number, y0: number, x1: number, y1: number, visit: (x: number, y: number) => boolean): void {
   const dx = Math.abs(x1 - x0);

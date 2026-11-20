@@ -244,12 +244,161 @@ body {
   box-shadow: 1px 1px 0 rgba(33, 27, 23, 0.25);
 }
 
-.descend {
+.actions {
   position: absolute;
-  right: 20px;
-  bottom: calc(28px + env(safe-area-inset-bottom));
+  right: 16px;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-areas:
+    'descend descend'
+    'dodge attack';
+  align-items: end;
+  justify-items: end;
+  gap: 12px 14px;
+}
+
+#hud:not(.playing) .actions,
+#hud.selecting .hud-top {
+  display: none;
+}
+
+.descend {
+  grid-area: descend;
   min-width: 120px;
-  min-height: 56px;
+  min-height: 52px;
+}
+
+.action-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2.5px solid var(--ink);
+  background: rgba(236, 226, 203, 0.85);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  touch-action: none;
+  box-shadow: 2px 3px 0 rgba(33, 27, 23, 0.25);
+}
+
+.action-button.pressed {
+  transform: translate(1px, 2px);
+  box-shadow: 1px 1px 0 rgba(33, 27, 23, 0.25);
+  background: var(--paper-dark);
+}
+
+.attack {
+  grid-area: attack;
+  width: 92px;
+  height: 92px;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.dodge {
+  grid-area: dodge;
+  width: 66px;
+  height: 66px;
+  margin-bottom: 4px;
+}
+
+.dodge.cooling {
+  opacity: 0.45;
+}
+
+.ability-ring {
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  background: conic-gradient(var(--ink) var(--fill, 0deg), rgba(33, 27, 23, 0.12) var(--fill, 0deg));
+  -webkit-mask: radial-gradient(circle, transparent 55%, #000 56%, #000 64%, transparent 65%);
+  mask: radial-gradient(circle, transparent 55%, #000 56%, #000 64%, transparent 65%);
+  pointer-events: none;
+}
+
+.ability-ring.ready {
+  background: var(--flame);
+}
+
+.ability-ring.charging {
+  background: conic-gradient(var(--blood) var(--fill, 0deg), rgba(139, 42, 31, 0.15) var(--fill, 0deg));
+}
+
+/* Class selection */
+
+.class-screen {
+  justify-content: flex-start;
+  overflow-y: auto;
+  padding-top: calc(24px + env(safe-area-inset-top));
+  background: var(--paper);
+}
+
+.game-title {
+  margin: 0;
+  font-size: 34px;
+  font-weight: normal;
+  letter-spacing: 0.04em;
+}
+
+.class-screen h2 {
+  font-size: 22px;
+  color: var(--ink-soft);
+}
+
+.class-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  width: min(100%, 760px);
+  margin-top: 8px;
+}
+
+.class-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  background: rgba(255, 252, 240, 0.5);
+  border: 2px solid var(--ink);
+  border-radius: 4px 8px 5px 7px;
+  cursor: pointer;
+  box-shadow: 3px 3px 0 rgba(33, 27, 23, 0.2);
+}
+
+.class-card:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 rgba(33, 27, 23, 0.2);
+}
+
+.class-name {
+  font-size: 24px;
+  font-style: italic;
+}
+
+.class-desc {
+  font-size: 15px;
+}
+
+.class-ability {
+  font-size: 14px;
+  color: var(--blood);
+}
+
+.class-attrs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px 8px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.class-attrs b {
+  color: var(--ink);
 }
 
 .screen {
@@ -291,7 +440,7 @@ body {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(40px + env(safe-area-inset-bottom));
+  bottom: calc(150px + env(safe-area-inset-bottom));
   z-index: 2;
   margin: 0;
   padding: 0 16px;

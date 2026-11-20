@@ -1,10 +1,11 @@
 import Phaser from 'phaser';
-import { World, type WorldEvent } from './core/world';
-import { DungeonScene, type SceneHost } from './game/DungeonScene';
+import type { ClassId } from './core/classes';
+import { NO_INPUT, World, type ControlInput, type WorldEvent } from './core/world';
 import { PAPER } from './game/art';
-import { setLang, getLang, t, type StringKey } from './i18n/i18n';
+import { DungeonScene, type SceneHost } from './game/DungeonScene';
+import { getLang, setLang, t, type StringKey } from './i18n/i18n';
+import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
-import { Controls } from './ui/joystick';
 import './ui/styles.css';
 
 /** A readable random seed, e.g. "ashen-crypt-417". Seeds are chosen outside game logic. */
@@ -26,25 +27,82 @@ function readSeed(): string {
   return seed;
 }
 
+const isTouch = window.matchMedia('(pointer: coarse)').matches;
+
 class Session implements SceneHost {
-  world: World;
+  world!: World;
   paused = false;
+  private life = 0;
+  private playing = false;
   private readonly controls: Controls;
   private readonly hud: Hud;
-  private readonly game: Phaser.Game;
+  private game: Phaser.Game | null = null;
   private hudTimer = 0;
 
   constructor(private readonly seed: string) {
-    this.world = new World(seed);
-    this.controls = new Controls(document.getElementById('touch-zone')!);
     this.hud = new Hud(document.getElementById('hud')!, seed, {
+      onChooseClass: (classId) => this.start(classId),
       onDescend: () => this.descend(),
-      onRestart: () => this.restart(),
+      onChooseAgain: () => this.chooseAgain(),
       onResume: () => this.setPaused(false),
     });
-    this.hud.setDepth(this.world.depth);
-    this.hud.setSurvival(this.world.survival);
+    this.controls = new Controls(document.getElementById('touch-zone')!, this.hud.attackButton, this.hud.dodgeButton);
+    this.hud.showClassSelect(true);
 
+    // Leaving the app pauses it: the game never runs while nobody is looking.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.setPaused(true);
+    });
+    window.addEventListener('keydown', (e) => {
+      if (!this.playing) return;
+      if (e.code === 'Escape') this.setPaused(!this.paused);
+      if (e.code === 'Enter' && this.world.atStairs && !this.paused) this.descend();
+      if (e.code === 'KeyL') setLang(getLang() === 'es' ? 'en' : 'es');
+    });
+  }
+
+  get input(): ControlInput {
+    return this.playing && !this.paused ? this.controls.input : NO_INPUT;
+  }
+
+  onEvents(events: WorldEvent[]): void {
+    const world = this.world;
+    if (events.some((e) => e.type === 'died')) {
+      this.playing = false;
+      this.hud.setSurvival(world.survival, world.maxHealth);
+      setTimeout(() => this.hud.showDeath(world.depth), 600);
+      return;
+    }
+    // Meters and cooldowns are cheap to refresh, but there is no need to do it every frame.
+    this.hudTimer++;
+    if (this.hudTimer % 3 === 0 || events.length > 0) {
+      this.hud.setSurvival(world.survival, world.maxHealth);
+      this.hud.setStairsAvailable(world.atStairs);
+      const ability = world.cls.ability;
+      this.hud.setAbility(world.abilityReady ? 1 : 1 - world.abilityCooldown / ability.cooldown, world.charge);
+      this.hud.setDodgeReady(world.dodgeCooldown <= 0);
+    }
+  }
+
+  onToast(key: StringKey): void {
+    this.hud.toast(key);
+  }
+
+  private start(classId: ClassId): void {
+    this.world = new World(this.seed, classId, this.life);
+    this.playing = true;
+    this.paused = false;
+    this.controls.reset();
+    this.hud.showClassSelect(false);
+    this.hud.hideDeath();
+    this.hud.setDepth(this.world.depth);
+    this.hud.setSurvival(this.world.survival, this.world.maxHealth);
+    if (this.game) this.restartScene();
+    else this.boot();
+    this.showHint();
+  }
+
+  private boot(): void {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const parent = document.getElementById('game')!;
     this.game = new Phaser.Game({
@@ -60,44 +118,15 @@ class Session implements SceneHost {
     });
     this.game.scene.add('dungeon', DungeonScene, true, { host: this });
     window.addEventListener('resize', () => {
-      this.game.scale.resize(parent.clientWidth * dpr, parent.clientHeight * dpr);
+      this.game?.scale.resize(parent.clientWidth * dpr, parent.clientHeight * dpr);
     });
+  }
 
-    // Leaving the app pauses it: the game never runs while nobody is looking.
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) this.setPaused(true);
-    });
-    window.addEventListener('keydown', (e) => {
-      if (e.code === 'Escape') this.setPaused(!this.paused);
-      if ((e.code === 'Enter' || e.code === 'KeyE') && this.world.atStairs && !this.paused) this.descend();
-      if (e.code === 'KeyL') setLang(getLang() === 'es' ? 'en' : 'es');
-    });
-
+  private showHint(): void {
     const hint = document.getElementById('hint')!;
-    hint.textContent = t('controlsHint');
-    setTimeout(() => hint.classList.add('gone'), 5000);
-  }
-
-  get moveVector() {
-    return this.controls.vector;
-  }
-
-  onEvents(events: WorldEvent[]): void {
-    if (events.some((e) => e.type === 'died')) {
-      this.hud.setSurvival(this.world.survival);
-      this.hud.showDeath(this.world.depth);
-      return;
-    }
-    // The meters move slowly: refreshing them a few times per second is enough.
-    this.hudTimer++;
-    if (this.hudTimer % 6 === 0 || events.length > 0) {
-      this.hud.setSurvival(this.world.survival);
-      this.hud.setStairsAvailable(this.world.atStairs);
-    }
-  }
-
-  onToast(key: StringKey): void {
-    this.hud.toast(key);
+    hint.textContent = t(isTouch ? 'controlsHint' : 'controlsHintKeys');
+    hint.classList.remove('gone');
+    setTimeout(() => hint.classList.add('gone'), 6000);
   }
 
   private descend(): void {
@@ -108,25 +137,28 @@ class Session implements SceneHost {
     this.restartScene();
   }
 
-  private restart(): void {
-    this.world = new World(this.seed);
+  /** After a death: a new life, with the horrors and loot re-rolled. */
+  private chooseAgain(): void {
+    this.life++;
     this.hud.hideDeath();
-    this.hud.setDepth(this.world.depth);
-    this.hud.setSurvival(this.world.survival);
-    this.restartScene();
+    this.hud.showClassSelect(true);
   }
 
   private restartScene(): void {
     this.controls.reset();
-    this.game.scene.getScene('dungeon')!.scene.restart({ host: this });
+    this.game!.scene.getScene('dungeon')!.scene.restart({ host: this });
   }
 
   private setPaused(paused: boolean): void {
-    if (this.world.dead) return;
+    if (!this.playing) return;
     this.paused = paused;
     this.controls.reset();
     this.hud.setPaused(paused);
   }
 }
 
-new Session(readSeed());
+const session = new Session(readSeed());
+// `?debug=1` exposes the session for manual testing from the browser console.
+if (new URL(window.location.href).searchParams.has('debug')) {
+  (window as unknown as { estirpe: Session }).estirpe = session;
+}
