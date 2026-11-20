@@ -15,7 +15,7 @@ import { isFloor } from '../core/dungeon';
 import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
-import { drawFloorDecor, drawItem, drawProjectile } from './art';
+import { drawFeature, drawFloorDecor, drawItem, drawProjectile, LOOT_KINDS } from './art';
 import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
 import { BRICK_DEPTH, layBricks } from './masonry';
 import { easeInOut, easeOut, swingPhase } from './swing';
@@ -540,6 +540,9 @@ export class ThreeView {
   private flame: THREE.Sprite;
   private readonly enemies = new Map<number, { cutout: Cutout; material: THREE.MeshBasicMaterial; eyes: THREE.Sprite }>();
   private readonly items = new Map<number, Cutout>();
+  /** Fountains, remains and crates; a container's drawing changes once searched. */
+  private readonly features = new Map<number, { cutout: Cutout; key: string }>();
+  private readonly featureTextures = new Map<string, { sheet: SpriteSheet; texture: THREE.CanvasTexture }>();
   private readonly projectiles = new Map<number, Cutout>();
   private readonly walks = new Map<number, { walked: number; last: Point }>();
   private readonly flashUntil = new Map<number, number>();
@@ -586,9 +589,15 @@ export class ThreeView {
       const eyes = canvasTexture(eyesCanvas(kind));
       this.eyeMaterials.set(kind, new THREE.SpriteMaterial({ map: eyes, transparent: true, depthWrite: false }));
     }
-    for (const kind of ['food', 'water', 'oil'] as const) {
+    for (const kind of LOOT_KINDS) {
       const sheet = sheetFromCanvas(drawItem(kind, 64));
       this.itemTextures.set(kind, { sheet, texture: canvasTexture(sheet.canvas) });
+    }
+    for (const kind of ['fountain', 'remains', 'crate'] as const) {
+      for (const spent of [false, true]) {
+        const sheet = { ...sheetFromCanvas(drawFeature(kind, 64, spent)), originY: 0.92 };
+        this.featureTextures.set(`${kind}-${spent}`, { sheet, texture: canvasTexture(sheet.canvas) });
+      }
     }
     const projectile = sheetFromCanvas(drawProjectile(64));
     this.projectileTexture = { sheet: { ...projectile, originY: 0.5 }, texture: canvasTexture(projectile.canvas) };
@@ -626,6 +635,7 @@ export class ThreeView {
     this.effects.update(world, dt, this.camera, this.flame.visible ? this.flame.position : null, this.mode);
     this.syncEnemies(world, now);
     this.syncItems(world);
+    this.syncFeatures(world);
     this.syncProjectiles(world);
     this.renderer.render(this.scene, this.camera);
     this.drawHandsOverlay(world, now, moved > 0.002);
@@ -641,6 +651,8 @@ export class ThreeView {
     });
     this.levelGroup = new THREE.Group();
     this.scene.add(this.levelGroup);
+    for (const f of this.features.values()) this.scene.remove(f.cutout.mesh);
+    this.features.clear();
     for (const map of [this.items, this.projectiles]) {
       for (const c of map.values()) this.scene.remove(c.mesh);
       map.clear();
@@ -1162,6 +1174,26 @@ export class ThreeView {
       if (seen.has(id)) continue;
       this.scene.remove(cutout.mesh);
       this.items.delete(id);
+    }
+  }
+
+  private syncFeatures(world: World): void {
+    for (const f of world.level.features) {
+      const key = `${f.kind}-${f.kind !== 'fountain' && world.searched.has(f.id)}`;
+      let entry = this.features.get(f.id);
+      if (!entry || entry.key !== key) {
+        if (entry) this.scene.remove(entry.cutout.mesh);
+        const { sheet, texture } = this.featureTextures.get(key)!;
+        const size = f.kind === 'remains' ? 0.7 : 0.95;
+        const cutout = new Cutout(sheet, new THREE.MeshBasicMaterial({ map: texture, alphaTest: 0.5, side: THREE.DoubleSide }), size);
+        this.scene.add(cutout.mesh);
+        entry = { cutout, key };
+        this.features.set(f.id, entry);
+      }
+      entry.cutout.place({ x: f.x + 0.5, y: f.y + 0.5 }, this.camera, false, this.mode);
+      const tile = f.y * world.level.width + f.x;
+      const d = Math.hypot(f.x + 0.5 - world.player.x, f.y + 0.5 - world.player.y);
+      entry.cutout.shade(entry.cutout.mesh.material as THREE.MeshBasicMaterial, world.visibleNow.has(tile) ? this.falloff(world, d) : 0);
     }
   }
 

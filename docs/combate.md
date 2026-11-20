@@ -22,12 +22,7 @@ El combate es **tenso, no arcade**: pocos enemigos, que pegan fuerte y avisan an
 
 ## Costo de pelear (en lugar de estamina)
 
-Como el hambre y la sed cumplen el papel de la estamina:
-- Cada ataque y cada esquiva gasta un poco de **sed**.
-- La habilidad del Cirial gasta **luz**.
-- **Correr** gasta sed y hambre de forma continua y **hace ruido**: los horrores te detectan desde más lejos y te oyen aunque estén de espaldas.
-
-Así, pelear mucho te obliga a volver a buscar agua.
+Reemplazado por el **cuerpo** de `supervivencia.md` (E1): caminar, golpear, esquivar, correr, el especial y curarse gastan hambre y sed, con costos distintos por clase. **Correr** además **hace ruido**: los horrores te detectan desde más lejos y te oyen aunque estén de espaldas.
 
 ## Parry
 

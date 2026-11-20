@@ -2,7 +2,7 @@
  * Placeholder "ink on paper" art, drawn procedurally with the Canvas 2D API.
  * Visual randomness uses its own seeded stream, so it never touches game logic.
  */
-import { isFloor, type Level } from '../core/dungeon';
+import { isFloor, type FeatureKind, type Level, type LootKind } from '../core/dungeon';
 import { Rng } from '../core/rng';
 
 export const PAPER = '#ece2cb';
@@ -461,7 +461,10 @@ export function drawLightMask(size: number, edge: number): HTMLCanvasElement {
   return c;
 }
 
-export function drawItem(kind: 'food' | 'water' | 'oil', tile: number): HTMLCanvasElement {
+/** Everything that can lie on the floor, in the order the views load them. */
+export const LOOT_KINDS: readonly LootKind[] = ['ration', 'marchRation', 'waterskin', 'oil', 'gold'];
+
+export function drawItem(kind: LootKind, tile: number): HTMLCanvasElement {
   const s = tile / 32;
   const size = Math.ceil(24 * s);
   const [c, ctx] = canvas(size, size);
@@ -471,14 +474,39 @@ export function drawItem(kind: 'food' | 'water' | 'oil', tile: number): HTMLCanv
   ctx.strokeStyle = INK;
   ctx.fillStyle = PAPER;
   ctx.lineWidth = 1.8 * s;
-  if (kind === 'food') {
+  if (kind === 'marchRation') {
+    // A bundle wrapped in cloth and tied with string.
+    ctx.beginPath();
+    ctx.roundRect(5 * s, 7 * s, 14 * s, 11 * s, 3 * s);
+    ctx.fill();
+    ctx.stroke();
+    ctx.lineWidth = 1.2 * s;
+    inkLine(ctx, rng, 12 * s, 6 * s, 12 * s, 19 * s, 0.3 * s);
+    inkLine(ctx, rng, 4 * s, 12 * s, 20 * s, 12 * s, 0.3 * s);
+    ctx.beginPath();
+    ctx.arc(12 * s, 12 * s, 1.6 * s, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (kind === 'gold') {
+    // A few coins, one on edge.
+    for (const [x, y] of [[8, 16], [14, 17], [11, 13]] as const) {
+      ctx.fillStyle = '#d8b25a';
+      ctx.beginPath();
+      ctx.ellipse(x * s, y * s, 4 * s, 2.4 * s, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.ellipse(17 * s, 11 * s, 1.6 * s, 4 * s, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else if (kind === 'ration') {
     ctx.beginPath();
     ctx.ellipse(12 * s, 13 * s, 9 * s, 6 * s, -0.2, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.lineWidth = 1.2 * s;
     for (const ox of [-4, 0, 4]) inkLine(ctx, rng, (12 + ox - 1.5) * s, 10 * s, (12 + ox + 1.5) * s, 15 * s, 0.3 * s);
-  } else if (kind === 'water') {
+  } else if (kind === 'waterskin') {
     ctx.beginPath();
     ctx.moveTo(9 * s, 5 * s);
     ctx.lineTo(15 * s, 5 * s);
@@ -506,6 +534,93 @@ export function drawItem(kind: 'food' | 'water' | 'oil', tile: number): HTMLCanv
 }
 
 export const BLOOD = '#8b2a1f';
+
+/**
+ * Places in a level, drawn upright: a fountain basin, an explorer's remains, a crate.
+ * `spent` draws a searched container (an empty pack, a crate with its lid off).
+ */
+export function drawFeature(kind: FeatureKind, tile: number, spent = false): HTMLCanvasElement {
+  const s = tile / 32;
+  const [c, ctx] = canvas(Math.ceil(32 * s), Math.ceil(32 * s));
+  const rng = new Rng(`feature-art-${kind}`);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = INK;
+  ctx.fillStyle = PAPER;
+  ctx.lineWidth = 1.8 * s;
+  if (kind === 'fountain') {
+    // A stone basin with a spout, water lines inside.
+    ctx.beginPath();
+    ctx.moveTo(4 * s, 16 * s);
+    ctx.lineTo(28 * s, 16 * s);
+    ctx.lineTo(25 * s, 29 * s);
+    ctx.lineTo(7 * s, 29 * s);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(16 * s, 16 * s, 12 * s, 3 * s, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#7d93a3';
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(14 * s, 3 * s, 4 * s, 12 * s);
+    ctx.strokeRect(14 * s, 3 * s, 4 * s, 12 * s);
+    ctx.lineWidth = 1 * s;
+    for (let i = 0; i < 3; i++) inkLine(ctx, rng, (8 + i * 6) * s, 21 * s, (11 + i * 6) * s, 21 * s, 0.4 * s);
+    for (const y of [10, 14]) inkLine(ctx, rng, 16 * s, y * s, 16 * s, (y + 2) * s, 0.2 * s);
+  } else if (kind === 'crate') {
+    ctx.fillRect(5 * s, 11 * s, 22 * s, 18 * s);
+    ctx.strokeRect(5 * s, 11 * s, 22 * s, 18 * s);
+    ctx.lineWidth = 1.1 * s;
+    for (const y of [17, 23]) inkLine(ctx, rng, 5 * s, y * s, 27 * s, y * s, 0.3 * s);
+    inkLine(ctx, rng, 6 * s, 28 * s, 26 * s, 12 * s, 0.4 * s);
+    ctx.lineWidth = 1.8 * s;
+    if (spent) {
+      // The lid leans against it.
+      ctx.save();
+      ctx.translate(24 * s, 10 * s);
+      ctx.rotate(0.5);
+      ctx.fillRect(0, -2 * s, 12 * s, 4 * s);
+      ctx.strokeRect(0, -2 * s, 12 * s, 4 * s);
+      ctx.restore();
+      ctx.fillStyle = INK;
+      ctx.fillRect(7 * s, 12 * s, 18 * s, 3 * s);
+    } else {
+      ctx.fillRect(4 * s, 8 * s, 24 * s, 4 * s);
+      ctx.strokeRect(4 * s, 8 * s, 24 * s, 4 * s);
+    }
+  } else {
+    // An explorer's remains: a skull, bones and, until searched, a pack.
+    ctx.lineWidth = 2 * s;
+    inkLine(ctx, rng, 5 * s, 27 * s, 20 * s, 24 * s, 0.4 * s);
+    inkLine(ctx, rng, 9 * s, 23 * s, 14 * s, 29 * s, 0.4 * s);
+    ctx.lineWidth = 1.6 * s;
+    ctx.beginPath();
+    ctx.arc(8 * s, 19 * s, 4.5 * s, Math.PI, 0);
+    ctx.lineTo(11 * s, 23 * s);
+    ctx.lineTo(5 * s, 23 * s);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = INK;
+    ctx.fillRect(5.5 * s, 18 * s, 1.8 * s, 1.8 * s);
+    ctx.fillRect(8.8 * s, 18 * s, 1.8 * s, 1.8 * s);
+    if (!spent) {
+      ctx.fillStyle = '#b89a6a';
+      ctx.beginPath();
+      ctx.roundRect(16 * s, 13 * s, 12 * s, 15 * s, 3 * s);
+      ctx.fill();
+      ctx.stroke();
+      ctx.lineWidth = 1.1 * s;
+      inkLine(ctx, rng, 16 * s, 18 * s, 28 * s, 18 * s, 0.3 * s);
+      ctx.beginPath();
+      ctx.arc(22 * s, 13 * s, 3 * s, Math.PI, 0);
+      ctx.stroke();
+    }
+  }
+  return c;
+}
 
 function ctxFor(width: number, height: number, tile: number): [HTMLCanvasElement, CanvasRenderingContext2D, number] {
   const s = tile / 32;

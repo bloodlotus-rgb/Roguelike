@@ -5,7 +5,7 @@ import type { WorldSnapshot } from '../core/world';
  * What is kept between sessions: the dynasty, and the life being played if there is one.
  * There is a single save and it is overwritten continuously: nothing can be undone.
  */
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export interface CurrentLife {
   memberId: number;
@@ -27,9 +27,24 @@ export function makeSave(dynasty: Dynasty, life: CurrentLife | null, now: number
 
 /**
  * Migrations, one per version step: each takes the data of version N and returns N + 1.
- * Empty for now; the first change to the format adds `1: (data) => ...`.
  */
-const MIGRATIONS: Record<number, (data: Record<string, unknown>) => Record<string, unknown>> = {};
+const MIGRATIONS: Record<number, (data: Record<string, unknown>) => Record<string, unknown>> = {
+  // 1 → 2: the backpack. A life in progress gets the starter kit (the world adds it when
+  // the snapshot has none); the old floor loot (food, water, oil) is replaced by the new
+  // kinds, and what was taken is forgotten because the level's loot is laid out anew.
+  1: (data) => {
+    const life = data.life as { world?: Record<string, unknown> } | null;
+    const world = life?.world;
+    if (world) {
+      const drops = Array.isArray(world.drops) ? (world.drops as Array<Record<string, unknown>>) : [];
+      world.drops = drops
+        .filter((d) => d.kind === 'food' || d.kind === 'oil')
+        .map((d) => ({ ...d, kind: d.kind === 'food' ? 'ration' : 'oil' }));
+      world.taken = [];
+    }
+    return data;
+  },
+};
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 

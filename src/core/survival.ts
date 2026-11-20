@@ -1,5 +1,4 @@
 import { CONFIG } from './config';
-import type { ItemKind } from './dungeon';
 
 /** Hunger, thirst and light go from 0 to 100. Health is absolute, up to the hero's maximum. */
 export interface Survival {
@@ -36,18 +35,6 @@ export function tickSurvival(state: Survival, dt: number, mods: SurvivalModifier
   const starving = mods.starvingMultiplier ?? 1;
   const health = clamp(state.health - deprivations * starving * (mods.maxHealth / cfg.starvingDuration) * dt, mods.maxHealth);
   return { health, hunger, thirst, light };
-}
-
-export function consume(state: Survival, kind: ItemKind): Survival {
-  const amount = CONFIG.survival.restore[kind];
-  switch (kind) {
-    case 'food':
-      return { ...state, hunger: clamp(state.hunger + amount) };
-    case 'water':
-      return { ...state, thirst: clamp(state.thirst + amount) };
-    case 'oil':
-      return { ...state, light: clamp(state.light + amount) };
-  }
 }
 
 export function isDead(state: Survival): boolean {

@@ -131,7 +131,7 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     for (const item of level.items) {
       if (world.taken.has(item.id)) continue;
       const near = Math.hypot(item.x + 0.5 - world.player.x, item.y + 0.5 - world.player.y) < 10;
-      const show = (fx.mapItems && seen(item.x, item.y)) || (fx.mapFood && item.kind === 'food' && near);
+      const show = (fx.mapItems && seen(item.x, item.y)) || (fx.mapFood && (item.kind === 'ration' || item.kind === 'marchRation') && near);
       if (!show) continue;
       const p = at(item.x + 0.5, item.y + 0.5);
       ctx.strokeStyle = INK;
@@ -140,6 +140,20 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
       ctx.arc(p.x, p.y, Math.max(2, size * 0.22), 0, Math.PI * 2);
       ctx.stroke();
     }
+  }
+
+  // Fountains, once seen: water is geography.
+  for (const f of level.features) {
+    if (f.kind !== 'fountain' || !seen(f.x, f.y)) continue;
+    const p = at(f.x + 0.5, f.y + 0.5);
+    const r = Math.max(3, size * 0.32);
+    ctx.fillStyle = '#7d93a3';
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = Math.max(1, size / 12);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
   }
 
   // Where the family's heroes fell: a cross and a name.

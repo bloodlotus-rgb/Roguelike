@@ -11,9 +11,15 @@ export const CONFIG = {
     extraConnections: 3,
   },
   items: {
-    food: { min: 2, max: 4 },
-    water: { min: 2, max: 4 },
-    oil: { min: 1, max: 3 },
+    ration: { min: 2, max: 3 },
+    oil: { min: 1, max: 2 },
+    gold: { min: 3, max: 5 },
+    marchRationChance: 0.3,
+  },
+  features: {
+    fountain: { min: 1, max: 2 },
+    remains: { min: 2, max: 4 },
+    crate: { min: 3, max: 5 },
   },
   player: {
     /** Tiles per second. */
@@ -26,13 +32,33 @@ export const CONFIG = {
     stairsDistance: 0.8,
   },
   survival: {
-    /** Seconds for a full meter to empty. */
-    hungerDuration: 360,
-    thirstDuration: 240,
+    /** Seconds for a full meter to empty standing still; doing things costs on top. */
+    hungerDuration: 1800,
+    thirstDuration: 1500,
     lightDuration: 210,
     /** Seconds to lose all health while starving or dehydrated (each one counts). */
     starvingDuration: 40,
-    restore: { food: 40, water: 45, oil: 50 },
+    /** Out of combat: seconds of calm before healing starts, and health per second. */
+    calmBeforeHealing: 5,
+    healPerSecond: 2,
+    /** Below this, an empty-ish meter already weighs on the body. */
+    lowMeter: 25,
+  },
+  /** What using each item gives. */
+  use: {
+    ration: { hunger: 35 },
+    marchRation: { hunger: 25, thirst: 10 },
+    waterskin: { thirst: 25 },
+    oil: { light: 50 },
+    /** Seconds standing still to eat, drink or fill the lamp. */
+    channel: 1.5,
+  },
+  loot: {
+    /** Searching a container: how many things, and what (weights). */
+    remains: { min: 1, max: 3, table: { ration: 35, oil: 25, gold: 20, marchRation: 10, waterskin: 10 } },
+    crate: { min: 0, max: 2, table: { ration: 50, oil: 30, gold: 20 } },
+    /** Reach of fountains and containers, in tiles. */
+    reach: 1.1,
   },
   light: {
     /** Visibility radius in tiles with an empty and with a full light meter. */

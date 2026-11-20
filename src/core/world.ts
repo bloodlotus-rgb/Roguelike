@@ -1,7 +1,9 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { floorDistances, generateLevel, isFloor, type ItemKind, type Level, type LevelItem, type Point } from './dungeon';
+import { floorDistances, generateLevel, goldPile, isFloor, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { addItem, ITEMS, removeItem, starterKit, type Inventory, type ItemKind } from './inventory';
+import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
 import { hasLineOfSight, moveWithCollision, visibleTiles } from './geometry';
 import { Rng } from './rng';
@@ -25,14 +27,10 @@ export const COMBAT = {
   dodge: { distance: 2.2, duration: 0.28, invulnerable: 0.24, cooldown: 0.7 },
   run: {
     speedMultiplier: 1.6,
-    /** Meter points per second while running. */
-    thirstPerSecond: 1.2,
-    hungerPerSecond: 0.6,
     /** Running is loud: detection range multiplier and hearing distance from any side. */
     detection: 1.5,
     hearing: 3.5,
   },
-  thirstCost: { attack: 0.6, dodge: 1, special: 1.5 },
   /** A press during a swing is kept this long and chains the next blow. */
   attackBuffer: 0.45,
   /** Seconds over which recently lost health stops counting for Bloodthirst. */
@@ -114,7 +112,14 @@ export type PlayerAction =
   | { type: 'special'; timer: number; target: Enemy | null };
 
 export type WorldEvent =
-  | { type: 'pickup'; itemId: number; kind: ItemKind }
+  | { type: 'pickup'; itemId: number; kind: LootKind; amount?: number }
+  | { type: 'noRoom'; kind: ItemKind }
+  | { type: 'refilled'; skins: number }
+  | { type: 'found'; kinds: LootKind[]; gold: number; dropped: number }
+  | { type: 'used'; kind: ItemKind }
+  | { type: 'cantUse'; reason: 'danger' | 'empty' }
+  | { type: 'channel'; kind: ItemKind; seconds: number }
+  | { type: 'interrupted' }
   | { type: 'revealed'; tiles: number[] }
   | { type: 'attack'; pos: Point; facing: Point; arc: number; range: number; finisher: boolean }
   | { type: 'enemyHit'; id: number; damage: number; crit: boolean; burn: boolean; pos: Point }
@@ -136,7 +141,15 @@ export interface LifeOptions {
   traits?: string[];
   /** Explored tiles per depth, shared with the dynasty (updated as you explore). */
   explored?: Record<number, string>;
+  /** What the hero carries down (a starter kit when left out). */
+  inventory?: Inventory;
 }
+
+/** Things the player asks for between frames; the world carries them out in its update. */
+type Command = { type: 'interact' } | { type: 'use'; uid: number } | { type: 'drop'; uid: number };
+
+/** What the hero can do where they stand. */
+export type Interaction = 'stairs' | 'fountain' | 'search' | null;
 
 /** Counters behind the acquired traits. */
 export interface LifeCounters {
@@ -189,6 +202,11 @@ export interface WorldSnapshot {
   nextId: number;
   time: number;
   rng: [number, number, number, number];
+  inventory?: Inventory;
+  gold?: number;
+  /** Containers already searched on this level. */
+  searched?: number[];
+  calm?: number;
   /** This level's explored tiles, packed. */
   explored: string;
   path: number[];
@@ -240,6 +258,17 @@ export class World {
   counters: LifeCounters = freshCounters();
   /** Seconds since this life began. */
   time = 0;
+  /** The backpack, the purse, and containers already searched on this level. */
+  inventory: Inventory;
+  gold = 0;
+  searched = new Set<number>();
+  /** Seconds without danger nearby; healing starts after a while. */
+  calm = 0;
+  /** Eating, drinking or filling the lamp: standing still for a moment. */
+  channel: { uid: number; timer: number } | null = null;
+  private commands: Command[] = [];
+  /** A floor item that did not fit, so the toast is not repeated every frame. */
+  private refused = -1;
   /** Tiles walked on this level, for the Pace Counter's map. */
   path = new Set<number>();
   hardToKillUsed = false;
@@ -293,6 +322,7 @@ export class World {
     this.traits = [...(options.traits ?? [])];
     this.fx = combineEffects(this.traits);
     this.exploredByDepth = options.explored ?? {};
+    this.inventory = options.inventory ? JSON.parse(JSON.stringify(options.inventory)) : starterKit();
     this.survival = freshSurvival(this.maxHealth);
     this.enterLevel(depth);
   }
@@ -317,6 +347,10 @@ export class World {
     world.hardToKillUsed = snapshot.hardToKillUsed;
     world.nextId = snapshot.nextId;
     world.time = snapshot.time;
+    if (snapshot.inventory) world.inventory = JSON.parse(JSON.stringify(snapshot.inventory));
+    world.gold = snapshot.gold ?? 0;
+    world.searched = new Set(snapshot.searched ?? []);
+    world.calm = snapshot.calm ?? 0;
     world.rng.state = snapshot.rng;
     world.explored = unpackTiles(snapshot.explored, world.level.width * world.level.height);
     world.path = new Set(snapshot.path);
@@ -362,6 +396,10 @@ export class World {
       hardToKillUsed: this.hardToKillUsed,
       nextId: this.nextId,
       time: this.time,
+      inventory: JSON.parse(JSON.stringify(this.inventory)),
+      gold: this.gold,
+      searched: [...this.searched],
+      calm: this.calm,
       rng: this.rng.state,
       explored: packTiles(this.explored),
       path: [...this.path],
@@ -484,6 +522,8 @@ export class World {
     this.visibleNow.clear();
     this.taken.clear();
     this.path.clear();
+    this.searched.clear();
+    this.channel = null;
     this.projectiles = [];
     this.action = { type: 'none' };
     this.running = false;
@@ -523,7 +563,7 @@ export class World {
       const room = extraRng.pick(this.level.rooms);
       const x = extraRng.int(room.x, room.x + room.w - 1);
       const y = extraRng.int(room.y, room.y + room.h - 1);
-      if (isFloor(this.level, x, y)) this.level.items.push({ id: 900 + depth, kind: extraRng.pick<ItemKind>(['food', 'water', 'oil']), x, y });
+      if (isFloor(this.level, x, y)) this.level.items.push({ id: 900 + depth, kind: extraRng.pick<LootKind>(['ration', 'oil', 'gold']), amount: goldPile(extraRng, depth), x, y });
     }
   }
 
@@ -532,8 +572,13 @@ export class World {
     const events: WorldEvent[] = [];
 
     this.updateTimers(dt);
+    this.runCommands(events);
     this.handleInput(input, events);
+    const from = { ...this.player };
     this.movePlayer(dt, input);
+    const walked = dist(from, this.player);
+    if (walked > 0) this.spend(this.cls.costs.walk, walked);
+    this.updateChannel(dt, input, events);
     this.updateAction(dt, events);
 
     const passive = this.cls.passive;
@@ -547,14 +592,8 @@ export class World {
       starvingMultiplier: Math.max(0.2, 1 + (fx.starvingDrain ?? 0)),
     });
     if (this.survival.health < before.health) this.lastCause = before.hunger <= 0 || this.survival.hunger <= 0 ? { type: 'hunger' } : { type: 'thirst' };
-    if (this.running) {
-      const cost = Math.max(0.2, 1 + (fx.runCost ?? 0));
-      this.survival = {
-        ...this.survival,
-        thirst: Math.max(0, this.survival.thirst - COMBAT.run.thirstPerSecond * cost * dt),
-        hunger: Math.max(0, this.survival.hunger - COMBAT.run.hungerPerSecond * cost * dt),
-      };
-    }
+    if (this.running) this.spend(this.cls.costs.run, dt * Math.max(0.2, 1 + (fx.runCost ?? 0)));
+    this.healWhenCalm(dt);
     // Healing traits: well fed (Hot Blood), or at death's door (Last Breath).
     let regen = 0;
     if (fx.regenFed && this.survival.hunger > 50) regen += fx.regenFed;
@@ -639,7 +678,7 @@ export class World {
       this.action = { type: 'dodge', timer: COMBAT.dodge.duration, dir };
       this.invulnerableTimer = COMBAT.dodge.invulnerable + (this.fx.dodgeInvulnerable ?? 0);
       this.dodgeCooldown = COMBAT.dodge.cooldown * quicknessFactor(this.attrs);
-      this.spendThirst(COMBAT.thirstCost.dodge);
+      this.spend(this.cls.costs.dodge);
       this.running = false;
       events.push({ type: 'dodge', dir });
     }
@@ -647,7 +686,7 @@ export class World {
 
   private movePlayer(dt: number, input: ControlInput): void {
     if (this.action.type === 'dodge') {
-      const speed = (COMBAT.dodge.distance * (1 + (this.fx.dodgeDistance ?? 0))) / COMBAT.dodge.duration;
+      const speed = (COMBAT.dodge.distance * (1 + (this.fx.dodgeDistance ?? 0)) * this.thirstPenalty) / COMBAT.dodge.duration;
       this.player = moveWithCollision(
         this.level,
         this.player,
@@ -660,7 +699,7 @@ export class World {
     const l = length(input.move);
     if (l < 0.05) return;
     let speed = CONFIG.player.speed * this.cls.speedMultiplier * (1 + (this.fx.walkSpeed ?? 0));
-    if (this.running) speed *= COMBAT.run.speedMultiplier * (1 + (this.fx.runSpeed ?? 0));
+    if (this.running) speed *= COMBAT.run.speedMultiplier * (1 + (this.fx.runSpeed ?? 0)) * this.thirstPenalty;
     if (this.fx.coward && this.hpFraction < 0.3) speed *= 1.2;
     if (this.action.type === 'attack') speed *= 0.35;
     if (this.action.type === 'special') speed *= 0.2;
@@ -712,7 +751,7 @@ export class World {
     this.aim(step.range);
     this.action = { type: 'attack', phase: 'windup', timer: step.windup, step };
     this.running = false;
-    this.spendThirst(COMBAT.thirstCost.attack);
+    this.spend(this.cls.costs.attack);
     // War Cry: nearby Crawlers may scatter.
     if (this.fx.warCry) {
       for (const enemy of this.enemies) {
@@ -776,7 +815,7 @@ export class World {
   private damageEnemy(enemy: Enemy, base: number, knockback: number, events: WorldEvent[], canCrit = true): void {
     const attrs = this.attrs;
     const fx = this.fx;
-    let damage = base * damageMultiplier(attrs);
+    let damage = base * damageMultiplier(attrs) * this.hungerPenalty;
     let crit = false;
     if (canCrit && this.riposteTimer > 0) {
       crit = true;
@@ -839,8 +878,9 @@ export class World {
     }
     const dropChance = (passive.kind === 'ratEye' ? passive.dropChance : COMBAT.dropChance) + (this.fx.dropChance ?? 0);
     if (this.rng.chance(dropChance)) {
-      const kind = this.rng.pick<ItemKind>(['food', 'water', 'oil']);
+      const kind = this.rng.pick<LootKind>(['ration', 'oil', 'gold', 'gold']);
       const item: LevelItem = { id: this.nextId++, kind, x: Math.floor(enemy.pos.x), y: Math.floor(enemy.pos.y) };
+      if (kind === 'gold') item.amount = goldPile(this.rng, this.depth);
       if (isFloor(this.level, item.x, item.y)) {
         this.level.items.push(item);
         events.push({ type: 'drop', item });
@@ -912,15 +952,46 @@ export class World {
     this.specialCharge = 0;
     this.specialCooldown = this.cls.charge.cooldown;
     this.running = false;
-    this.spendThirst(COMBAT.thirstCost.special);
+    this.spend(this.cls.costs.special);
   }
 
   private gainCharge(amount: number): void {
     if (amount > 0) this.specialCharge = Math.min(1, this.specialCharge + amount);
   }
 
-  private spendThirst(amount: number): void {
-    this.survival = { ...this.survival, thirst: Math.max(0, this.survival.thirst - amount) };
+  /** The body pays for what it does, in hunger and thirst; traits make it cheaper or dearer. */
+  private spend([hunger, thirst]: Cost, times = 1): void {
+    const fx = this.fx;
+    this.survival = {
+      ...this.survival,
+      hunger: Math.max(0, this.survival.hunger - hunger * times * Math.max(0.2, 1 + (fx.hunger ?? 0))),
+      thirst: Math.max(0, this.survival.thirst - thirst * times * Math.max(0.2, 1 + (fx.thirst ?? 0))),
+    };
+  }
+
+  /** Whether any awake horror is close: no eating, drinking or healing then. */
+  get inDanger(): boolean {
+    return this.enemies.some((e) => e.state !== 'dead' && e.alerted && dist(e.pos, this.player) < 8);
+  }
+
+  /** Out of danger for a while, wounds close slowly, paid for with hunger and thirst. */
+  private healWhenCalm(dt: number): void {
+    this.calm = this.inDanger ? 0 : this.calm + dt;
+    const s = this.survival;
+    if (this.calm < CONFIG.survival.calmBeforeHealing || s.health >= this.maxHealth || s.hunger <= 0 || s.thirst <= 0) return;
+    const amount = Math.min(CONFIG.survival.healPerSecond * dt, this.maxHealth - s.health);
+    this.survival = { ...s, health: s.health + amount };
+    this.spend(this.cls.costs.heal, amount);
+  }
+
+  /** Hungry hands hit softer. */
+  private get hungerPenalty(): number {
+    return this.survival.hunger < CONFIG.survival.lowMeter ? 0.8 : 1;
+  }
+
+  /** A dry throat slows dodging and running. */
+  private get thirstPenalty(): number {
+    return this.survival.thirst < CONFIG.survival.lowMeter ? 0.85 : 1;
   }
 
   private hurtPlayer(base: number, lightStolen: number, events: WorldEvent[], source: { kind: EnemyKind; projectile?: boolean }): void {
@@ -992,26 +1063,182 @@ export class World {
   private pickUp(events: WorldEvent[]): void {
     for (const item of this.level.items) {
       if (this.taken.has(item.id)) continue;
-      if (dist(this.player, { x: item.x + 0.5, y: item.y + 0.5 }) > CONFIG.player.pickupDistance) continue;
+      if (dist(this.player, { x: item.x + 0.5, y: item.y + 0.5 }) > CONFIG.player.pickupDistance) {
+        if (this.refused === item.id) this.refused = -1;
+        continue;
+      }
+      if (item.kind === 'gold') {
+        this.gold += item.amount ?? 0;
+      } else if (!addItem(this.inventory, item.kind, item.charges ?? ITEMS[item.kind].charges)) {
+        // No room: it stays on the floor until something is dropped.
+        if (this.refused !== item.id) events.push({ type: 'noRoom', kind: item.kind });
+        this.refused = item.id;
+        continue;
+      }
       this.taken.add(item.id);
-      this.consume(item.kind);
-      events.push({ type: 'pickup', itemId: item.id, kind: item.kind });
+      events.push({ type: 'pickup', itemId: item.id, kind: item.kind, amount: item.amount });
     }
   }
 
-  private consume(kind: ItemKind): void {
-    const fx = this.fx;
-    const s = this.survival;
-    const amount = CONFIG.survival.restore[kind];
-    const clamp = (v: number) => Math.max(0, Math.min(100, v));
-    if (kind === 'food') {
-      const health = Math.min(this.maxHealth, s.health + (fx.foodHeal ?? 0));
-      this.survival = { ...s, health, hunger: clamp(s.hunger + amount * Math.max(0.2, 1 + (fx.foodValue ?? 0))) };
-    } else if (kind === 'water') {
-      this.survival = { ...s, thirst: clamp(s.thirst + amount) };
-    } else {
-      this.survival = { ...s, light: clamp(s.light + amount * Math.max(0.2, 1 + (fx.oilValue ?? 0))) };
+  // Backpack and places ---------------------------------------------------------------
+
+  /** The fountain or unsearched container within reach, if any. */
+  private featureInReach(): Feature | null {
+    let best: Feature | null = null;
+    let bestD: number = CONFIG.loot.reach;
+    for (const f of this.level.features) {
+      if (f.kind !== 'fountain' && this.searched.has(f.id)) continue;
+      const d = dist(this.player, { x: f.x + 0.5, y: f.y + 0.5 });
+      if (d <= bestD) {
+        best = f;
+        bestD = d;
+      }
     }
+    return best;
+  }
+
+  /** What the action button does here. */
+  get interaction(): Interaction {
+    if (this.atStairs) return 'stairs';
+    const f = this.featureInReach();
+    if (!f) return null;
+    return f.kind === 'fountain' ? 'fountain' : 'search';
+  }
+
+  /** Use the fountain or search the container at hand (the stairs are the session's business). */
+  interact(): void {
+    this.commands.push({ type: 'interact' });
+  }
+
+  useItem(uid: number): void {
+    this.commands.push({ type: 'use', uid });
+  }
+
+  /** Drops an item where the hero stands, at once (it is only moving data, like rearranging). */
+  dropItem(uid: number): void {
+    this.doDrop(uid);
+  }
+
+  private runCommands(events: WorldEvent[]): void {
+    const commands = this.commands;
+    this.commands = [];
+    for (const c of commands) {
+      if (c.type === 'interact') this.doInteract(events);
+      else if (c.type === 'drop') this.doDrop(c.uid);
+      else this.startUse(c.uid, events);
+    }
+  }
+
+  private doInteract(events: WorldEvent[]): void {
+    const f = this.featureInReach();
+    if (!f) return;
+    if (f.kind === 'fountain') {
+      let skins = 0;
+      for (const it of this.inventory.items) {
+        if (it.kind !== 'waterskin') continue;
+        it.charges = ITEMS.waterskin.charges;
+        skins++;
+      }
+      events.push({ type: 'refilled', skins });
+      return;
+    }
+    this.searched.add(f.id);
+    const table = CONFIG.loot[f.kind];
+    const rng = Rng.derive(this.seed, 'search', this.life, this.depth, f.id);
+    const kinds: LootKind[] = [];
+    let gold = 0;
+    let dropped = 0;
+    const weights = Object.entries(table.table) as Array<[LootKind, number]>;
+    const total = weights.reduce((n, [, w]) => n + w, 0);
+    for (let i = rng.int(table.min, table.max); i > 0; i--) {
+      let roll = rng.next() * total;
+      const kind = weights.find(([, w]) => (roll -= w) < 0)?.[0] ?? weights[0][0];
+      kinds.push(kind);
+      if (kind === 'gold') gold += goldPile(rng, this.depth);
+      else if (!addItem(this.inventory, kind)) {
+        this.dropAt(kind, f.x, f.y);
+        dropped++;
+      }
+    }
+    this.gold += gold;
+    events.push({ type: 'found', kinds, gold, dropped });
+  }
+
+  /** Leaves an item on the floor, where it stays for this life. */
+  private dropAt(kind: LootKind, x: number, y: number, charges?: number): void {
+    const id = this.nextId++ + 5000;
+    const item: LevelItem = { id, kind, x, y };
+    if (charges !== undefined) item.charges = charges;
+    this.level.items.push(item);
+    // Picked up again only after stepping away and back.
+    this.refused = id;
+  }
+
+  private doDrop(uid: number): void {
+    const item = removeItem(this.inventory, uid);
+    if (!item) return;
+    this.dropAt(item.kind, Math.floor(this.player.x), Math.floor(this.player.y), item.charges);
+  }
+
+  /** Eating, drinking and filling the lamp take a moment standing still; march rations don't. */
+  private startUse(uid: number, events: WorldEvent[]): void {
+    const item = this.inventory.items.find((it) => it.uid === uid);
+    if (!item) return;
+    if (item.kind === 'waterskin' && !item.charges) {
+      events.push({ type: 'cantUse', reason: 'empty' });
+      return;
+    }
+    if (ITEMS[item.kind].onTheMove) {
+      this.applyItem(uid, events);
+      return;
+    }
+    if (item.kind !== 'oil' && this.inDanger) {
+      events.push({ type: 'cantUse', reason: 'danger' });
+      return;
+    }
+    this.channel = { uid, timer: CONFIG.use.channel };
+    events.push({ type: 'channel', kind: item.kind, seconds: CONFIG.use.channel });
+  }
+
+  private updateChannel(dt: number, input: ControlInput, events: WorldEvent[]): void {
+    if (!this.channel) return;
+    const item = this.inventory.items.find((it) => it.uid === this.channel!.uid);
+    const moving = length(input.move) > 0.15 || input.attack || input.dodge || input.special;
+    if (!item || moving || (item.kind !== 'oil' && this.inDanger)) {
+      this.channel = null;
+      if (item) events.push({ type: 'interrupted' });
+      return;
+    }
+    this.channel.timer -= dt;
+    if (this.channel.timer > 0) return;
+    const uid = this.channel.uid;
+    this.channel = null;
+    this.applyItem(uid, events);
+  }
+
+  private applyItem(uid: number, events: WorldEvent[]): void {
+    const item = this.inventory.items.find((it) => it.uid === uid);
+    if (!item) return;
+    const fx = this.fx;
+    const s = { ...this.survival };
+    const clamp = (v: number) => Math.max(0, Math.min(100, v));
+    const food = Math.max(0.2, 1 + (fx.foodValue ?? 0));
+    const use = CONFIG.use;
+    if (item.kind === 'ration' || item.kind === 'marchRation') {
+      const gives = use[item.kind];
+      s.hunger = clamp(s.hunger + gives.hunger * food);
+      if ('thirst' in gives) s.thirst = clamp(s.thirst + gives.thirst);
+      s.health = Math.min(this.maxHealth, s.health + (fx.foodHeal ?? 0));
+      removeItem(this.inventory, uid);
+    } else if (item.kind === 'waterskin') {
+      s.thirst = clamp(s.thirst + use.waterskin.thirst);
+      item.charges = Math.max(0, (item.charges ?? 0) - 1);
+    } else {
+      s.light = clamp(s.light + use.oil.light * Math.max(0.2, 1 + (fx.oilValue ?? 0)));
+      removeItem(this.inventory, uid);
+    }
+    this.survival = s;
+    events.push({ type: 'used', kind: item.kind });
   }
 
   /** Marks newly visible tiles as explored and returns them. */
