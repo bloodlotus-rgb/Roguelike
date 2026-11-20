@@ -51,8 +51,8 @@ export interface SceneHost {
   world: World;
   readonly input: ControlInput;
   readonly paused: boolean;
-  /** In first person the top view only simulates and does not draw. */
-  readonly view: 'top' | 'first';
+  /** When another renderer draws, this scene only simulates. */
+  readonly drawTop: boolean;
   onEvents(events: WorldEvent[]): void;
   onToast(key: StringKey): void;
 }
@@ -184,7 +184,7 @@ export class DungeonScene extends Phaser.Scene {
     const dt = Math.min(deltaMs / 1000, 0.1);
     const world = this.host.world;
     if (!this.host.paused && !world.dead) this.handleEvents(world.update(dt, this.host.input));
-    const top = this.host.view !== 'first';
+    const top = this.host.drawTop;
     this.cameras.main.setVisible(top);
     if (top) this.syncAll(this.host.paused ? 0 : dt, time);
   }

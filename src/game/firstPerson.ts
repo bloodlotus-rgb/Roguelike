@@ -307,7 +307,7 @@ export class FirstPersonView {
 
     this.drawSprites(world, angle, plane, horizon, light, now);
     this.drawEyes(world, angle, plane, horizon);
-    this.drawHands(world, now, moved > 0.002);
+    drawHands(this.ctx, W, H, world, now, this.walked, moved > 0.002);
   }
 
   private project(world: World, angle: number, plane: number, p: Point): { sx: number; z: number } | null {
@@ -480,145 +480,160 @@ export class FirstPersonView {
     if (moved > 0.001) return `move${Math.floor(walk.walked / stride) % 4}`;
     return `idle${Math.floor((now + enemy.id * 137) / 700) % 2}`;
   }
+}
 
-  /** The hero's hands: the light source on the left, the weapon on the right. */
-  private drawHands(world: World, now: number, walking: boolean): void {
-    const ctx = this.ctx;
-    const { W, H } = this;
-    const u = Math.min(W, H) / 100;
-    const sway = walking ? Math.sin(this.walked * 9) * u * 1.5 : Math.sin(now / 700) * u * 0.4;
-    const lift = walking ? Math.abs(Math.cos(this.walked * 9)) * u * 1.2 : 0;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+/** The hero's hands: the light source on the left, the weapon on the right. */
+export function drawHands(ctx: CanvasRenderingContext2D, W: number, H: number, world: World, now: number, walked: number, walking: boolean): void {
+  const u = Math.min(W, H) / 100;
+  const sway = walking ? Math.sin(walked * 9) * u * 1.5 : Math.sin(now / 700) * u * 0.4;
+  const lift = walking ? Math.abs(Math.cos(walked * 9)) * u * 1.2 : 0;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
 
-    // Light source.
-    if (world.survival.light > 0 && !world.invisible) {
-      const lx = W * 0.2 + sway;
-      const ly = H - u * 22 + lift;
-      this.drawLightSource(world.classId, lx, ly, u, now, world.survival.light);
-    }
-
-    // Weapon, posed by the current action.
-    const action = world.action;
-    let pose: 'rest' | 'raise' | 'strike' = 'rest';
-    if (action.type === 'attack') pose = action.phase === 'windup' ? 'raise' : 'strike';
-    else if (action.type === 'special') pose = 'raise';
-    const wx = W * 0.74 - sway;
-    const wy = H - u * 4 + lift;
-    this.drawWeapon(world.classId, wx, wy, u, pose);
+  // Light source.
+  if (world.survival.light > 0 && !world.invisible) {
+    const lx = W * 0.2 + sway;
+    const ly = H - u * 22 + lift;
+    drawLightSource(ctx, world.classId, lx, ly, u, now, world.survival.light);
   }
 
-  private drawLightSource(classId: ClassId, x: number, y: number, u: number, now: number, light: number): void {
-    const ctx = this.ctx;
-    const size = (0.6 + 0.4 * Math.sqrt(light / 100)) * u;
-    const flick = Math.sin(now / 60) * size * 0.8;
-    // Glow.
-    const glow = ctx.createRadialGradient(x, y, 0, x, y, size * 22);
-    glow.addColorStop(0, 'rgba(255, 190, 110, 0.35)');
-    glow.addColorStop(1, 'rgba(255, 190, 110, 0)');
-    ctx.fillStyle = glow;
-    ctx.fillRect(x - size * 22, y - size * 22, size * 44, size * 44);
-    ctx.strokeStyle = INK;
-    ctx.fillStyle = PAPER;
-    ctx.lineWidth = Math.max(1, u * 0.9);
-    if (classId === 'candlebearer') {
-      ctx.fillRect(x - u * 2, y, u * 4, u * 30);
-      ctx.strokeRect(x - u * 2, y, u * 4, u * 30);
-    } else if (classId === 'plunderer') {
-      ctx.fillStyle = 'rgba(236, 226, 203, 0.35)';
-      ctx.fillRect(x - u * 5, y - u * 2, u * 10, u * 12);
-      ctx.strokeRect(x - u * 5, y - u * 2, u * 10, u * 12);
-      ctx.beginPath();
-      ctx.moveTo(x, y - u * 2);
-      ctx.lineTo(x, y - u * 8);
-      ctx.stroke();
-    } else {
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(0.15);
-      ctx.fillStyle = '#6b5f52';
-      ctx.fillRect(-u * 1.5, 0, u * 3, u * 30);
-      ctx.strokeRect(-u * 1.5, 0, u * 3, u * 30);
-      ctx.restore();
-    }
-    // Flame.
-    const fy = classId === 'plunderer' ? y + u * 4 : y;
-    ctx.fillStyle = FLAME;
-    ctx.beginPath();
-    ctx.moveTo(x - size * 3, fy);
-    ctx.quadraticCurveTo(x + flick, fy - size * 12, x + size * 3, fy);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = '#f6dc9c';
-    ctx.beginPath();
-    ctx.moveTo(x - size * 1.4, fy);
-    ctx.quadraticCurveTo(x + flick * 0.6, fy - size * 7, x + size * 1.4, fy);
-    ctx.closePath();
-    ctx.fill();
-  }
+  // Weapon, posed by the current action.
+  const action = world.action;
+  let pose: 'rest' | 'raise' | 'strike' = 'rest';
+  if (action.type === 'attack') pose = action.phase === 'windup' ? 'raise' : 'strike';
+  else if (action.type === 'special') pose = 'raise';
+  const wx = W * 0.74 - sway;
+  const wy = H - u * 4 + lift;
+  drawWeapon(ctx, world.classId, wx, wy, u, pose);
+}
 
-  private drawWeapon(classId: ClassId, x: number, y: number, u: number, pose: 'rest' | 'raise' | 'strike'): void {
-    const ctx = this.ctx;
-    const angle = pose === 'rest' ? -0.35 : pose === 'raise' ? -1.0 : 0.55;
-    const dx = pose === 'strike' ? -u * 18 : 0;
-    const dy = pose === 'raise' ? -u * 6 : pose === 'strike' ? -u * 10 : 0;
-    ctx.save();
-    ctx.translate(x + dx, y + dy);
-    ctx.rotate(angle);
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = Math.max(1, u * 0.9);
-    if (classId === 'headsman') {
-      ctx.fillStyle = '#7a6a58';
-      ctx.fillRect(-u * 1.6, -u * 34, u * 3.2, u * 40);
-      ctx.strokeRect(-u * 1.6, -u * 34, u * 3.2, u * 40);
-      ctx.fillStyle = INK;
-      ctx.beginPath();
-      ctx.moveTo(u * 1.5, -u * 34);
-      ctx.quadraticCurveTo(u * 16, -u * 30, u * 14, -u * 18);
-      ctx.lineTo(u * 1.5, -u * 22);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = PAPER;
-      ctx.beginPath();
-      ctx.moveTo(u * 14, -u * 31);
-      ctx.quadraticCurveTo(u * 16.5, -u * 26, u * 14, -u * 19);
-      ctx.stroke();
-    } else if (classId === 'plunderer') {
-      ctx.fillStyle = INK;
-      ctx.fillRect(-u * 1.5, -u * 6, u * 3, u * 10);
-      ctx.fillStyle = PAPER;
-      ctx.beginPath();
-      ctx.moveTo(-u * 2, -u * 6);
-      ctx.lineTo(0, -u * 26);
-      ctx.lineTo(u * 2, -u * 6);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = INK;
-      ctx.fillRect(-u * 4, -u * 7, u * 8, u * 1.6);
-    } else {
-      ctx.fillStyle = '#7a6a58';
-      ctx.fillRect(-u * 1.4, -u * 22, u * 2.8, u * 28);
-      ctx.strokeRect(-u * 1.4, -u * 22, u * 2.8, u * 28);
-      ctx.fillStyle = INK;
-      ctx.beginPath();
-      ctx.arc(0, -u * 25, u * 5, 0, Math.PI * 2);
-      ctx.fill();
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        ctx.beginPath();
-        ctx.moveTo(Math.cos(a) * u * 5, -u * 25 + Math.sin(a) * u * 5);
-        ctx.lineTo(Math.cos(a) * u * 8, -u * 25 + Math.sin(a) * u * 8);
-        ctx.stroke();
-      }
-    }
-    // The fist holding it.
-    ctx.fillStyle = PAPER;
-    ctx.strokeStyle = INK;
+function drawLightSource(ctx: CanvasRenderingContext2D, classId: ClassId, x: number, y: number, u: number, now: number, light: number): void {
+  const size = (0.6 + 0.4 * Math.sqrt(light / 100)) * u;
+  const flick = Math.sin(now / 60) * size * 0.8;
+  // Glow.
+  const glow = ctx.createRadialGradient(x, y, 0, x, y, size * 22);
+  glow.addColorStop(0, 'rgba(255, 190, 110, 0.35)');
+  glow.addColorStop(1, 'rgba(255, 190, 110, 0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(x - size * 22, y - size * 22, size * 44, size * 44);
+  ctx.strokeStyle = INK;
+  ctx.fillStyle = PAPER;
+  ctx.lineWidth = Math.max(1, u * 0.9);
+  if (classId === 'candlebearer') {
+    ctx.fillRect(x - u * 2, y, u * 4, u * 30);
+    ctx.strokeRect(x - u * 2, y, u * 4, u * 30);
+  } else if (classId === 'plunderer') {
+    ctx.fillStyle = 'rgba(236, 226, 203, 0.35)';
+    ctx.fillRect(x - u * 5, y - u * 2, u * 10, u * 12);
+    ctx.strokeRect(x - u * 5, y - u * 2, u * 10, u * 12);
     ctx.beginPath();
-    ctx.ellipse(0, 0, u * 4, u * 3.4, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.moveTo(x, y - u * 2);
+    ctx.lineTo(x, y - u * 8);
     ctx.stroke();
+  } else {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(0.15);
+    ctx.fillStyle = '#6b5f52';
+    ctx.fillRect(-u * 1.5, 0, u * 3, u * 30);
+    ctx.strokeRect(-u * 1.5, 0, u * 3, u * 30);
     ctx.restore();
   }
+  // Flame.
+  const fy = classId === 'plunderer' ? y + u * 4 : y;
+  ctx.fillStyle = FLAME;
+  ctx.beginPath();
+  ctx.moveTo(x - size * 3, fy);
+  ctx.quadraticCurveTo(x + flick, fy - size * 12, x + size * 3, fy);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#f6dc9c';
+  ctx.beginPath();
+  ctx.moveTo(x - size * 1.4, fy);
+  ctx.quadraticCurveTo(x + flick * 0.6, fy - size * 7, x + size * 1.4, fy);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawWeapon(ctx: CanvasRenderingContext2D, classId: ClassId, x: number, y: number, u: number, pose: 'rest' | 'raise' | 'strike'): void {
+  const angle = pose === 'rest' ? -0.35 : pose === 'raise' ? -1.0 : 0.55;
+  const dx = pose === 'strike' ? -u * 18 : 0;
+  const dy = pose === 'raise' ? -u * 6 : pose === 'strike' ? -u * 10 : 0;
+  ctx.save();
+  ctx.translate(x + dx, y + dy);
+  ctx.rotate(angle);
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = Math.max(1, u * 0.9);
+  if (classId === 'headsman') {
+    ctx.fillStyle = '#7a6a58';
+    ctx.fillRect(-u * 1.6, -u * 34, u * 3.2, u * 40);
+    ctx.strokeRect(-u * 1.6, -u * 34, u * 3.2, u * 40);
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.moveTo(u * 1.5, -u * 34);
+    ctx.quadraticCurveTo(u * 16, -u * 30, u * 14, -u * 18);
+    ctx.lineTo(u * 1.5, -u * 22);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = PAPER;
+    ctx.beginPath();
+    ctx.moveTo(u * 14, -u * 31);
+    ctx.quadraticCurveTo(u * 16.5, -u * 26, u * 14, -u * 19);
+    ctx.stroke();
+  } else if (classId === 'plunderer') {
+    ctx.fillStyle = INK;
+    ctx.fillRect(-u * 1.5, -u * 6, u * 3, u * 10);
+    ctx.fillStyle = PAPER;
+    ctx.beginPath();
+    ctx.moveTo(-u * 2, -u * 6);
+    ctx.lineTo(0, -u * 26);
+    ctx.lineTo(u * 2, -u * 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = INK;
+    ctx.fillRect(-u * 4, -u * 7, u * 8, u * 1.6);
+  } else {
+    ctx.fillStyle = '#7a6a58';
+    ctx.fillRect(-u * 1.4, -u * 22, u * 2.8, u * 28);
+    ctx.strokeRect(-u * 1.4, -u * 22, u * 2.8, u * 28);
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.arc(0, -u * 25, u * 5, 0, Math.PI * 2);
+    ctx.fill();
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * u * 5, -u * 25 + Math.sin(a) * u * 5);
+      ctx.lineTo(Math.cos(a) * u * 8, -u * 25 + Math.sin(a) * u * 8);
+      ctx.stroke();
+    }
+  }
+  // The fist holding it.
+  ctx.fillStyle = PAPER;
+  ctx.strokeStyle = INK;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, u * 4, u * 3.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** The ink textures as canvases, for other renderers. */
+export function inkTexture(kind: 'wall' | 'floor' | 'ceiling' | 'stairs', size = TEX): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = TEX;
+  c.height = TEX;
+  const ctx = c.getContext('2d')!;
+  ctx.lineCap = 'round';
+  const paint = { wall: WALL, floor: FLOOR, ceiling: CEILING, stairs: STAIRS }[kind];
+  paint(ctx, new Rng(`fp-${kind}`));
+  if (size === TEX) return c;
+  const big = document.createElement('canvas');
+  big.width = size;
+  big.height = size;
+  const b = big.getContext('2d')!;
+  b.imageSmoothingEnabled = false;
+  b.drawImage(c, 0, 0, size, size);
+  return big;
 }
