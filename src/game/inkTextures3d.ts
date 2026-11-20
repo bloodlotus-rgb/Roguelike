@@ -233,3 +233,25 @@ export function wallRelief(px: number): HTMLCanvasElement {
   }
   return c;
 }
+
+/** Plain stone for real bricks: paper tone, fibers and pits, no drawn joints. */
+export function stoneColor(px: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = px;
+  c.height = px;
+  const ctx = c.getContext('2d')!;
+  const rng = new Rng('stone3d');
+  ctx.fillStyle = '#e4d6b8';
+  ctx.fillRect(0, 0, px, px);
+  for (let i = 0; i < px * 6; i++) {
+    ctx.fillStyle = `rgba(110, 90, 60, ${rng.range(0.03, 0.12)})`;
+    ctx.fillRect(rng.range(0, px), rng.range(0, px), px / 200, px / 200);
+  }
+  for (let i = 0; i < px / 6; i++) {
+    ctx.fillStyle = `rgba(60, 48, 36, ${rng.range(0.15, 0.4)})`;
+    ctx.beginPath();
+    ctx.arc(rng.range(0, px), rng.range(0, px), rng.range(0.4, 1.4) * (px / 256), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return c;
+}

@@ -16,7 +16,8 @@ import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
 import { drawFloorDecor, drawItem, drawProjectile } from './art';
-import { SPAN_X, SPAN_Y, wallColor, wallRelief } from './inkTextures3d';
+import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
+import { BRICK_DEPTH, layBricks } from './masonry';
 import { easeInOut, easeOut, swingPhase } from './swing';
 import { Effects } from './threeEffects';
 import { drawHands, inkTexture } from './firstPerson';
@@ -85,10 +86,15 @@ interface InkOptions {
   worldUv?: 'box' | 'column';
   /** Darken toward the floor, where grime gathers. */
   grime?: boolean;
+  /**
+   * Pen outlines along the edges of each block (for unit boxes): a line of constant width
+   * on screen wherever a face ends, so every brick is drawn, not just shaded.
+   */
+  outline?: boolean;
 }
 
 function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = {}): THREE.MeshLambertMaterial {
-  const { cut = false, worldUv, grime = false } = options;
+  const { cut = false, worldUv, grime = false, outline = false } = options;
   const uvCode =
     worldUv === 'box'
       ? `bool inkAlongZ = abs(vInkNormal.x) > 0.5;
@@ -123,7 +129,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
     shader.uniforms.uPlayer = cutaway.player;
     shader.uniforms.uNight = cutaway.night;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;')
+      .replace('#include <common>', '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;')
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
@@ -135,12 +141,14 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
         #endif
         vInkPos = (modelMatrix * inkWorld).xyz;
         vInkNormal = normalize(mat3(modelMatrix) * inkBasis * objectNormal);
+        vInkLocal = transformed;
+        vInkLocalNormal = objectNormal;
         ${uvAssign}`,
       );
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
-        '#include <common>\nuniform float uFade;\nuniform float uNight;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;',
+        '#include <common>\nuniform float uFade;\nuniform float uNight;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
       )
       .replace(
         '#include <map_fragment>',
@@ -191,6 +199,18 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
             (1.0 - smoothstep(w2 - aa, w2 + aa, d2)) * step(0.001, w2));
           ink = max(ink, (1.0 - smoothstep(w3 - aa, w3 + aa, d3)) * step(0.001, w3));
           ink = max(ink, step(0.985, tone));
+          float edge = 0.0;
+          ${
+            outline
+              ? `{
+            vec3 ln = abs(vInkLocalNormal);
+            vec2 c = ln.x > 0.5 ? vInkLocal.yz : ln.y > 0.5 ? vInkLocal.xz : vInkLocal.xy;
+            vec2 px = (0.5 - abs(c)) / max(fwidth(c), vec2(1e-5));
+            edge = 1.0 - smoothstep(0.7, 1.7, min(px.x, px.y));
+          }`
+              : ''
+          }
+          ink = max(ink, edge * step(0.02, lit));
           outgoingLight = mix(paper, vec3(0.0), ink);
           if (uNight > 0.5) {
             // Sight in the dark: everything black, the drawing's own lines and the
@@ -203,6 +223,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
             float texel = dot(diffuseColor.rgb, vec3(0.3333));
             float lines = smoothstep(0.08, 0.2, fwidth(texel));
             lines = max(lines, smoothstep(0.25, 0.7, length(fwidth(n))));
+            lines = max(lines, edge);
             vec3 toHero = normalize(vec3(uPlayer.x, 1.3, uPlayer.z) - vInkPos);
             float facing = clamp(dot(n, toHero), 0.0, 1.0);
             float shadeTone = 1.0 - facing;
@@ -224,7 +245,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
  * can catch the light when the cut-away opens it. One unit tall; scaled to the view.
  * Groups: 0 the sides, 1 the caps.
  */
-function wallGeometry(level: Level, tiles: Array<[number, number]>): THREE.BufferGeometry {
+function wallGeometry(level: Level, tiles: Array<[number, number]>, inset = 0): THREE.BufferGeometry {
   const positions: number[] = [];
   const normals: number[] = [];
   const indices: number[] = [];
@@ -237,10 +258,16 @@ function wallGeometry(level: Level, tiles: Array<[number, number]>): THREE.Buffe
   };
   for (const [x, y] of tiles) {
     // Corners listed counter-clockwise as seen from the floor side.
-    if (isFloor(level, x + 1, y)) quad([[x + 1, 0, y + 1], [x + 1, 0, y], [x + 1, 1, y], [x + 1, 1, y + 1]], [1, 0, 0]);
-    if (isFloor(level, x - 1, y)) quad([[x, 0, y], [x, 0, y + 1], [x, 1, y + 1], [x, 1, y]], [-1, 0, 0]);
-    if (isFloor(level, x, y + 1)) quad([[x, 0, y + 1], [x + 1, 0, y + 1], [x + 1, 1, y + 1], [x, 1, y + 1]], [0, 0, 1]);
-    if (isFloor(level, x, y - 1)) quad([[x + 1, 0, y], [x, 0, y], [x, 1, y], [x + 1, 1, y]], [0, 0, -1]);
+    // The faces sit back by `inset`, behind the bricks laid on them.
+    const e = inset;
+    const xp = x + 1 - e;
+    const xm = x + e;
+    const zp = y + 1 - e;
+    const zm = y + e;
+    if (isFloor(level, x + 1, y)) quad([[xp, 0, y + 1], [xp, 0, y], [xp, 1, y], [xp, 1, y + 1]], [1, 0, 0]);
+    if (isFloor(level, x - 1, y)) quad([[xm, 0, y], [xm, 0, y + 1], [xm, 1, y + 1], [xm, 1, y]], [-1, 0, 0]);
+    if (isFloor(level, x, y + 1)) quad([[x, 0, zp], [x + 1, 0, zp], [x + 1, 1, zp], [x, 1, zp]], [0, 0, 1]);
+    if (isFloor(level, x, y - 1)) quad([[x + 1, 0, zm], [x, 0, zm], [x, 1, zm], [x + 1, 1, zm]], [0, 0, -1]);
   }
   const sideIndices = indices.length;
   for (const [x, y] of tiles) quad([[x, 1, y + 1], [x + 1, 1, y + 1], [x + 1, 1, y], [x, 1, y]], [0, 1, 0]);
@@ -407,6 +434,10 @@ export class ThreeView {
   private level: Level | null = null;
   private levelGroup = new THREE.Group();
   private walls: THREE.Mesh | null = null;
+  /** Real bricks, one instanced mesh per block of the level so unseen ones are skipped. */
+  private bricks: THREE.InstancedMesh[] = [];
+  private brickMaterial: THREE.MeshLambertMaterial | null = null;
+  private readonly stone = repeating(canvasTexture(stoneColor(256)));
   private wallTiles: Array<[number, number]> = [];
   private columns: THREE.InstancedMesh | null = null;
   private columnTiles: Array<[number, number]> = [];
@@ -566,17 +597,18 @@ export class ThreeView {
         (column ? this.columnTiles : this.wallTiles).push([x, y]);
       }
     }
-    // Both sides are drawn so a wall sliced by the cut-away shows a solid ink section;
-    // shadows still come from the back faces, as with closed blocks.
-    const wallMaterial = () =>
-      new THREE.MeshLambertMaterial({
-        map: this.textures.wall,
-        bumpMap: this.wallRelief,
-        bumpScale: 3,
-        side: THREE.DoubleSide,
-        shadowSide: THREE.BackSide,
-      });
-    const side = inkMaterial(wallMaterial(), { cut: true, worldUv: 'box', grime: true });
+    // Behind the bricks, a bed of dark mortar. Both sides are drawn so a wall sliced by the
+    // cut-away shows a solid ink section; shadows still come from the back faces.
+    const side = inkMaterial(
+      new THREE.MeshLambertMaterial({ color: 0x6b5d4d, side: THREE.DoubleSide, shadowSide: THREE.BackSide }),
+      { cut: true, grime: true },
+    );
+    this.brickMaterial = inkMaterial(new THREE.MeshLambertMaterial({ map: this.stone }), {
+      cut: true,
+      worldUv: 'box',
+      grime: true,
+      outline: true,
+    });
     const top = inkMaterial(
       new THREE.MeshLambertMaterial({ map: this.textures.ceiling, side: THREE.DoubleSide, shadowSide: THREE.BackSide }),
       { cut: true, worldUv: 'box' },
@@ -586,7 +618,7 @@ export class ThreeView {
       { cut: true, worldUv: 'column', grime: true },
     );
     // One mesh with only the faces that look onto a floor, so no inner faces exist.
-    this.walls = new THREE.Mesh(wallGeometry(level, this.wallTiles), [side, top]);
+    this.walls = new THREE.Mesh(wallGeometry(level, this.wallTiles, BRICK_DEPTH), [side, top]);
     this.walls.castShadow = true;
     this.walls.receiveShadow = true;
     this.levelGroup.add(this.walls);
@@ -683,6 +715,7 @@ export class ThreeView {
     const m = new THREE.Matrix4();
     // The wall mesh is built one unit tall; scaling it keeps the world-space bricks intact.
     this.walls.scale.set(1, h, 1);
+    this.layBricks(h);
     if (this.columns) {
       this.columnTiles.forEach(([x, y], i) => {
         m.makeScale(1, h, 1);
@@ -693,6 +726,48 @@ export class ThreeView {
       this.columns.computeBoundingSphere();
     }
     if (this.ceiling) this.ceiling.visible = this.mode === 'first';
+  }
+
+  /** Lays the bricks for the current wall height, in blocks of the level. */
+  private layBricks(height: number): void {
+    for (const mesh of this.bricks) {
+      this.levelGroup.remove(mesh);
+      mesh.dispose();
+    }
+    this.bricks = [];
+    const level = this.level;
+    if (!level || !this.brickMaterial) return;
+    const columns = new Set(this.columnTiles.map(([x, y]) => y * level.width + x));
+    const all = layBricks(level, height, (x, y) => columns.has(y * level.width + x));
+    const CHUNK = 12;
+    const chunks = new Map<number, typeof all>();
+    for (const b of all) {
+      const key = Math.floor(b.z / CHUNK) * 1000 + Math.floor(b.x / CHUNK);
+      let list = chunks.get(key);
+      if (!list) chunks.set(key, (list = []));
+      list.push(b);
+    }
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const p = new THREE.Vector3();
+    const sc = new THREE.Vector3();
+    const color = new THREE.Color();
+    for (const list of chunks.values()) {
+      const mesh = new THREE.InstancedMesh(geometry, this.brickMaterial, list.length);
+      list.forEach((b, i) => {
+        e.set(0, b.yaw, b.roll);
+        m.compose(p.set(b.x, b.y, b.z), q.setFromEuler(e), sc.set(b.sx, b.sy, b.sz));
+        mesh.setMatrixAt(i, m);
+        mesh.setColorAt(i, color.setScalar(b.tone));
+      });
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.computeBoundingSphere();
+      this.bricks.push(mesh);
+      this.levelGroup.add(mesh);
+    }
   }
 
   /** One textured quad per floor tile, at height `y`, facing up (floor) or down (ceiling). */
