@@ -414,6 +414,17 @@ describe('perception', () => {
     expect(b.alerted).toBe(false);
   });
 
+  it('only sees ahead: a horror behind the hero is unseen, and shows its eyes', () => {
+    const world = arena('headsman');
+    world.facing = { x: 1, y: 0 };
+    const ahead = place(world, 'husk', 2.5, 0, 'idle');
+    const behind = place(world, 'husk', -2.5, 0);
+    run(world, 0.05);
+    expect(ahead.visible).toBe(true);
+    expect(behind.visible).toBe(false);
+    expect(behind.watching).toBe(true);
+  });
+
   it('shows the eyes of an unseen horror that looks at the player', () => {
     const world = arena('headsman');
     world.survival = { ...world.survival, light: 0 };

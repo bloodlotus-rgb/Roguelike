@@ -12,7 +12,7 @@ Etapas 1 (prototipo), 2 (combate) y atmósfera, con arte provisorio:
 - Cuatro horrores (Rastrero, Hueco, Plañidera, Apagavelas) que avisan antes de atacar, se alertan entre sí y a veces deambulan entre salas. Tu luz te delata.
 - Salas rectangulares, cavernas y salas con columnas, con decorado, baldosas irregulares y paredes con mugre.
 - Personajes animados por código, con silueta propia por clase y por horror; la llama del héroe con chispas.
-- Atmósfera oscura: fuera de tu llama no se ve nada; muros y columnas proyectan sombras suaves. Los horrores que te miran desde la oscuridad muestran los ojos.
+- Atmósfera oscura: solo ves en un cono hacia adelante, dentro de tu luz, recortado por las paredes. Los horrores que te miran desde la oscuridad (o desde atrás) muestran los ojos.
 - Mapa desplegable con lo explorado (botón Mapa o tecla `M`); no pausa el juego.
 - Sonido generado por código: ambiente, pasos, la llama, latido con poca vida, avisos de cada ataque y horrores que se oyen antes de verse. Botón ♪ para silenciar.
 - Viñeta que se cierra cuando te cazan y se tiñe de rojo con poca vida.

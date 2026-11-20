@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import type { Point } from '../core/dungeon';
 import type { EnemyKind } from '../core/enemies';
-import { NO_INPUT, type ControlInput, type Enemy, type World, type WorldEvent } from '../core/world';
+import { castWallRay } from '../core/geometry';
+import { COMBAT, NO_INPUT, type ControlInput, type Enemy, type World, type WorldEvent } from '../core/world';
 import type { StringKey } from '../i18n/i18n';
 import {
   drawItem,
@@ -11,7 +12,6 @@ import {
   drawSplat,
   DARK,
 } from './art';
-import { isFloor } from '../core/dungeon';
 import { drawEnemySheet, drawHeroSheet, ENEMY_SIZE, FLAME_ANCHOR, type SpriteSheet } from './sprites';
 
 /** Height of each horror's eyes above its feet, in tiles. */
@@ -26,9 +26,11 @@ const ART_CHUNKS = 2;
 const LIGHT_MASK_SIZE = 512;
 /** Fraction of the mask's half-size where the light is fully gone. */
 const LIGHT_EDGE = 0.93;
-/** Shadows live in a small texture that follows the light, softened with a blur. */
-const SHADOW_PER_TILE = 20;
-const SHADOW_SPAN = 20;
+/** The vision cut-out lives in a small texture that follows the hero, softened with a blur. */
+const VISION_PER_TILE = 16;
+const VISION_SPAN = 18;
+/** How far into the wall a ray goes, so the wall it hits shows and what is behind does not. */
+const WALL_SHOW = 0.95;
 const DARK_HEX = 0x110e0c;
 /** How many tiles fit across the shortest side of the screen. */
 const VIEW_TILES = 9.5;
@@ -79,9 +81,9 @@ export class DungeonScene extends Phaser.Scene {
   private lastPlayer: Point = { x: 0, y: 0 };
   private enemyWalk = new Map<number, { walked: number; last: Point }>();
   private emberTimer = 0;
-  private shadows!: Phaser.GameObjects.RenderTexture;
-  private shadowGfx!: Phaser.GameObjects.Graphics;
-  private shadowKey = '';
+  private vision!: Phaser.GameObjects.RenderTexture;
+  private visionGfx!: Phaser.GameObjects.Graphics;
+  private visionAngle = 0;
   private fx!: Phaser.GameObjects.Graphics;
   private itemSprites = new Map<number, Phaser.GameObjects.Image>();
   private enemySprites = new Map<number, Phaser.GameObjects.Image>();
@@ -140,16 +142,16 @@ export class DungeonScene extends Phaser.Scene {
     this.lastPlayer = { ...world.player };
     this.enemyWalk.clear();
 
-    // Shadows cast by walls and columns inside the light, softened by a blur.
-    this.shadows = this.add
-      .renderTexture(0, 0, SHADOW_SPAN * SHADOW_PER_TILE, SHADOW_SPAN * SHADOW_PER_TILE)
+    // Darkness outside what the hero sees, with soft edges.
+    this.vision = this.add
+      .renderTexture(0, 0, VISION_SPAN * VISION_PER_TILE, VISION_SPAN * VISION_PER_TILE)
       .setOrigin(0)
-      .setScale(TILE / SHADOW_PER_TILE)
+      .setScale(TILE / VISION_PER_TILE)
       .setDepth(3.9);
-    this.shadows.enableFilters();
-    this.shadows.filters?.internal.addBlur(1, 2, 2, 1.2);
-    this.shadowGfx = this.make.graphics({}, false);
-    this.shadowKey = '';
+    this.vision.enableFilters();
+    this.vision.filters?.internal.addBlur(1, 1.5, 1.5, 1);
+    this.visionGfx = this.make.graphics({}, false);
+    this.visionAngle = Math.atan2(world.facing.y, world.facing.x);
 
     // Outside the flame there is nothing: the mask fades to ink and a frame covers the rest.
     this.lightMask = this.add.image(0, 0, 'light-mask').setDepth(4);
@@ -414,69 +416,54 @@ export class DungeonScene extends Phaser.Scene {
     g.fillRect(left, y0, Math.max(0, x0 - left), y1 - y0);
     g.fillRect(x1, y0, Math.max(0, right - x1), y1 - y0);
 
-    this.updateShadows();
+    this.updateVision(dt);
   }
 
   /**
-   * Darkness inside the light: floor hidden behind walls and columns gets a shadow cast
-   * away from the flame, and wall tiles the hero cannot see go dark as a whole, so the
-   * walls themselves are never sliced. Redrawn only when the light moves.
+   * What the hero sees: a fan of rays inside the vision cone plus a small circle around
+   * them, each ray stopped by the walls. Rays go a little into the wall they hit, so the
+   * wall itself shows but nothing behind it. Everything else is darkness.
    */
-  private updateShadows(): void {
+  private updateVision(dt: number): void {
     const world = this.host.world;
-    const lx = world.player.x;
-    const ly = world.player.y - 0.3;
-    const radius = world.lightRadius;
-    const key = `${lx.toFixed(2)},${ly.toFixed(2)},${radius.toFixed(1)},${world.visibleNow.size}`;
-    if (key === this.shadowKey) return;
-    this.shadowKey = key;
-
     const level = world.level;
-    const ox = Math.floor(lx) - SHADOW_SPAN / 2;
-    const oy = Math.floor(ly) - SHADOW_SPAN / 2;
-    this.shadows.setPosition(px(ox), px(oy));
-    const k = SHADOW_PER_TILE;
-    const g = this.shadowGfx;
+    const origin = { x: world.player.x, y: world.player.y - 0.15 };
+    const radius = world.lightRadius + 0.3;
+
+    // The cone turns smoothly toward where the hero faces.
+    const target = Math.atan2(world.facing.y, world.facing.x);
+    let delta = target - this.visionAngle;
+    while (delta > Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+    this.visionAngle += delta * Math.min(1, dt * 12 || 1);
+
+    const ox = world.player.x - VISION_SPAN / 2;
+    const oy = world.player.y - VISION_SPAN / 2;
+    const k = VISION_PER_TILE;
+    const g = this.visionGfx;
     g.clear();
-    g.fillStyle(DARK_HEX, 1);
-    const reach = radius + 2;
-    const project = (x: number, y: number) => {
-      const dx = x - lx;
-      const dy = y - ly;
-      const d = Math.hypot(dx, dy) || 1e-6;
-      const extra = Math.max(0, reach - d);
-      return { x: (x + (dx / d) * extra - ox) * k, y: (y + (dy / d) * extra - oy) * k };
-    };
-    const quad = (x1: number, y1: number, x2: number, y2: number) => {
-      const a = project(x1, y1);
-      const b = project(x2, y2);
+    g.fillStyle(0xffffff, 1);
+    const fan = (center: number, half: number, reach: number, steps: number) => {
       g.beginPath();
-      g.moveTo((x1 - ox) * k, (y1 - oy) * k);
-      g.lineTo((x2 - ox) * k, (y2 - oy) * k);
-      g.lineTo(b.x, b.y);
-      g.lineTo(a.x, a.y);
+      g.moveTo((origin.x - ox) * k, (origin.y - oy) * k);
+      for (let i = 0; i <= steps; i++) {
+        const a = center - half + (2 * half * i) / steps;
+        const hit = castWallRay(level, origin, a, reach);
+        // Show the wall that was hit, but never past its far side.
+        const d = hit.enter >= reach ? reach : Math.min(reach, hit.enter + WALL_SHOW, hit.exit);
+        g.lineTo((origin.x + Math.cos(a) * d - ox) * k, (origin.y + Math.sin(a) * d - oy) * k);
+      }
       g.closePath();
       g.fillPath();
     };
-    const r = Math.ceil(reach);
-    const cx = Math.floor(lx);
-    const cy = Math.floor(ly);
-    for (let ty = cy - r; ty <= cy + r; ty++) {
-      for (let tx = cx - r; tx <= cx + r; tx++) {
-        if (tx < ox || ty < oy || tx >= ox + SHADOW_SPAN || ty >= oy + SHADOW_SPAN) continue;
-        if (isFloor(level, tx, ty)) continue;
-        // Walls the hero cannot see are dark from edge to edge.
-        if (!world.visibleNow.has(ty * level.width + tx)) g.fillRect((tx - ox) * k, (ty - oy) * k, k, k);
-        // Every wall casts shadows only across the floor behind it.
-        if (ly < ty && isFloor(level, tx, ty + 1)) quad(tx, ty + 1, tx + 1, ty + 1);
-        if (ly > ty + 1 && isFloor(level, tx, ty - 1)) quad(tx, ty, tx + 1, ty);
-        if (lx < tx && isFloor(level, tx + 1, ty)) quad(tx + 1, ty, tx + 1, ty + 1);
-        if (lx > tx + 1 && isFloor(level, tx - 1, ty)) quad(tx, ty, tx, ty + 1);
-      }
-    }
-    this.shadows.clear();
-    this.shadows.draw(g);
-    this.shadows.render();
+    fan(this.visionAngle, COMBAT.visionCone, radius, 72);
+    fan(0, Math.PI, COMBAT.nearSight, 40);
+
+    this.vision.setPosition(px(ox), px(oy));
+    this.vision.clear();
+    this.vision.fill(DARK_HEX, 1);
+    this.vision.erase(g);
+    this.vision.render();
   }
 
   /** Soft shadows under everyone, and the hero's living flame with rising embers. */
