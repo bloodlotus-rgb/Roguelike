@@ -1,4 +1,5 @@
 import { CONFIG } from './config';
+import type { ItemKind } from './inventory';
 import { Rng } from './rng';
 
 export const Tile = {
@@ -7,7 +8,18 @@ export const Tile = {
 } as const;
 export type Tile = (typeof Tile)[keyof typeof Tile];
 
-export type ItemKind = 'food' | 'water' | 'oil';
+/** What can lie on the floor: anything that goes in the backpack, or a pile of gold. */
+export type LootKind = ItemKind | 'gold';
+
+/** Fixed things in a level: fountains are part of its geography; remains and crates can be searched. */
+export type FeatureKind = 'fountain' | 'remains' | 'crate';
+
+export interface Feature {
+  id: number;
+  kind: FeatureKind;
+  x: number;
+  y: number;
+}
 
 export interface Point {
   x: number;
@@ -26,7 +38,11 @@ export interface Room {
 
 export interface LevelItem {
   id: number;
-  kind: ItemKind;
+  kind: LootKind;
+  /** Coins in a pile of gold. */
+  amount?: number;
+  /** Uses left, for a dropped waterskin. */
+  charges?: number;
   /** Tile coordinates. */
   x: number;
   y: number;
@@ -43,6 +59,7 @@ export interface Level {
   start: Point;
   stairs: Point;
   items: LevelItem[];
+  features: Feature[];
 }
 
 export function tileAt(level: Level, x: number, y: number): Tile {
@@ -216,6 +233,7 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
     start: centers[0],
     stairs: centers[0],
     items: [],
+    features: [],
   };
 
   removeUnreachable(level, level.start);
@@ -229,29 +247,58 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
   }
   level.stairs = centers[farthest];
 
-  level.items = placeItems(level, Rng.derive(seed, 'items', depth, itemsRoll));
+  const taken = new Set<string>([`${level.start.x},${level.start.y}`, `${level.stairs.x},${level.stairs.y}`]);
+  // Fountains are geography: the same in every life. Loot, remains and crates re-roll.
+  const fountains = placeSpots(level, Rng.derive(seed, 'fountains', depth), taken, rngCount(Rng.derive(seed, 'fountains-n', depth), CONFIG.features.fountain));
+  const lootRng = Rng.derive(seed, 'items', depth, itemsRoll);
+  const features: Feature[] = fountains.map(([x, y]) => ({ id: 0, kind: 'fountain' as const, x, y }));
+  for (const kind of ['remains', 'crate'] as const) {
+    for (const [x, y] of placeSpots(level, lootRng, taken, rngCount(lootRng, CONFIG.features[kind]))) features.push({ id: 0, kind, x, y });
+  }
+  features.forEach((f, i) => (f.id = i));
+  level.features = features;
+  level.items = placeItems(level, lootRng, taken);
   return level;
 }
 
-function placeItems(level: Level, rng: Rng): LevelItem[] {
-  const taken = new Set<string>([`${level.start.x},${level.start.y}`, `${level.stairs.x},${level.stairs.y}`]);
-  const items: LevelItem[] = [];
-  const kinds: ItemKind[] = ['food', 'water', 'oil'];
-  for (const kind of kinds) {
-    const { min, max } = CONFIG.items[kind];
-    const count = rng.int(min, max);
-    for (let i = 0; i < count; i++) {
-      for (let attempt = 0; attempt < 30; attempt++) {
-        const room = rng.pick(level.rooms);
-        const x = rng.int(room.x, room.x + room.w - 1);
-        const y = rng.int(room.y, room.y + room.h - 1);
-        const key = `${x},${y}`;
-        if (taken.has(key) || !isFloor(level, x, y)) continue;
-        taken.add(key);
-        items.push({ id: items.length, kind, x, y });
-        break;
-      }
+function rngCount(rng: Rng, range: { min: number; max: number }): number {
+  return rng.int(range.min, range.max);
+}
+
+/** Free floor tiles inside rooms, never on the start, the stairs or each other. */
+function placeSpots(level: Level, rng: Rng, taken: Set<string>, count: number): Array<[number, number]> {
+  const spots: Array<[number, number]> = [];
+  for (let i = 0; i < count; i++) {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const room = rng.pick(level.rooms);
+      const x = rng.int(room.x, room.x + room.w - 1);
+      const y = rng.int(room.y, room.y + room.h - 1);
+      const key = `${x},${y}`;
+      if (taken.has(key) || !isFloor(level, x, y)) continue;
+      taken.add(key);
+      spots.push([x, y]);
+      break;
     }
+  }
+  return spots;
+}
+
+/** Gold in a pile: more the deeper you go. */
+export function goldPile(rng: Rng, depth: number): number {
+  return rng.int(3, 8) + depth * 2;
+}
+
+function placeItems(level: Level, rng: Rng, taken: Set<string>): LevelItem[] {
+  const items: LevelItem[] = [];
+  for (const kind of ['ration', 'oil', 'gold'] as const) {
+    for (const [x, y] of placeSpots(level, rng, taken, rngCount(rng, CONFIG.items[kind]))) {
+      const item: LevelItem = { id: items.length, kind, x, y };
+      if (kind === 'gold') item.amount = goldPile(rng, level.depth);
+      items.push(item);
+    }
+  }
+  if (rng.chance(CONFIG.items.marchRationChance)) {
+    for (const [x, y] of placeSpots(level, rng, taken, 1)) items.push({ id: items.length, kind: 'marchRation', x, y });
   }
   return items;
 }

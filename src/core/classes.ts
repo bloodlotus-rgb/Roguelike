@@ -61,6 +61,22 @@ export type PassiveDef =
   | { kind: 'ratEye'; itemSight: number; dropChance: number }
   | { kind: 'devoutFlame'; lightDrain: number; hesitation: number };
 
+/** [hunger, thirst] meter points. */
+export type Cost = readonly [number, number];
+
+export interface BodyCosts {
+  /** Per tile walked. */
+  walk: Cost;
+  /** Per swing. */
+  attack: Cost;
+  dodge: Cost;
+  /** Per second of running. */
+  run: Cost;
+  special: Cost;
+  /** Per point of health healed out of combat. */
+  heal: Cost;
+}
+
 export interface ClassDef {
   id: ClassId;
   attributes: Attributes;
@@ -73,8 +89,11 @@ export interface ClassDef {
   /** Seconds a parried enemy stays stunned. */
   parryStun: number;
   speedMultiplier: number;
+  /** How fast hunger and thirst drop while standing still (1 = normal). */
   hungerMultiplier: number;
   thirstMultiplier: number;
+  /** What each thing the body does costs, as [hunger, thirst] meter points. */
+  costs: BodyCosts;
   /** Damage multiplier when hitting an unaware horror or one from behind. */
   backstabMultiplier: number;
 }
@@ -102,6 +121,8 @@ export const CLASSES: Record<ClassId, ClassDef> = {
     speedMultiplier: 0.95,
     hungerMultiplier: 1.25,
     thirstMultiplier: 1.25,
+    // The headsman goes hungry: heavy blows burn strength.
+    costs: { walk: [0.06, 0.05], attack: [1.2, 0.3], dodge: [0.5, 1.2], run: [0.4, 1.2], special: [6, 0], heal: [0.4, 0.4] },
     backstabMultiplier: 1,
   },
   plunderer: {
@@ -125,6 +146,8 @@ export const CLASSES: Record<ClassId, ClassDef> = {
     speedMultiplier: 1.15,
     hungerMultiplier: 1,
     thirstMultiplier: 1,
+    // The plunderer goes thirsty: always moving, always out of breath.
+    costs: { walk: [0.04, 0.06], attack: [0.4, 0.5], dodge: [0.2, 0.6], run: [0.2, 0.8], special: [0, 5], heal: [0.5, 0.5] },
     backstabMultiplier: 3,
   },
   candlebearer: {
@@ -144,6 +167,8 @@ export const CLASSES: Record<ClassId, ClassDef> = {
     speedMultiplier: 1,
     hungerMultiplier: 1,
     thirstMultiplier: 1,
+    // The candlebearer lives on light; the body costs little.
+    costs: { walk: [0.05, 0.05], attack: [0.6, 0.4], dodge: [0.4, 1], run: [0.3, 1], special: [0, 2], heal: [0.5, 0.5] },
     backstabMultiplier: 1,
   },
 };

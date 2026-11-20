@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CONFIG } from './config';
-import { consume, freshSurvival, isDead, lightRadius, tickSurvival } from './survival';
+import { freshSurvival, isDead, lightRadius, tickSurvival } from './survival';
 
 describe('survival', () => {
   it('drains hunger, thirst and light over time', () => {
@@ -27,13 +27,6 @@ describe('survival', () => {
     expect(100 - hungry.hunger).toBeCloseTo((100 - normal.hunger) * 1.25);
     expect(100 - hungry.thirst).toBeCloseTo((100 - normal.thirst) * 1.25);
     expect(100 - hungry.light).toBeCloseTo((100 - normal.light) * 0.7);
-  });
-
-  it('restores the matching meter without going over 100', () => {
-    const s = { health: 100, hunger: 80, thirst: 10, light: 0 };
-    expect(consume(s, 'food').hunger).toBe(100);
-    expect(consume(s, 'water').thirst).toBe(10 + CONFIG.survival.restore.water);
-    expect(consume(s, 'oil').light).toBe(CONFIG.survival.restore.oil);
   });
 
   it('shrinks the light radius as the light runs out', () => {

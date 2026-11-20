@@ -131,7 +131,7 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     for (const item of level.items) {
       if (world.taken.has(item.id)) continue;
       const near = Math.hypot(item.x + 0.5 - world.player.x, item.y + 0.5 - world.player.y) < 10;
-      const show = (fx.mapItems && seen(item.x, item.y)) || (fx.mapFood && item.kind === 'food' && near);
+      const show = (fx.mapItems && seen(item.x, item.y)) || (fx.mapFood && (item.kind === 'ration' || item.kind === 'marchRation') && near);
       if (!show) continue;
       const p = at(item.x + 0.5, item.y + 0.5);
       ctx.strokeStyle = INK;

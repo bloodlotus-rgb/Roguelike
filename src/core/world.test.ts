@@ -3,6 +3,7 @@ import { maxHealth } from './attributes';
 import { CLASSES, type ClassId } from './classes';
 import { isFloor } from './dungeon';
 import { ENEMIES, type EnemyKind } from './enemies';
+import { addItem } from './inventory';
 import { COMBAT, NO_INPUT, World, type ControlInput, type Enemy, type WorldEvent } from './world';
 
 const input = (partial: Partial<ControlInput> = {}): ControlInput => ({ ...NO_INPUT, ...partial });
@@ -617,5 +618,116 @@ describe('fixes from play', () => {
     expect(husk.state).toBe('dead');
     expect(hurt.survival.health).toBeGreaterThan(after);
     expect(hurt.survival.health).toBeLessThan(hurt.maxHealth);
+  });
+});
+
+describe('body and backpack', () => {
+  it('starts each life with a starter kit and no gold', () => {
+    const world = arena();
+    expect(world.inventory.items.map((i) => i.kind).sort()).toEqual(['marchRation', 'oil', 'ration', 'ration', 'waterskin']);
+    expect(world.gold).toBe(0);
+  });
+
+  it('every class pays for its blows in its own way', () => {
+    const swing = (classId: 'headsman' | 'plunderer') => {
+      const world = arena(classId);
+      const before = { ...world.survival };
+      tap(world, 'attack');
+      return { hunger: before.hunger - world.survival.hunger, thirst: before.thirst - world.survival.thirst };
+    };
+    const axe = swing('headsman');
+    const daggers = swing('plunderer');
+    expect(axe.hunger).toBeGreaterThan(daggers.hunger);
+    expect(daggers.thirst).toBeGreaterThan(axe.thirst);
+  });
+
+  it('wounds close when calm, paid for with hunger and thirst', () => {
+    const world = arena();
+    world.survival = { ...world.survival, health: world.maxHealth - 20 };
+    run(world, 4);
+    expect(world.survival.health).toBe(world.maxHealth - 20);
+    const before = { ...world.survival };
+    run(world, 6);
+    expect(world.survival.health).toBeGreaterThan(before.health);
+    expect(world.survival.hunger).toBeLessThan(before.hunger - 1);
+    expect(world.survival.thirst).toBeLessThan(before.thirst - 1);
+  });
+
+  it('nothing heals on an empty stomach', () => {
+    const world = arena();
+    world.survival = { ...world.survival, health: 50, hunger: 0 };
+    run(world, 8);
+    expect(world.survival.health).toBeLessThan(50);
+  });
+
+  it('picks loot into the backpack, gold into the purse, and refuses what does not fit', () => {
+    const world = arena();
+    const at = { x: Math.floor(world.player.x), y: Math.floor(world.player.y) };
+    world.level.items.push({ id: 7001, kind: 'gold', amount: 12, ...at });
+    world.update(0.02, NO_INPUT);
+    expect(world.gold).toBe(12);
+    // Fill the pack, then a ration has nowhere to go.
+    while (world.inventory.items.length < 20 && addItem(world.inventory, 'oil')) {}
+    world.level.items.push({ id: 7002, kind: 'ration', ...at });
+    const events = run(world, 0.1);
+    expect(events.filter((e) => e.type === 'noRoom').length).toBe(1);
+    expect(world.taken.has(7002)).toBe(false);
+  });
+
+  it('eating takes a moment standing still, and moving interrupts it', () => {
+    const world = arena();
+    world.survival = { ...world.survival, hunger: 40 };
+    const ration = world.inventory.items.find((i) => i.kind === 'ration')!;
+    world.useItem(ration.uid);
+    run(world, 0.5);
+    expect(world.survival.hunger).toBeLessThan(41);
+    run(world, 0.1, move(1, 0));
+    expect(world.channel).toBeNull();
+    world.useItem(ration.uid);
+    const events = run(world, 2);
+    expect(events.some((e) => e.type === 'used')).toBe(true);
+    expect(world.survival.hunger).toBeGreaterThan(70);
+    expect(world.inventory.items.some((i) => i.uid === ration.uid)).toBe(false);
+  });
+
+  it('a march ration is eaten on the move; a waterskin loses a sip per drink', () => {
+    const world = arena();
+    world.survival = { ...world.survival, hunger: 40, thirst: 40 };
+    const march = world.inventory.items.find((i) => i.kind === 'marchRation')!;
+    world.useItem(march.uid);
+    world.update(0.02, move(1, 0));
+    expect(world.survival.hunger).toBeGreaterThan(60);
+    const skin = world.inventory.items.find((i) => i.kind === 'waterskin')!;
+    world.useItem(skin.uid);
+    run(world, 2);
+    expect(skin.charges).toBe(3);
+  });
+
+  it('fountains fill every waterskin; searching a container finds things once', () => {
+    const world = arena();
+    const skin = world.inventory.items.find((i) => i.kind === 'waterskin')!;
+    skin.charges = 0;
+    const fountain = world.level.features.find((f) => f.kind === 'fountain')!;
+    world.player = { x: fountain.x + 0.5, y: fountain.y + 0.5 };
+    expect(world.interaction).toBe('fountain');
+    world.interact();
+    expect(run(world, 0.05).some((e) => e.type === 'refilled')).toBe(true);
+    expect(skin.charges).toBe(4);
+
+    const remains = world.level.features.find((f) => f.kind === 'remains')!;
+    world.player = { x: remains.x + 0.5, y: remains.y + 0.5 };
+    expect(world.interaction).toBe('search');
+    world.interact();
+    const found = run(world, 0.05).find((e) => e.type === 'found');
+    expect(found && found.type === 'found' && found.kinds.length).toBeGreaterThan(0);
+    expect(world.interaction).not.toBe('search');
+  });
+
+  it('the backpack and purse survive a snapshot', () => {
+    const world = arena();
+    world.gold = 31;
+    const copy = World.restore(JSON.parse(JSON.stringify(world.snapshot())));
+    expect(copy.gold).toBe(31);
+    expect(copy.inventory).toEqual(world.inventory);
   });
 });
