@@ -1,4 +1,4 @@
-# La Estirpe — instrucciones para Claude
+# La Estirpe (Tainted Ancestry) — instrucciones para Claude
 
 Roguelike de supervivencia y exploración en tiempo real, para celular y navegador. Mazmorra persistente generada desde una semilla, muerte permanente y un linaje de herederos con rasgos. Proyecto aparte de Graphite (DnD-tools); no usa reglas de D&D.
 

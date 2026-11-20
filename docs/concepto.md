@@ -1,4 +1,4 @@
-# La Estirpe — concepto, borrador v6
+# La Estirpe (Tainted Ancestry) — concepto, borrador v7
 
 > Estado: **borrador para revisar**. Lo marcado como **[Propuesta]** es una sugerencia mía que hay que validar; lo que está en **Decisiones abiertas** todavía no tiene respuesta.
 
@@ -63,8 +63,8 @@ La casa de la familia, arriba de la mazmorra: lugar de descanso y tienda. Es don
 - **Cada rasgo tiene un análogo de jefe.** Los atributos especiales del jefe salen de los rasgos que tuvo en vida; otros atributos dependen de la profundidad.
 - Si lo derrotás, **descansa en paz**: desaparece para siempre y suelta su equipo.
 - **Un jefe por nivel**: si en ese nivel ya hay un jefe, el que muere ahí no se vuelve jefe.
-- **[Propuesta]** En ese caso se suma a la escolta maldita del jefe, con su equipo y su oro.
-- **Un nivel con jefe se vuelve más peligroso** mientras el jefe siga ahí. Cuando el jefe descansa en paz, el nivel vuelve a la normalidad y puede volver a tener un jefe.
+- En ese caso se suma a la **escolta maldita** del jefe, con su equipo y su oro.
+- **Un nivel con jefe se vuelve más peligroso** mientras el jefe siga ahí. **[Propuesta]** Cuando el jefe descansa en paz, el nivel vuelve a la normalidad y puede volver a tener un jefe.
 
 ## Linaje
 
@@ -112,9 +112,9 @@ Nombres confirmados; las identidades son **[Propuesta]**:
 
 | Base | Nombre | Identidad |
 |---|---|---|
-| Guerrero | **Verdugo** | Cuerpo a cuerpo con armas pesadas. Aguanta mucho, pero tiene más hambre y sed. |
-| Pícaro | **Saqueador** | Ágil. Desarma trampas, abre cerraduras y encuentra más oro. Frágil. |
-| Sacerdote | **Cirial** | Usa la luz como arma y como fe: quema luz para curar o para repeler. Fuerte de noche, pero vive con la luz justa. |
+| Guerrero | **Verdugo** (*Headsman*) | Cuerpo a cuerpo con armas pesadas. Aguanta mucho, pero tiene más hambre y sed. |
+| Pícaro | **Saqueador** (*Plunderer*) | Ágil. Desarma trampas, abre cerraduras y encuentra más oro. Frágil. |
+| Sacerdote | **Cirial** (*Candlebearer*) | Usa la luz como arma y como fe: quema luz para curar o para repeler. Fuerte de noche, pero vive con la luz justa. |
 
 Cada clase toca la supervivencia de una forma distinta. **[Propuesta]**
 
@@ -167,15 +167,16 @@ Cada clase toca la supervivencia de una forma distinta. **[Propuesta]**
 
 ## Decisiones abiertas
 
-1. **Muerte en un nivel con jefe**: ¿el héroe se suma a la escolta del jefe o pasa otra cosa?
-2. **¿Hay un final?** ¿Existe el corazón de la maldición en algún lugar, o la mazmorra es infinita y la meta es solo la profundidad?
-3. **Nombres en inglés**: del juego y de las clases.
+1. **Final o leaderboard** (más adelante): la mazmorra es infinita; se puede sumar un final o una tabla de récords. Una tabla compartida necesita un servidor, cosa que hoy el stack no tiene.
+2. **Nivel liberado**: ¿cuando el jefe descansa en paz, el nivel puede volver a tener un jefe?
+3. **Ideas de la mansión** (galería de retratos, biblioteca, quién atiende la tienda).
 
 ## Decisiones tomadas
 
-- Nombre: **La Estirpe**.
+- Nombre: **La Estirpe** en español, ***Tainted Ancestry*** en inglés.
 - Idiomas: inglés y español, con selector.
-- Un jefe por nivel como máximo; un nivel con jefe es más peligroso.
+- Un jefe por nivel como máximo; un nivel con jefe es más peligroso. Quien muere en un nivel con jefe se suma a su escolta.
+- Mazmorra infinita; un final queda para más adelante.
 - Vista **cenital 3/4**.
 - Estilo **tinta y papel**: la oscuridad es papel en blanco y la luz "dibuja" lo que se ve. Arte provisorio para arrancar.
 - Progresión por **rasgos adquiridos**, sin niveles de experiencia.
