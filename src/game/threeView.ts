@@ -148,9 +148,10 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
         ${uvAssign}`,
       );
     shader.fragmentShader = shader.fragmentShader
+      .replace('#include <lights_fragment_begin>', LIGHTS_WITH_INK_SHADOW)
       .replace(
         '#include <common>',
-        '#include <common>\nuniform float uFade;\nuniform float uNight;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
+        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
       )
       .replace(
         '#include <map_fragment>',
@@ -190,17 +191,24 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           float d2 = abs(fract(hp.x - hp.y) - 0.5);
           float d3 = abs(fract(hp.x * 1.3 + 0.25) - 0.5);
           float aa = clamp(fwidth(hp.x + hp.y) * 0.6, 0.002, 0.2);
-          float tone = clamp(1.0 - lit * 1.5, 0.0, 1.0);
-          // Each pass of lines comes in thin; past three quarters they all thicken into solid ink.
-          float thick = smoothstep(0.72, 1.0, tone) * 0.42;
-          float w1 = smoothstep(0.12, 0.2, tone) * 0.08 + thick;
-          float w2 = smoothstep(0.38, 0.46, tone) * 0.08 + thick;
-          float w3 = smoothstep(0.6, 0.68, tone) * 0.07 + thick;
+          // A tonal ladder with clear steps: clean paper, loose hatching, cross-hatching, a
+          // third pass, then solid ink. The ink's edge wanders a little, like a brush.
+          float wobble = inkNoise(vInkPos.xz * 3.1 + vInkPos.y * 2.3) - 0.5;
+          float tone = clamp(1.0 - lit * 1.5 + wobble * 0.08, 0.0, 1.0);
+          // Cast shadows inside the light are solid ink with a short hatched rim: the
+          // light fading with distance is drawn with lines, what blocks it with a brush.
+          float shadowed = 1.0 - smoothstep(0.25, 0.75, inkShadow + wobble * 0.25);
+          float rim = smoothstep(0.08, 0.35, shadowed) * (1.0 - smoothstep(0.65, 0.92, shadowed));
+          tone = max(tone, mix(tone, 0.6, rim));
+          float w1 = smoothstep(0.18, 0.24, tone) * 0.08;
+          float w2 = smoothstep(0.4, 0.46, tone) * 0.09;
+          float w3 = smoothstep(0.58, 0.64, tone) * 0.1 + smoothstep(0.64, 0.76, tone) * 0.14;
           float ink = max(
             (1.0 - smoothstep(w1 - aa, w1 + aa, d1)) * step(0.001, w1),
             (1.0 - smoothstep(w2 - aa, w2 + aa, d2)) * step(0.001, w2));
           ink = max(ink, (1.0 - smoothstep(w3 - aa, w3 + aa, d3)) * step(0.001, w3));
-          ink = max(ink, step(0.985, tone));
+          ink = max(ink, smoothstep(0.74, 0.78, tone));
+          ink = max(ink, smoothstep(0.82, 0.92, shadowed));
           float edge = 0.0;
           ${
             outline
@@ -283,6 +291,32 @@ function wallGeometry(level: Level, tiles: Array<[number, number]>, inset = 0): 
   g.addGroup(sideIndices, indices.length - sideIndices, 1);
   return g;
 }
+
+/**
+ * three's light loop, changed so the flame's shadow is not multiplied into the light but
+ * kept apart in `inkShadow` (1 lit, 0 in shadow): the ink shader draws cast shadows as
+ * solid ink and the light's falloff as hatching.
+ */
+const LIGHTS_WITH_INK_SHADOW = (() => {
+  const chunk = THREE.ShaderChunk.lights_fragment_begin;
+  const line = `directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( spotShadowMap[ i ], spotLightShadow.shadowMapSize, spotLightShadow.shadowIntensity, spotLightShadow.shadowBias, spotLightShadow.shadowRadius, vSpotLightCoord[ i ] ) : 1.0;`;
+  if (!chunk.includes(line)) throw new Error('three.js light chunk changed: update the ink shadow hook');
+  const replaced = chunk.replace(
+    line,
+    `inkShadow = min(inkShadow, ( directLight.visible && receiveShadow ) ? getShadow( spotShadowMap[ i ], spotLightShadow.shadowMapSize, spotLightShadow.shadowIntensity, spotLightShadow.shadowBias, spotLightShadow.shadowRadius, vSpotLightCoord[ i ] ) : 1.0);`,
+  );
+  return `float inkShadow = 1.0;\n${replaced}`;
+})();
+
+/** Smooth value noise, for edges of ink that wander like a brush. */
+const INK_NOISE = `
+float inkHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float inkNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(inkHash(i), inkHash(i + vec2(1.0, 0.0)), u.x), mix(inkHash(i + vec2(0.0, 1.0)), inkHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}`;
 
 /** A flat cut-out standing on the floor, facing the camera, lit like the floor under it. */
 class Cutout {
