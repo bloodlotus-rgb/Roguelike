@@ -619,21 +619,18 @@ function drawWeapon(ctx: CanvasRenderingContext2D, classId: ClassId, x: number, 
   ctx.restore();
 }
 
-/** The ink textures as canvases, for other renderers. */
+/**
+ * The ink textures as canvases, for other renderers. They are painted directly at the
+ * requested size (the drawing is scaled, not the pixels), so lines stay smooth.
+ */
 export function inkTexture(kind: 'wall' | 'floor' | 'ceiling' | 'stairs', size = TEX): HTMLCanvasElement {
   const c = document.createElement('canvas');
-  c.width = TEX;
-  c.height = TEX;
+  c.width = size;
+  c.height = size;
   const ctx = c.getContext('2d')!;
+  ctx.scale(size / TEX, size / TEX);
   ctx.lineCap = 'round';
   const paint = { wall: WALL, floor: FLOOR, ceiling: CEILING, stairs: STAIRS }[kind];
   paint(ctx, new Rng(`fp-${kind}`));
-  if (size === TEX) return c;
-  const big = document.createElement('canvas');
-  big.width = size;
-  big.height = size;
-  const b = big.getContext('2d')!;
-  b.imageSmoothingEnabled = false;
-  b.drawImage(c, 0, 0, size, size);
-  return big;
+  return c;
 }
