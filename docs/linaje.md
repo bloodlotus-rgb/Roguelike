@@ -100,12 +100,12 @@ El **árbol genealógico** completo (vivos, caídos y muertos de viejos) se pued
 
 ## Implementación (Etapa A)
 
-Lo que quedó resuelto al implementar, para validar al probar:
+Lo que quedó resuelto al implementar (aprobado):
 
-- **[Supuesto]** Al volver a abrir el juego con una vida en curso, retoma en **pausa**, para que no te agarren desprevenido.
-- **[Supuesto]** Autoguardado cada 4 segundos de juego, al bajar, al morir, al ganar un rasgo y al salir de la app.
-- **[Supuesto]** En el mapa ves las cruces de **tu línea directa** (padres, abuelos…) en ese nivel. Con *Memoria vieja* ves las de toda la estirpe.
-- **[Supuesto]** La *Cicatriz* se gana al **recuperarte** después de bajar del 10 % de vida (no al caer); la segunda vez, *Pierna mala*.
+- Al volver a abrir el juego con una vida en curso, retoma en **pausa**, para que no te agarren desprevenido.
+- Autoguardado cada 4 segundos de juego, al bajar, al morir, al ganar un rasgo y al salir de la app.
+- En el mapa ves las cruces de **tu línea directa** (padres, abuelos…) en ese nivel. Con *Memoria vieja* ves las de toda la estirpe.
+- La *Cicatriz* se gana al **recuperarte** después de bajar del 10 % de vida (no al caer); la segunda vez, *Pierna mala*.
 - Abandonar la estirpe está en la pantalla de elegir integrante y en la pausa, con doble confirmación.
 - Lo que pase en una vida (rasgos ganados, muerte, herederos, envejecimiento) se cuenta en la crónica de esa generación; la crónica completa se relee desde la pantalla de elegir integrante.
 - El retrato muestra la edad y algunos rasgos: canas, cicatriz, parche (*Tuerto*), quemaduras, ojos de gato o de búho, joroba, contextura.
