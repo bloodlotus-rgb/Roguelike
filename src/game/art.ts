@@ -104,19 +104,69 @@ export function drawLevel(level: Level, tile: number): HTMLCanvasElement {
     }
   }
 
-  // Floor: faint flagstone joints.
-  ctx.strokeStyle = INK_FADED;
-  ctx.lineWidth = 0.8 * s;
+  // Floor: irregular flagstones, some split in two, with the odd crack.
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (!isFloor(level, x, y)) continue;
-      if (rng.chance(0.55)) inkLine(ctx, rng, x * tile, (y + 1) * tile, (x + 1) * tile, (y + 1) * tile, 0.8 * s);
-      if (rng.chance(0.55)) inkLine(ctx, rng, (x + 1) * tile, y * tile, (x + 1) * tile, (y + 1) * tile, 0.8 * s);
-      if (rng.chance(0.08)) {
-        // A crack or a pebble.
-        const px = (x + rng.range(0.2, 0.8)) * tile;
-        const py = (y + rng.range(0.2, 0.8)) * tile;
-        inkLine(ctx, rng, px, py, px + rng.range(-6, 6) * s, py + rng.range(-6, 6) * s, 1.5 * s);
+      const l = x * tile;
+      const t = y * tile;
+      const inset = 1.6 * s;
+      ctx.fillStyle = rng.chance(0.5) ? 'rgba(120, 100, 70, 0.05)' : 'rgba(255, 250, 235, 0.06)';
+      ctx.fillRect(l + inset, t + inset, tile - inset * 2, tile - inset * 2);
+      ctx.strokeStyle = INK_FADED;
+      ctx.lineWidth = 0.9 * s;
+      const j = 0.9 * s;
+      ctx.beginPath();
+      ctx.moveTo(l + inset + rng.range(-j, j), t + inset + rng.range(-j, j));
+      ctx.lineTo(l + tile - inset + rng.range(-j, j), t + inset + rng.range(-j, j));
+      ctx.lineTo(l + tile - inset + rng.range(-j, j), t + tile - inset + rng.range(-j, j));
+      ctx.lineTo(l + inset + rng.range(-j, j), t + tile - inset + rng.range(-j, j));
+      ctx.closePath();
+      ctx.stroke();
+      if (rng.chance(0.3)) {
+        // Split slab.
+        const mid = rng.range(0.35, 0.65) * tile;
+        if (rng.chance(0.5)) inkLine(ctx, rng, l + mid, t + inset, l + mid, t + tile - inset, 0.6 * s);
+        else inkLine(ctx, rng, l + inset, t + mid, l + tile - inset, t + mid, 0.6 * s);
+      }
+      if (rng.chance(0.1)) {
+        // A crack running across.
+        ctx.strokeStyle = 'rgba(33, 27, 23, 0.55)';
+        ctx.lineWidth = 0.8 * s;
+        let cx = l + rng.range(0.2, 0.8) * tile;
+        let cy = t + rng.range(0.2, 0.8) * tile;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        for (let k = 0; k < 4; k++) {
+          cx += rng.range(-6, 6) * s;
+          cy += rng.range(-6, 6) * s;
+          ctx.lineTo(cx, cy);
+        }
+        ctx.stroke();
+      }
+    }
+  }
+
+  // Ink pooling along the foot of the walls gives the rooms depth.
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!isFloor(level, x, y)) continue;
+      const l = x * tile;
+      const t = y * tile;
+      const band = tile * 0.42;
+      const sides: Array<[boolean, number, number, number, number]> = [
+        [!isFloor(level, x, y - 1), l, t, l, t + band],
+        [!isFloor(level, x, y + 1), l, t + tile, l, t + tile - band * 0.6],
+        [!isFloor(level, x - 1, y), l, t, l + band, t],
+        [!isFloor(level, x + 1, y), l + tile, t, l + tile - band, t],
+      ];
+      for (const [wall, x0, y0, x1, y1] of sides) {
+        if (!wall) continue;
+        const g = ctx.createLinearGradient(x0, y0, x1, y1);
+        g.addColorStop(0, 'rgba(33, 27, 23, 0.32)');
+        g.addColorStop(1, 'rgba(33, 27, 23, 0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(l, t, tile, tile);
       }
     }
   }
@@ -154,6 +204,23 @@ export function drawLevel(level: Level, tile: number): HTMLCanvasElement {
         const bx = left + tile * offset + rng.range(-2, 2) * s;
         const ry = top + (faceHeight / rows) * r;
         inkLine(ctx, rng, bx, ry, bx, ry + faceHeight / rows, 0.5 * s);
+      }
+      // Grime darkening toward the floor, and a few chipped bricks.
+      const grime = ctx.createLinearGradient(0, top + faceHeight, 0, top);
+      grime.addColorStop(0, 'rgba(33, 27, 23, 0.4)');
+      grime.addColorStop(0.6, 'rgba(33, 27, 23, 0)');
+      ctx.fillStyle = grime;
+      ctx.fillRect(left, top, tile, faceHeight);
+      if (rng.chance(0.25)) {
+        const bx = left + rng.range(0.15, 0.7) * tile;
+        const by = top + rng.range(0.1, 0.6) * faceHeight;
+        ctx.fillStyle = 'rgba(33, 27, 23, 0.55)';
+        ctx.beginPath();
+        ctx.moveTo(bx, by);
+        ctx.lineTo(bx + rng.range(3, 7) * s, by + rng.range(-1, 2) * s);
+        ctx.lineTo(bx + rng.range(2, 5) * s, by + rng.range(3, 5) * s);
+        ctx.closePath();
+        ctx.fill();
       }
       ctx.lineWidth = 2 * s;
       inkLine(ctx, rng, left, top, left + tile, top, 0.8 * s);
@@ -373,44 +440,6 @@ export function drawLightMask(size: number, edge: number): HTMLCanvasElement {
   return c;
 }
 
-/** Hooded figure carrying a flame. */
-export function drawPlayer(tile: number): HTMLCanvasElement {
-  const s = tile / 32;
-  const [c, ctx] = canvas(Math.ceil(28 * s), Math.ceil(40 * s));
-  const rng = new Rng('player-art');
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.strokeStyle = INK;
-  ctx.fillStyle = PAPER;
-  ctx.lineWidth = 2 * s;
-  // Cloak.
-  ctx.beginPath();
-  ctx.moveTo(14 * s, 10 * s);
-  ctx.quadraticCurveTo(4 * s, 22 * s, 5 * s, 37 * s);
-  ctx.lineTo(23 * s, 37 * s);
-  ctx.quadraticCurveTo(24 * s, 22 * s, 14 * s, 10 * s);
-  ctx.fill();
-  ctx.stroke();
-  // Cloak folds.
-  ctx.lineWidth = 1 * s;
-  inkLine(ctx, rng, 11 * s, 20 * s, 9 * s, 35 * s, 0.6 * s);
-  inkLine(ctx, rng, 16 * s, 21 * s, 18 * s, 35 * s, 0.6 * s);
-  // Hood.
-  ctx.lineWidth = 2 * s;
-  ctx.beginPath();
-  ctx.arc(14 * s, 11 * s, 6 * s, 0, Math.PI * 2);
-  ctx.fillStyle = INK;
-  ctx.fill();
-  // Flame.
-  ctx.fillStyle = FLAME;
-  ctx.beginPath();
-  ctx.ellipse(24 * s, 16 * s, 2.6 * s, 4 * s, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.lineWidth = 1.4 * s;
-  inkLine(ctx, rng, 22 * s, 21 * s, 20 * s, 28 * s, 0.3 * s);
-  return c;
-}
-
 export function drawItem(kind: 'food' | 'water' | 'oil', tile: number): HTMLCanvasElement {
   const s = tile / 32;
   const size = Math.ceil(24 * s);
@@ -464,97 +493,6 @@ function ctxFor(width: number, height: number, tile: number): [HTMLCanvasElement
   ctx.lineJoin = 'round';
   ctx.strokeStyle = INK;
   return [c, ctx, s];
-}
-
-/** Placeholder horrors: ink blots with a recognizable silhouette each. */
-export function drawEnemy(kind: 'crawler' | 'husk' | 'mourner' | 'snuffer', tile: number): HTMLCanvasElement {
-  const rng = new Rng(`enemy-art-${kind}`);
-  if (kind === 'crawler') {
-    const [c, ctx, s] = ctxFor(30, 24, tile);
-    ctx.lineWidth = 1.6 * s;
-    for (let i = 0; i < 6; i++) {
-      const side = i < 3 ? -1 : 1;
-      const k = i % 3;
-      const bx = 15 * s + side * 4 * s;
-      const by = (10 + k * 3) * s;
-      inkLine(ctx, rng, bx, by, bx + side * (9 + k) * s, by + (k - 1) * 4 * s + 4 * s, 1 * s);
-    }
-    ctx.fillStyle = INK;
-    ctx.beginPath();
-    ctx.ellipse(15 * s, 13 * s, 7 * s, 5.5 * s, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = PAPER;
-    ctx.fillRect(12 * s, 10 * s, 1.6 * s, 1.6 * s);
-    ctx.fillRect(16.5 * s, 10 * s, 1.6 * s, 1.6 * s);
-    return c;
-  }
-  if (kind === 'husk') {
-    const [c, ctx, s] = ctxFor(34, 46, tile);
-    ctx.fillStyle = PAPER;
-    ctx.lineWidth = 2.4 * s;
-    ctx.beginPath();
-    ctx.moveTo(10 * s, 44 * s);
-    ctx.quadraticCurveTo(4 * s, 26 * s, 12 * s, 14 * s);
-    ctx.quadraticCurveTo(20 * s, 8 * s, 27 * s, 16 * s);
-    ctx.quadraticCurveTo(32 * s, 28 * s, 26 * s, 44 * s);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.lineWidth = 1 * s;
-    for (let i = 0; i < 7; i++) {
-      const y = (20 + i * 3.4) * s;
-      inkLine(ctx, rng, 9 * s, y, 27 * s, y + rng.range(-2, 2) * s, 0.8 * s);
-    }
-    ctx.fillStyle = INK;
-    ctx.beginPath();
-    ctx.arc(14 * s, 12 * s, 5 * s, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.lineWidth = 3 * s;
-    inkLine(ctx, rng, 27 * s, 18 * s, 32 * s, 32 * s, 0.6 * s);
-    return c;
-  }
-  if (kind === 'mourner') {
-    const [c, ctx, s] = ctxFor(26, 42, tile);
-    ctx.fillStyle = PAPER;
-    ctx.lineWidth = 2 * s;
-    ctx.beginPath();
-    ctx.moveTo(13 * s, 3 * s);
-    ctx.quadraticCurveTo(3 * s, 20 * s, 4 * s, 40 * s);
-    ctx.lineTo(22 * s, 40 * s);
-    ctx.quadraticCurveTo(23 * s, 20 * s, 13 * s, 3 * s);
-    ctx.fill();
-    ctx.stroke();
-    ctx.lineWidth = 1 * s;
-    for (const x of [7, 10, 13, 16, 19]) inkLine(ctx, rng, x * s, 12 * s, (x + rng.range(-1, 1)) * s, 40 * s, 0.5 * s);
-    ctx.fillStyle = INK;
-    ctx.beginPath();
-    ctx.ellipse(13 * s, 13 * s, 3.5 * s, 4.5 * s, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1.4 * s;
-    inkLine(ctx, rng, 11.5 * s, 17 * s, 11 * s, 24 * s, 0.3 * s);
-    inkLine(ctx, rng, 14.5 * s, 17 * s, 15 * s, 23 * s, 0.3 * s);
-    return c;
-  }
-  const [c, ctx, s] = ctxFor(24, 40, tile);
-  ctx.fillStyle = 'rgba(33, 27, 23, 0.85)';
-  ctx.beginPath();
-  ctx.moveTo(12 * s, 4 * s);
-  ctx.quadraticCurveTo(5 * s, 18 * s, 9 * s, 38 * s);
-  ctx.lineTo(15 * s, 38 * s);
-  ctx.quadraticCurveTo(19 * s, 18 * s, 12 * s, 4 * s);
-  ctx.fill();
-  ctx.lineWidth = 1.2 * s;
-  for (const side of [-1, 1]) {
-    inkLine(ctx, rng, 12 * s, 16 * s, (12 + side * 9) * s, 26 * s, 0.6 * s);
-    for (let f = 0; f < 3; f++) {
-      inkLine(ctx, rng, (12 + side * 9) * s, 26 * s, (12 + side * (9 + f)) * s, (30 + f) * s, 0.3 * s);
-    }
-  }
-  ctx.fillStyle = PAPER;
-  ctx.fillRect(10.5 * s, 9 * s, 1.4 * s, 1.4 * s);
-  ctx.fillRect(13 * s, 9 * s, 1.4 * s, 1.4 * s);
-  return c;
 }
 
 /** Ink blot left where a horror falls. */

@@ -4,16 +4,18 @@ import type { EnemyKind } from '../core/enemies';
 import { NO_INPUT, type ControlInput, type Enemy, type World, type WorldEvent } from '../core/world';
 import type { StringKey } from '../i18n/i18n';
 import {
-  drawEnemy,
   drawItem,
   drawLevel,
   drawLightMask,
-  drawPlayer,
   drawProjectile,
   drawSplat,
   DARK,
 } from './art';
 import { isFloor } from '../core/dungeon';
+import { drawEnemySheet, drawHeroSheet, ENEMY_SIZE, FLAME_ANCHOR, type SpriteSheet } from './sprites';
+
+/** Height of each horror's eyes above its feet, in tiles. */
+const EYE_HEIGHT: Record<EnemyKind, number> = { crawler: 0.3, husk: 1.2, mourner: 1.2, snuffer: 1.3 };
 
 /** World units per tile. */
 export const TILE = 32;
@@ -69,6 +71,14 @@ export class DungeonScene extends Phaser.Scene {
   private lightMask!: Phaser.GameObjects.Image;
   private darkFrame!: Phaser.GameObjects.Graphics;
   private eyes!: Phaser.GameObjects.Graphics;
+  private ground!: Phaser.GameObjects.Graphics;
+  private flame!: Phaser.GameObjects.Graphics;
+  private sheets = new Map<string, SpriteSheet>();
+  /** Distance walked, to pick walk frames; and the same per horror. */
+  private walked = 0;
+  private lastPlayer: Point = { x: 0, y: 0 };
+  private enemyWalk = new Map<number, { walked: number; last: Point }>();
+  private emberTimer = 0;
   private shadows!: Phaser.GameObjects.RenderTexture;
   private shadowGfx!: Phaser.GameObjects.Graphics;
   private shadowKey = '';
@@ -110,15 +120,25 @@ export class DungeonScene extends Phaser.Scene {
     for (const enemy of world.enemies) {
       if (enemy.state === 'dead') continue;
       const sprite = this.add
-        .image(px(enemy.pos.x), px(enemy.pos.y), `enemy-${enemy.kind}`)
-        .setOrigin(0.5, 0.85)
+        .image(px(enemy.pos.x), px(enemy.pos.y), `enemy-${enemy.kind}`, 'idle0')
+        .setOrigin(0.5, ENEMY_SIZE[enemy.kind].originY)
         .setScale(1 / ART_SCALE)
         .setAlpha(0);
       this.enemySprites.set(enemy.id, sprite);
     }
 
-    this.player = this.add.image(0, 0, 'player').setOrigin(0.5, 0.85).setScale(1 / ART_SCALE);
+    const heroKey = `hero-${world.classId}`;
+    const heroSheet = this.sheets.get(heroKey)!;
+    this.player = this.add
+      .image(0, 0, heroKey, 'idle0')
+      .setOrigin(heroSheet.originX, heroSheet.originY)
+      .setScale(1 / ART_SCALE);
     this.fx = this.add.graphics().setDepth(2.6);
+    this.ground = this.add.graphics().setDepth(1.5);
+    this.flame = this.add.graphics();
+    this.walked = 0;
+    this.lastPlayer = { ...world.player };
+    this.enemyWalk.clear();
 
     // Shadows cast by walls and columns inside the light, softened by a blur.
     this.shadows = this.add
@@ -274,6 +294,18 @@ export class DungeonScene extends Phaser.Scene {
     this.player.setPosition(px(world.player.x), px(world.player.y));
     this.player.setDepth(2 + world.player.y / 1000);
     if (Math.abs(world.facing.x) > 0.1) this.player.setFlipX(world.facing.x < 0);
+
+    // Pick the frame: attack poses, walking by distance covered, or breathing.
+    const moved = Math.hypot(world.player.x - this.lastPlayer.x, world.player.y - this.lastPlayer.y);
+    this.lastPlayer = { ...world.player };
+    this.walked += moved;
+    const action = world.action;
+    let frame: string;
+    if (action.type === 'attack') frame = action.phase === 'windup' ? 'attack0' : 'attack1';
+    else if (action.type === 'special') frame = 'attack0';
+    else if (moved > 0.002) frame = `walk${Math.floor(this.walked / 0.32) % 4}`;
+    else frame = `idle${Math.floor(time / 600) % 2}`;
+    if (this.player.frame.name !== frame) this.player.setFrame(frame);
     let alpha = 1;
     if (world.invisible) alpha = 0.3;
     else if (world.invulnerableTimer > 0) alpha = 0.6;
@@ -289,6 +321,19 @@ export class DungeonScene extends Phaser.Scene {
       let x = px(enemy.pos.x);
       const y = px(enemy.pos.y);
       if (enemy.state === 'windup') x += Math.sin(time / 25) * 1.5;
+      const walk = this.enemyWalk.get(enemy.id) ?? { walked: 0, last: { ...enemy.pos } };
+      const moved = Math.hypot(enemy.pos.x - walk.last.x, enemy.pos.y - walk.last.y);
+      walk.walked += moved;
+      walk.last = { ...enemy.pos };
+      this.enemyWalk.set(enemy.id, walk);
+      const stride = enemy.kind === 'crawler' ? 0.18 : enemy.kind === 'husk' ? 0.45 : 0.3;
+      const frame =
+        enemy.state === 'windup'
+          ? 'windup'
+          : moved > 0.001
+            ? `move${Math.floor(walk.walked / stride) % 4}`
+            : `idle${Math.floor((time + enemy.id * 137) / 700) % 2}`;
+      if (sprite.frame.name !== frame) sprite.setFrame(frame);
       // Marked horrors show through the darkness.
       const tile = Math.floor(enemy.pos.y) * this.host.world.level.width + Math.floor(enemy.pos.x);
       const throughDark = enemy.wax > 0 && !this.host.world.visibleNow.has(tile);
@@ -434,6 +479,55 @@ export class DungeonScene extends Phaser.Scene {
     this.shadows.render();
   }
 
+  /** Soft shadows under everyone, and the hero's living flame with rising embers. */
+  private drawGroundAndFlame(dt: number): void {
+    const world = this.host.world;
+    const g = this.ground;
+    g.clear();
+    g.fillStyle(DARK_HEX, 0.28);
+    g.fillEllipse(this.player.x, this.player.y, 22, 7);
+    for (const enemy of world.enemies) {
+      if (enemy.state === 'dead' || !enemy.visible) continue;
+      const w = enemy.kind === 'husk' ? 34 : enemy.kind === 'crawler' ? 30 : 20;
+      g.fillEllipse(px(enemy.pos.x), px(enemy.pos.y), w, w * 0.3);
+    }
+
+    const f = this.flame;
+    f.clear();
+    const light = world.survival.light;
+    if (light <= 0 || world.invisible) return;
+    const anchor = FLAME_ANCHOR[world.classId];
+    const flip = this.player.flipX ? -1 : 1;
+    const bob = this.player.frame.name === 'idle1' ? 0.7 : this.player.frame.name.startsWith('walk') && Number(this.player.frame.name.slice(4)) % 2 === 1 ? -1 : 0;
+    const fx = this.player.x + anchor.x * flip;
+    const fy = this.player.y + anchor.y + bob;
+    const t = this.time.now / 1000;
+    const size = 0.55 + 0.45 * Math.sqrt(light / 100);
+    const sway = Math.sin(t * 11) * 1.2 + Math.sin(t * 17.3) * 0.6;
+    f.setDepth(this.player.depth + 0.0001);
+    f.fillStyle(FLAME_HEX, 0.25);
+    f.fillCircle(fx, fy - 2 * size, 7 * size);
+    f.fillStyle(FLAME_HEX, 0.95);
+    f.fillTriangle(fx - 3.2 * size, fy, fx + 3.2 * size, fy, fx + sway, fy - 10 * size);
+    f.fillCircle(fx, fy - 1, 3.2 * size);
+    f.fillStyle(0xf6dc9c, 1);
+    f.fillTriangle(fx - 1.5 * size, fy, fx + 1.5 * size, fy, fx + sway * 0.6, fy - 6 * size);
+
+    this.emberTimer -= dt;
+    if (this.emberTimer <= 0) {
+      this.emberTimer = 0.12 + (1 - size) * 0.3;
+      const k = (t * 7.3) % 1;
+      this.effects.push({
+        kind: 'drop',
+        pos: { x: fx / TILE, y: (fy - 6 * size) / TILE },
+        vel: { x: (k - 0.5) * 0.5, y: -0.9 - k * 0.5 },
+        ttl: 0.7,
+        life: 0.7,
+        color: FLAME_HEX,
+      });
+    }
+  }
+
   /** Eyes glinting in the dark: pale when a horror only watches, red when it hunts. */
   private drawEyes(): void {
     const g = this.eyes;
@@ -444,7 +538,7 @@ export class DungeonScene extends Phaser.Scene {
       // Each pair blinks now and then, on its own rhythm.
       if ((now / 1000 + enemy.id * 0.73) % 3.7 < 0.14) continue;
       const x = px(enemy.pos.x);
-      const y = px(enemy.pos.y) - TILE * (enemy.kind === 'crawler' ? 0.35 : enemy.kind === 'husk' ? 1.05 : 0.95);
+      const y = px(enemy.pos.y) - TILE * EYE_HEIGHT[enemy.kind];
       const gap = enemy.kind === 'husk' ? 5 : enemy.kind === 'crawler' ? 3 : 3.5;
       const color = enemy.alerted ? 0xc4452f : 0xd8ccb0;
       g.fillStyle(color, 0.18);
@@ -467,12 +561,14 @@ export class DungeonScene extends Phaser.Scene {
       this.drawTelegraph(g, enemy);
     }
 
+    this.drawGroundAndFlame(dt);
+
     // Burning wax: a small flame over each marked horror.
     for (const enemy of world.enemies) {
       if (enemy.state === 'dead' || enemy.wax <= 0) continue;
       const flicker = Math.sin(this.time.now / 60 + enemy.id) * 1.5;
       g.fillStyle(FLAME_HEX, 0.85);
-      g.fillEllipse(px(enemy.pos.x), px(enemy.pos.y) - TILE * 1.15 + flicker, 5, 8);
+      g.fillEllipse(px(enemy.pos.x), px(enemy.pos.y) - TILE * (EYE_HEIGHT[enemy.kind] + 0.35) + flicker, 5, 8);
     }
 
     // Running kicks up dust.
@@ -617,16 +713,30 @@ export class DungeonScene extends Phaser.Scene {
     this.cameras.main.setZoom(zoom);
   }
 
+  /** Registers a sprite sheet once, with one named frame per pose. */
+  private addSheet(key: string, make: () => SpriteSheet): void {
+    if (this.textures.exists(key)) {
+      if (!this.sheets.has(key)) this.sheets.set(key, make());
+      return;
+    }
+    const sheet = make();
+    this.sheets.set(key, sheet);
+    const texture = this.textures.addCanvas(key, sheet.canvas)!;
+    sheet.frames.forEach((name, i) => texture.add(name, 0, i * sheet.frameWidth, 0, sheet.frameWidth, sheet.frameHeight));
+  }
+
   private ensureSharedTextures(): void {
     const add = (key: string, make: () => HTMLCanvasElement) => {
       if (!this.textures.exists(key)) this.textures.addCanvas(key, make());
     };
     const artTile = TILE * ART_SCALE;
     add('light-mask', () => drawLightMask(LIGHT_MASK_SIZE, LIGHT_EDGE));
-    add('player', () => drawPlayer(artTile));
+    for (const classId of ['headsman', 'plunderer', 'candlebearer'] as const) {
+      this.addSheet(`hero-${classId}`, () => drawHeroSheet(classId, artTile));
+    }
     add('projectile', () => drawProjectile(artTile));
     for (const kind of ['food', 'water', 'oil'] as const) add(`item-${kind}`, () => drawItem(kind, artTile));
-    for (const kind of ENEMY_KINDS) add(`enemy-${kind}`, () => drawEnemy(kind, artTile));
+    for (const kind of ENEMY_KINDS) this.addSheet(`enemy-${kind}`, () => drawEnemySheet(kind, artTile));
     for (let i = 0; i < 4; i++) add(`splat-${i}`, () => drawSplat(artTile, `splat-${i}`));
   }
 }

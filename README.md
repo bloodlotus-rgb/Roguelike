@@ -10,7 +10,8 @@ Etapas 1 (prototipo), 2 (combate) y atmósfera, con arte provisorio:
 - Elección de clase: **Verdugo**, **Saqueador** o **Cirial**, cada una con atributos, combo propio, especial con su forma de cargarse y una pasiva.
 - Joystick virtual (tocando cualquier parte de la pantalla) y tres botones: **Atacar** (golpe o parry), **Especial** y **Esquivar** (mantener: correr, que gasta sed y hambre y hace ruido).
 - Cuatro horrores (Rastrero, Hueco, Plañidera, Apagavelas) que avisan antes de atacar, se alertan entre sí y a veces deambulan entre salas. Tu luz te delata.
-- Salas rectangulares, cavernas y salas con columnas, con decorado.
+- Salas rectangulares, cavernas y salas con columnas, con decorado, baldosas irregulares y paredes con mugre.
+- Personajes animados por código, con silueta propia por clase y por horror; la llama del héroe con chispas.
 - Atmósfera oscura: fuera de tu llama no se ve nada; muros y columnas proyectan sombras suaves. Los horrores que te miran desde la oscuridad muestran los ojos.
 - Mapa desplegable con lo explorado (botón Mapa o tecla `M`); no pausa el juego.
 - Sonido generado por código: ambiente, pasos, la llama, latido con poca vida, avisos de cada ataque y horrores que se oyen antes de verse. Botón ♪ para silenciar.
@@ -43,7 +44,7 @@ Cloudflare Workers (assets estáticos) con Workers Builds conectado al repo. Con
 ## Estructura
 
 - `src/core/`: lógica del juego en TypeScript puro (semilla, generación, colisiones, visión, supervivencia, atributos, clases, horrores, combate). Sin Phaser ni DOM.
-- `src/game/`: escena de Phaser y arte provisorio dibujado con Canvas.
+- `src/game/`: escena de Phaser y arte dibujado por código con Canvas: la mazmorra (`art.ts`) y los personajes animados en hojas de sprites (`sprites.ts`).
 - `src/ui/`: interfaz en HTML/CSS (HUD, controles, selección de clase, pantallas).
 - `src/i18n/`: textos en español e inglés.
 - `src/audio/`: sonido procedural con Web Audio.
