@@ -24,6 +24,13 @@ npm test           # tests de la lógica (vitest)
 npm run build      # typecheck + build de producción en dist/
 ```
 
+## Deploy
+
+Cloudflare Workers (assets estáticos) con Workers Builds conectado al repo. Config en `wrangler.jsonc` (Worker `roguelike`).
+
+- `main` se publica en producción.
+- Las demás ramas generan una versión de vista previa con su propia URL.
+
 ## Estructura
 
 - `src/core/`: lógica del juego en TypeScript puro (semilla, generación, colisiones, visión, supervivencia). Sin Phaser ni DOM.
