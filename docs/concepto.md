@@ -1,4 +1,4 @@
-# La Estirpe (Tainted Ancestry) — concepto, borrador v7
+# La Estirpe (Tainted Ancestry) — concepto, borrador v8
 
 > Estado: **borrador para revisar**. Lo marcado como **[Propuesta]** es una sugerencia mía que hay que validar; lo que está en **Decisiones abiertas** todavía no tiene respuesta.
 
@@ -153,17 +153,22 @@ Cada clase toca la supervivencia de una forma distinta. **[Propuesta]**
 - **Autoguardado continuo.** Salir es pausar.
 - No se puede volver atrás: cerrar la app a la fuerza no salva de una muerte.
 
-## Plataforma y stack — propuesta
-
-**[Propuesta, a aprobar]**
+## Plataforma y stack
 
 - PWA instalable y offline, para celular y navegador.
 - Interfaz y textos en **inglés y español**, con selector.
 - TypeScript + Vite.
-- Render 2D con un motor liviano (Phaser o PixiJS, a decidir).
+- **Phaser 4** para la mazmorra: render, cámara, colisiones, entrada y escenas.
+- **HTML y CSS** para las pantallas de interfaz (HUD, menús, mansión, galería, crónica, tienda, inventario), encima del canvas.
+- **Lógica del juego en TypeScript puro**, separada de Phaser: generación, rasgos, linaje, jefes, supervivencia. Phaser solo dibuja, mueve, choca y recibe controles.
 - Persistencia local en IndexedDB, sin backend.
 - PRNG con semilla determinista para toda la generación; nada de `Math.random()` en la lógica del juego.
-- Tests de la generación y de las reglas con vitest.
+- Tests de la lógica con vitest.
+
+## Etapas
+
+1. **Prototipo** (arte provisorio): un nivel generado desde una semilla, movimiento con joystick, la luz que revela el mapa como tinta sobre papel, hambre y sed que bajan.
+2. A definir después de probar el prototipo.
 
 ## Decisiones abiertas
 

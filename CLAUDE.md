@@ -14,7 +14,11 @@ El concepto vigente está en `docs/concepto.md`. Ante contradicciones mandan las
 
 ## Stack
 
-Pendiente de aprobación (ver "Plataforma y stack" en `docs/concepto.md`). Hasta que se apruebe, no instalar dependencias ni armar el proyecto.
+- Vite + TypeScript, PWA.
+- **Phaser 4** solo para la mazmorra (render, cámara, colisiones, entrada, escenas).
+- **HTML/CSS** para la interfaz, encima del canvas.
+- **Lógica en TypeScript puro** (`src/core/`), sin dependencias de Phaser ni del DOM, testeada con vitest.
+- IndexedDB para guardar. Sin backend.
 
 ## Reglas técnicas
 
