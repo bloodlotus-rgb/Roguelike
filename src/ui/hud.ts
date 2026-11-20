@@ -1,6 +1,8 @@
 import { ATTRIBUTE_IDS } from '../core/attributes';
 import { CLASSES, CLASS_IDS, type ClassId } from '../core/classes';
 import type { Survival } from '../core/survival';
+import type { World } from '../core/world';
+import { drawMap } from './map';
 import { getLang, onLangChange, setLang, t, type StringKey } from '../i18n/i18n';
 
 type Meter = 'health' | 'hunger' | 'thirst' | 'light';
@@ -12,6 +14,7 @@ export interface HudHandlers {
   onChooseAgain: () => void;
   onResume: () => void;
   onToggleSound: () => boolean;
+  onOpenMap: () => void;
 }
 
 /** HTML overlay on top of the canvas: meters, depth, buttons and screens. */
@@ -28,6 +31,11 @@ export class Hud {
   private readonly depthLabel: HTMLElement;
   private readonly specialRing: HTMLElement;
   private readonly root: HTMLElement;
+  private readonly mapScreen: HTMLElement;
+  private readonly mapCanvas: HTMLCanvasElement;
+  private readonly mapTitle: HTMLElement;
+  private mapWorld: World | null = null;
+  private mapTimer = 0;
   private depth = 1;
   /** Shows whether sound is on. */
   setSoundOn: (on: boolean) => void = () => {};
@@ -47,6 +55,7 @@ export class Hud {
         </div>
         <div class="hud-side">
           <div class="depth"></div>
+          <button class="map-button" type="button" data-i18n="map"></button>
           <div class="hud-toggles">
             <button class="sound" type="button" aria-label="Sound"></button>
             <button class="lang" type="button" aria-label="Language"></button>
@@ -64,6 +73,13 @@ export class Hud {
         <button class="action-button dodge" type="button"><span data-i18n="dodge"></span></button>
         <button class="action-button attack" type="button"><span data-i18n="attack"></span></button>
       </div>
+      <section class="map-screen" hidden>
+        <div class="map-sheet">
+          <h2 class="map-title"></h2>
+          <canvas class="map-canvas"></canvas>
+          <p class="map-hint" data-i18n="mapHint"></p>
+        </div>
+      </section>
       <section class="screen pause-screen" hidden>
         <h2 data-i18n="paused"></h2>
         <button class="paper-button resume" type="button" data-i18n="resume"></button>
@@ -108,6 +124,14 @@ export class Hud {
     this.deathScreen = root.querySelector('.death-screen')!;
     this.pauseScreen = root.querySelector('.pause-screen')!;
     this.classScreen = root.querySelector('.class-screen')!;
+    this.mapScreen = root.querySelector('.map-screen')!;
+    this.mapCanvas = root.querySelector('.map-canvas')!;
+    this.mapTitle = root.querySelector('.map-title')!;
+    root.querySelector('.map-button')!.addEventListener('click', handlers.onOpenMap);
+    this.mapScreen.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      this.closeMap();
+    });
     root.querySelector('.seed-value')!.textContent = seed;
 
     this.descendButton.addEventListener('click', handlers.onDescend);
@@ -196,6 +220,31 @@ export class Hud {
 
   hideDeath(): void {
     this.deathScreen.hidden = true;
+  }
+
+  get mapOpen(): boolean {
+    return !this.mapScreen.hidden;
+  }
+
+  /** Opens the map; it keeps redrawing while open, since the game does not stop. */
+  openMap(world: World): void {
+    this.mapWorld = world;
+    this.mapScreen.hidden = false;
+    this.renderMap();
+    window.clearInterval(this.mapTimer);
+    this.mapTimer = window.setInterval(() => this.renderMap(), 400);
+  }
+
+  closeMap(): void {
+    this.mapScreen.hidden = true;
+    window.clearInterval(this.mapTimer);
+    this.mapWorld = null;
+  }
+
+  private renderMap(): void {
+    if (!this.mapWorld) return;
+    this.mapTitle.textContent = t('mapTitle', { depth: this.mapWorld.depth });
+    drawMap(this.mapCanvas, this.mapWorld);
   }
 
   setPaused(paused: boolean): void {

@@ -42,6 +42,8 @@ export const COMBAT = {
   hearing: 0.9,
   /** Fraction of the light radius within which the flame gives the player away from any side. */
   glow: 0.5,
+  /** Unseen horrors within this many tiles that look at the player show their eyes. */
+  eyesRange: 9,
   /** A horror that notices the player warns the others within this many tiles. */
   alertRadius: 4,
   dropChance: 0.3,
@@ -76,6 +78,8 @@ export interface Enemy {
   flank: number;
   /** Whether the player can currently see it. */
   visible: boolean;
+  /** Unseen but looking at the player from the dark: its eyes glint. */
+  watching: boolean;
   /** Seconds of burning wax left. */
   wax: number;
   waxTick: number;
@@ -250,6 +254,7 @@ export class World {
       roamRoom: spawn.room,
       flank: spawnRng.range(-1, 1),
       visible: false,
+      watching: false,
       wax: 0,
       waxTick: 0,
     }));
@@ -630,10 +635,23 @@ export class World {
       const seen = this.visibleNow.has(tile) && (!enemy.def.stealthy || d <= sight);
       // Burning wax keeps a horror visible even outside the light.
       enemy.visible = seen || enemy.wax > 0;
+      enemy.watching = !enemy.visible && this.isWatching(enemy, d, sight);
       this.perceive(enemy, dt, d);
       this.think(enemy, dt, d, events);
     }
     this.separate();
+  }
+
+  /**
+   * Eyes in the dark: a horror out of sight but close, facing the player (or hunting
+   * them) with a clear line between them. Stealthy ones only show up very close.
+   */
+  private isWatching(enemy: Enemy, d: number, sight: number): boolean {
+    if (d > COMBAT.eyesRange) return false;
+    if (enemy.def.stealthy && d > sight * 1.8) return false;
+    const toPlayer = { x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y };
+    if (!enemy.alerted && angleBetween(enemy.facing, toPlayer) > COMBAT.viewCone) return false;
+    return hasLineOfSight(this.level, enemy.pos, this.player);
   }
 
   private burn(enemy: Enemy, dt: number, events: WorldEvent[]): void {

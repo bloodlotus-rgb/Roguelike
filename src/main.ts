@@ -50,6 +50,7 @@ class Session implements SceneHost {
       onDescend: () => this.descend(),
       onChooseAgain: () => this.chooseAgain(),
       onResume: () => this.setPaused(false),
+      onOpenMap: () => this.toggleMap(),
       onToggleSound: () => {
         this.sound.start();
         this.sound.setMuted(!this.sound.isMuted);
@@ -76,6 +77,7 @@ class Session implements SceneHost {
       if (!this.playing) return;
       if (e.code === 'Escape') this.setPaused(!this.paused);
       if (e.code === 'Enter' && this.world.atStairs && !this.paused) this.descend();
+      if (e.code === 'KeyM') this.toggleMap();
     });
   }
 
@@ -89,6 +91,7 @@ class Session implements SceneHost {
     this.updateDanger(world);
     if (events.some((e) => e.type === 'died')) {
       this.playing = false;
+      this.hud.closeMap();
       this.hud.setSurvival(world.survival, world.maxHealth);
       setTimeout(() => this.hud.showDeath(world.depth), 600);
       return;
@@ -164,6 +167,13 @@ class Session implements SceneHost {
     hint.textContent = t(isTouch ? 'controlsHint' : 'controlsHintKeys');
     hint.classList.remove('gone');
     setTimeout(() => hint.classList.add('gone'), 6000);
+  }
+
+  /** The map does not stop the game: looking at it in the dark is a risk. */
+  private toggleMap(): void {
+    if (!this.playing) return;
+    if (this.hud.mapOpen) this.hud.closeMap();
+    else this.hud.openMap(this.world);
   }
 
   private descend(): void {

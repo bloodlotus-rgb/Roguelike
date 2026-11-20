@@ -365,6 +365,69 @@ body {
   background: var(--flame);
 }
 
+/* Map */
+
+.map-button {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 10px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.map-screen {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: calc(14px + env(safe-area-inset-top)) 16px calc(14px + env(safe-area-inset-bottom));
+  background: rgba(17, 14, 12, 0.55);
+  pointer-events: auto;
+}
+
+.map-screen[hidden] {
+  display: none;
+}
+
+.map-sheet {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  width: min(100%, 720px);
+  height: min(100%, 720px);
+  padding: 12px 14px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 4px 8px 5px 7px;
+  box-shadow: 4px 5px 0 rgba(0, 0, 0, 0.5);
+  transform: rotate(-0.6deg);
+}
+
+.map-title {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: normal;
+  font-style: italic;
+  text-align: center;
+}
+
+.map-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.map-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-style: italic;
+  text-align: center;
+  color: var(--ink-soft);
+}
+
 /* Class selection */
 
 .screen.class-screen {

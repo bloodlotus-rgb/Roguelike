@@ -349,61 +349,27 @@ export function drawPaper(size: number, seed: string): HTMLCanvasElement {
   return c;
 }
 
-/** Soft round brush: opaque center, transparent edge. Used to erase the fog. */
-export function drawBrush(size: number): HTMLCanvasElement {
+/**
+ * Light falloff around the player: slightly warm at the center, a soft edge, and full
+ * ink darkness from `edge` (as a fraction of the half-size) to the border.
+ */
+export function drawLightMask(size: number, edge: number): HTMLCanvasElement {
   const [c, ctx] = canvas(size, size);
   const r = size / 2;
-  const g = ctx.createRadialGradient(r, r, 0, r, r, r);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.55, 'rgba(255,255,255,0.9)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  return c;
-}
-
-/** Tileable ink darkness: what has never been seen. Mostly black, with faint fibers. */
-export function drawDarkness(size: number, seed: string): HTMLCanvasElement {
-  const [c, ctx] = canvas(size, size);
-  const rng = Rng.derive(seed, 'darkness');
+  const [dr, dg, db] = DARK_RGB;
+  const g = ctx.createRadialGradient(r, r, 0, r, r, r * edge);
+  g.addColorStop(0, 'rgba(255, 190, 120, 0.06)');
+  g.addColorStop(0.45, `rgba(${dr},${dg},${db},0)`);
+  g.addColorStop(0.75, `rgba(${dr},${dg},${db},0.35)`);
+  g.addColorStop(0.92, `rgba(${dr},${dg},${db},0.85)`);
+  g.addColorStop(1, `rgba(${dr},${dg},${db},1)`);
   ctx.fillStyle = DARK;
   ctx.fillRect(0, 0, size, size);
-  for (let i = 0; i < (size * size) / 60; i++) {
-    ctx.fillStyle = `rgba(70, 58, 46, ${rng.range(0.03, 0.1)})`;
-    ctx.fillRect(rng.range(0, size), rng.range(0, size), rng.range(0.6, 2.4), rng.range(0.6, 1.2));
-  }
-  return c;
-}
-
-/**
- * Light falloff around the player: clear and slightly warm inside the flame, then ink
- * darkness that leaves the remembered map faint. The edge is ragged like ink bleeding
- * into paper; rotating the image slowly makes it crawl.
- */
-export function drawLightMask(size: number, holeFraction: number, darkness: number): HTMLCanvasElement {
-  const [c, ctx] = canvas(size, size);
-  const r = size / 2;
-  const hole = r * holeFraction;
-  const [dr, dg, db] = DARK_RGB;
-  const g = ctx.createRadialGradient(r, r, 0, r, r, r);
-  g.addColorStop(0, 'rgba(255, 190, 120, 0.07)');
-  g.addColorStop(holeFraction * 0.45, `rgba(${dr},${dg},${db},0)`);
-  g.addColorStop(holeFraction * 0.75, `rgba(${dr},${dg},${db},${darkness * 0.45})`);
-  g.addColorStop(holeFraction, `rgba(${dr},${dg},${db},${darkness})`);
-  g.addColorStop(1, `rgba(${dr},${dg},${db},${darkness})`);
+  ctx.globalCompositeOperation = 'copy';
   ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  // Ragged ink blots around the edge of the light.
-  const rng = new Rng('light-edge');
-  for (let i = 0; i < 260; i++) {
-    const a = rng.range(0, Math.PI * 2);
-    const d = hole * rng.range(0.62, 1.05);
-    const blot = hole * rng.range(0.03, 0.12);
-    ctx.fillStyle = `rgba(${dr},${dg},${db},${rng.range(0.08, 0.3)})`;
-    ctx.beginPath();
-    ctx.arc(r + Math.cos(a) * d, r + Math.sin(a) * d, blot, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  ctx.beginPath();
+  ctx.arc(r, r, r * edge, 0, Math.PI * 2);
+  ctx.fill();
   return c;
 }
 

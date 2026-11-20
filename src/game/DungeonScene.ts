@@ -4,12 +4,10 @@ import type { EnemyKind } from '../core/enemies';
 import { NO_INPUT, type ControlInput, type Enemy, type World, type WorldEvent } from '../core/world';
 import type { StringKey } from '../i18n/i18n';
 import {
-  drawBrush,
   drawEnemy,
   drawItem,
   drawLevel,
   drawLightMask,
-  drawDarkness,
   drawPlayer,
   drawProjectile,
   drawSplat,
@@ -20,13 +18,15 @@ import { isFloor } from '../core/dungeon';
 /** World units per tile. */
 export const TILE = 32;
 /** The art is drawn at a higher resolution so ink lines stay crisp when zoomed in. */
-const ART_SCALE = 1.5;
-/** The fog is soft, so it can live in a low-resolution texture. */
-const FOG_PER_TILE = 12;
-const LIGHT_MASK_SIZE = 1024;
-const LIGHT_HOLE = 0.06;
-/** Shadows are soft enough for a low-resolution texture too. */
-const SHADOW_PER_TILE = 16;
+const ART_SCALE = 2;
+/** The level art is split in blocks: phones cannot hold one texture that big. */
+const ART_CHUNKS = 2;
+const LIGHT_MASK_SIZE = 512;
+/** Fraction of the mask's half-size where the light is fully gone. */
+const LIGHT_EDGE = 0.93;
+/** Shadows live in a small texture that follows the light, softened with a blur. */
+const SHADOW_PER_TILE = 20;
+const SHADOW_SPAN = 20;
 const DARK_HEX = 0x110e0c;
 /** How many tiles fit across the shortest side of the screen. */
 const VIEW_TILES = 9.5;
@@ -66,8 +66,9 @@ const px = (tiles: number) => tiles * TILE;
 export class DungeonScene extends Phaser.Scene {
   private host!: SceneHost;
   private player!: Phaser.GameObjects.Image;
-  private fog!: Phaser.GameObjects.RenderTexture;
   private lightMask!: Phaser.GameObjects.Image;
+  private darkFrame!: Phaser.GameObjects.Graphics;
+  private eyes!: Phaser.GameObjects.Graphics;
   private shadows!: Phaser.GameObjects.RenderTexture;
   private shadowGfx!: Phaser.GameObjects.Graphics;
   private shadowKey = '';
@@ -100,10 +101,7 @@ export class DungeonScene extends Phaser.Scene {
     this.projectileSprites.clear();
     this.flashUntil.clear();
 
-    // Level art.
-    const levelKey = `level-${level.seed}-${level.depth}`;
-    if (!this.textures.exists(levelKey)) this.textures.addCanvas(levelKey, drawLevel(level, TILE * ART_SCALE));
-    this.add.image(0, 0, levelKey).setOrigin(0).setScale(1 / ART_SCALE).setDepth(0);
+    this.addLevelArt();
 
     for (const item of level.items) {
       if (!world.taken.has(item.id)) this.addItemSprite(item.id, item.kind, item.x, item.y);
@@ -122,31 +120,21 @@ export class DungeonScene extends Phaser.Scene {
     this.player = this.add.image(0, 0, 'player').setOrigin(0.5, 0.85).setScale(1 / ART_SCALE);
     this.fx = this.add.graphics().setDepth(2.6);
 
-    // Fog: paper over everything not yet seen.
-    const fogScale = TILE / FOG_PER_TILE;
-    this.fog = this.add
-      .renderTexture(0, 0, level.width * FOG_PER_TILE, level.height * FOG_PER_TILE)
-      .setOrigin(0)
-      .setScale(fogScale)
-      .setDepth(3);
-    this.fog.repeat('darkness', undefined, 0, 0, this.fog.width, this.fog.height);
-    const explored: number[] = [];
-    world.explored.forEach((seen, index) => {
-      if (seen) explored.push(index);
-    });
-    this.eraseFog(explored);
-
-    // Shadows cast by walls and columns inside the light.
+    // Shadows cast by walls and columns inside the light, softened by a blur.
     this.shadows = this.add
-      .renderTexture(0, 0, level.width * SHADOW_PER_TILE, level.height * SHADOW_PER_TILE)
+      .renderTexture(0, 0, SHADOW_SPAN * SHADOW_PER_TILE, SHADOW_SPAN * SHADOW_PER_TILE)
       .setOrigin(0)
       .setScale(TILE / SHADOW_PER_TILE)
-      .setDepth(3.9)
-      .setAlpha(0.8);
+      .setDepth(3.9);
+    this.shadows.enableFilters();
+    this.shadows.filters?.internal.addBlur(1, 2, 2, 1.2);
     this.shadowGfx = this.make.graphics({}, false);
     this.shadowKey = '';
 
+    // Outside the flame there is nothing: the mask fades to ink and a frame covers the rest.
     this.lightMask = this.add.image(0, 0, 'light-mask').setDepth(4);
+    this.darkFrame = this.add.graphics().setDepth(4);
+    this.eyes = this.add.graphics().setDepth(4.7);
 
     const camera = this.cameras.main;
     camera.setBackgroundColor(DARK);
@@ -173,7 +161,6 @@ export class DungeonScene extends Phaser.Scene {
     for (const event of events) {
       switch (event.type) {
         case 'revealed':
-          this.eraseFog(event.tiles);
           break;
         case 'pickup':
           this.itemSprites.get(event.itemId)?.destroy();
@@ -279,6 +266,7 @@ export class DungeonScene extends Phaser.Scene {
     this.syncProjectiles();
     this.syncLight(dt);
     this.drawEffects(dt);
+    this.drawEyes();
   }
 
   private syncPlayer(time: number): void {
@@ -301,10 +289,10 @@ export class DungeonScene extends Phaser.Scene {
       let x = px(enemy.pos.x);
       const y = px(enemy.pos.y);
       if (enemy.state === 'windup') x += Math.sin(time / 25) * 1.5;
-      // Marked horrors show through the fog.
+      // Marked horrors show through the darkness.
       const tile = Math.floor(enemy.pos.y) * this.host.world.level.width + Math.floor(enemy.pos.x);
-      const throughFog = enemy.wax > 0 && !this.host.world.visibleNow.has(tile);
-      sprite.setPosition(x, y).setDepth(throughFog ? 3.5 : 2 + enemy.pos.y / 1000);
+      const throughDark = enemy.wax > 0 && !this.host.world.visibleNow.has(tile);
+      sprite.setPosition(x, y).setDepth(throughDark ? 4.5 : 2 + enemy.pos.y / 1000);
       if (Math.abs(enemy.facing.x) > 0.1) sprite.setFlipX(enemy.facing.x < 0);
       sprite.setRotation(enemy.state === 'stunned' ? Math.sin(time / 80) * 0.25 : 0);
       // Wounded horrors look smudged.
@@ -325,7 +313,7 @@ export class DungeonScene extends Phaser.Scene {
       const sprite = this.itemSprites.get(item.id);
       if (!sprite) continue;
       const near = Math.hypot(item.x + 0.5 - world.player.x, item.y + 0.5 - world.player.y) <= sight;
-      sprite.setDepth(near ? 3.5 : 1).setAlpha(near ? 0.85 : 1);
+      sprite.setDepth(near ? 4.5 : 1).setAlpha(near ? 0.75 : 1);
     }
   }
 
@@ -354,70 +342,118 @@ export class DungeonScene extends Phaser.Scene {
     const t = this.flickerTime;
     const flicker = 1 + Math.sin(t * 9.1) * 0.012 + Math.sin(t * 23.7) * 0.008;
     const radius = this.host.world.lightRadius * TILE * flicker;
-    const scale = radius / ((LIGHT_MASK_SIZE / 2) * LIGHT_HOLE);
-    // The ragged edge crawls slowly.
-    this.lightMask
-      .setPosition(this.player.x, this.player.y - TILE * 0.3)
-      .setScale(scale)
-      .setRotation(t * 0.07);
+    const lx = this.player.x;
+    const ly = this.player.y - TILE * 0.3;
+    // The mask is fully dark at LIGHT_EDGE of its half-size: size it so that is the light radius.
+    const half = radius / LIGHT_EDGE;
+    this.lightMask.setPosition(lx, ly).setScale((half * 2) / LIGHT_MASK_SIZE);
+
+    // Cover everything around the mask with solid darkness.
+    const view = this.cameras.main.worldView;
+    const pad = TILE * 4;
+    const left = view.x - pad;
+    const top = view.y - pad;
+    const right = view.right + pad;
+    const bottom = view.bottom + pad;
+    const g = this.darkFrame;
+    g.clear();
+    g.fillStyle(DARK_HEX, 1);
+    // A few pixels of overlap hide the filtered border of the mask texture.
+    const inset = 4;
+    const x0 = lx - half + inset;
+    const x1 = lx + half - inset;
+    const y0 = ly - half + inset;
+    const y1 = ly + half - inset;
+    g.fillRect(left, top, right - left, Math.max(0, y0 - top));
+    g.fillRect(left, y1, right - left, Math.max(0, bottom - y1));
+    g.fillRect(left, y0, Math.max(0, x0 - left), y1 - y0);
+    g.fillRect(x1, y0, Math.max(0, right - x1), y1 - y0);
+
     this.updateShadows();
   }
 
   /**
-   * Each wall tile next to the floor casts a shadow away from the flame, starting at its
-   * far side so the wall itself stays lit. Redrawn only when the light moves.
+   * Darkness inside the light: floor hidden behind walls and columns gets a shadow cast
+   * away from the flame, and wall tiles the hero cannot see go dark as a whole, so the
+   * walls themselves are never sliced. Redrawn only when the light moves.
    */
   private updateShadows(): void {
     const world = this.host.world;
     const lx = world.player.x;
     const ly = world.player.y - 0.3;
     const radius = world.lightRadius;
-    const key = `${lx.toFixed(2)},${ly.toFixed(2)},${radius.toFixed(1)}`;
+    const key = `${lx.toFixed(2)},${ly.toFixed(2)},${radius.toFixed(1)},${world.visibleNow.size}`;
     if (key === this.shadowKey) return;
     this.shadowKey = key;
 
     const level = world.level;
+    const ox = Math.floor(lx) - SHADOW_SPAN / 2;
+    const oy = Math.floor(ly) - SHADOW_SPAN / 2;
+    this.shadows.setPosition(px(ox), px(oy));
+    const k = SHADOW_PER_TILE;
     const g = this.shadowGfx;
     g.clear();
     g.fillStyle(DARK_HEX, 1);
-    const k = SHADOW_PER_TILE;
-    const reach = radius + 1.5;
+    const reach = radius + 2;
     const project = (x: number, y: number) => {
       const dx = x - lx;
       const dy = y - ly;
       const d = Math.hypot(dx, dy) || 1e-6;
       const extra = Math.max(0, reach - d);
-      return { x: (x + (dx / d) * extra) * k, y: (y + (dy / d) * extra) * k };
+      return { x: (x + (dx / d) * extra - ox) * k, y: (y + (dy / d) * extra - oy) * k };
+    };
+    const quad = (x1: number, y1: number, x2: number, y2: number) => {
+      const a = project(x1, y1);
+      const b = project(x2, y2);
+      g.beginPath();
+      g.moveTo((x1 - ox) * k, (y1 - oy) * k);
+      g.lineTo((x2 - ox) * k, (y2 - oy) * k);
+      g.lineTo(b.x, b.y);
+      g.lineTo(a.x, a.y);
+      g.closePath();
+      g.fillPath();
     };
     const r = Math.ceil(reach);
-    for (let ty = Math.floor(ly) - r; ty <= Math.floor(ly) + r; ty++) {
-      for (let tx = Math.floor(lx) - r; tx <= Math.floor(lx) + r; tx++) {
+    const cx = Math.floor(lx);
+    const cy = Math.floor(ly);
+    for (let ty = cy - r; ty <= cy + r; ty++) {
+      for (let tx = cx - r; tx <= cx + r; tx++) {
+        if (tx < ox || ty < oy || tx >= ox + SHADOW_SPAN || ty >= oy + SHADOW_SPAN) continue;
         if (isFloor(level, tx, ty)) continue;
-        const nearFloor =
-          isFloor(level, tx - 1, ty) || isFloor(level, tx + 1, ty) || isFloor(level, tx, ty - 1) || isFloor(level, tx, ty + 1);
-        if (!nearFloor) continue;
-        // Back-facing edges: the ones whose outward normal points away from the light.
-        const edges: Array<[number, number, number, number]> = [];
-        if (ly < ty) edges.push([tx, ty + 1, tx + 1, ty + 1]);
-        if (ly > ty + 1) edges.push([tx, ty, tx + 1, ty]);
-        if (lx < tx) edges.push([tx + 1, ty, tx + 1, ty + 1]);
-        if (lx > tx + 1) edges.push([tx, ty, tx, ty + 1]);
-        for (const [x1, y1, x2, y2] of edges) {
-          const a = project(x1, y1);
-          const b = project(x2, y2);
-          g.beginPath();
-          g.moveTo(x1 * k, y1 * k);
-          g.lineTo(x2 * k, y2 * k);
-          g.lineTo(b.x, b.y);
-          g.lineTo(a.x, a.y);
-          g.closePath();
-          g.fillPath();
-        }
+        // Walls the hero cannot see are dark from edge to edge.
+        if (!world.visibleNow.has(ty * level.width + tx)) g.fillRect((tx - ox) * k, (ty - oy) * k, k, k);
+        // Every wall casts shadows only across the floor behind it.
+        if (ly < ty && isFloor(level, tx, ty + 1)) quad(tx, ty + 1, tx + 1, ty + 1);
+        if (ly > ty + 1 && isFloor(level, tx, ty - 1)) quad(tx, ty, tx + 1, ty);
+        if (lx < tx && isFloor(level, tx + 1, ty)) quad(tx + 1, ty, tx + 1, ty + 1);
+        if (lx > tx + 1 && isFloor(level, tx - 1, ty)) quad(tx, ty, tx, ty + 1);
       }
     }
     this.shadows.clear();
     this.shadows.draw(g);
     this.shadows.render();
+  }
+
+  /** Eyes glinting in the dark: pale when a horror only watches, red when it hunts. */
+  private drawEyes(): void {
+    const g = this.eyes;
+    g.clear();
+    const now = this.time.now;
+    for (const enemy of this.host.world.enemies) {
+      if (enemy.state === 'dead' || !enemy.watching) continue;
+      // Each pair blinks now and then, on its own rhythm.
+      if ((now / 1000 + enemy.id * 0.73) % 3.7 < 0.14) continue;
+      const x = px(enemy.pos.x);
+      const y = px(enemy.pos.y) - TILE * (enemy.kind === 'crawler' ? 0.35 : enemy.kind === 'husk' ? 1.05 : 0.95);
+      const gap = enemy.kind === 'husk' ? 5 : enemy.kind === 'crawler' ? 3 : 3.5;
+      const color = enemy.alerted ? 0xc4452f : 0xd8ccb0;
+      g.fillStyle(color, 0.18);
+      g.fillCircle(x - gap, y, 4);
+      g.fillCircle(x + gap, y, 4);
+      g.fillStyle(color, 0.95);
+      g.fillEllipse(x - gap, y, 2.6, 1.6);
+      g.fillEllipse(x + gap, y, 2.6, 1.6);
+    }
   }
 
   private drawEffects(dt: number): void {
@@ -530,23 +566,48 @@ export class DungeonScene extends Phaser.Scene {
 
   // Helpers -----------------------------------------------------------------
 
+  /** The level art, drawn once per level at high resolution and split into blocks. */
+  private addLevelArt(): void {
+    const level = this.host.world.level;
+    const key = `level-${level.seed}-${level.depth}`;
+    if (!this.textures.exists(`${key}-0-0`)) {
+      const full = drawLevel(level, TILE * ART_SCALE);
+      const w = Math.ceil(full.width / ART_CHUNKS);
+      const h = Math.ceil(full.height / ART_CHUNKS);
+      for (let cy = 0; cy < ART_CHUNKS; cy++) {
+        for (let cx = 0; cx < ART_CHUNKS; cx++) {
+          // Two pixels of overlap hide the seams between blocks.
+          const cw = Math.min(w + 2, full.width - cx * w);
+          const ch = Math.min(h + 2, full.height - cy * h);
+          const chunk = document.createElement('canvas');
+          chunk.width = cw;
+          chunk.height = ch;
+          chunk.getContext('2d')!.drawImage(full, cx * w, cy * h, cw, ch, 0, 0, cw, ch);
+          this.textures.addCanvas(`${key}-${cx}-${cy}`, chunk);
+        }
+      }
+      full.width = 0;
+      full.height = 0;
+    }
+    const w = (level.width * TILE * ART_SCALE) / ART_CHUNKS;
+    const h = (level.height * TILE * ART_SCALE) / ART_CHUNKS;
+    for (let cy = 0; cy < ART_CHUNKS; cy++) {
+      for (let cx = 0; cx < ART_CHUNKS; cx++) {
+        this.add
+          .image((Math.ceil(w) * cx) / ART_SCALE, (Math.ceil(h) * cy) / ART_SCALE, `${key}-${cx}-${cy}`)
+          .setOrigin(0)
+          .setScale(1 / ART_SCALE)
+          .setDepth(0);
+      }
+    }
+  }
+
   private addItemSprite(id: number, kind: string, x: number, y: number): void {
     const sprite = this.add
       .image(px(x + 0.5), px(y + 0.5), `item-${kind}`)
       .setScale(1 / ART_SCALE)
       .setDepth(1);
     this.itemSprites.set(id, sprite);
-  }
-
-  private eraseFog(tiles: number[]): void {
-    if (tiles.length === 0) return;
-    const width = this.host.world.level.width;
-    for (const index of tiles) {
-      const x = ((index % width) + 0.5) * FOG_PER_TILE;
-      const y = (Math.floor(index / width) + 0.5) * FOG_PER_TILE;
-      this.fog.erase('brush', x, y);
-    }
-    this.fog.render();
   }
 
   private fitZoom(): void {
@@ -557,14 +618,11 @@ export class DungeonScene extends Phaser.Scene {
   }
 
   private ensureSharedTextures(): void {
-    const seed = this.host.world.seed;
     const add = (key: string, make: () => HTMLCanvasElement) => {
       if (!this.textures.exists(key)) this.textures.addCanvas(key, make());
     };
     const artTile = TILE * ART_SCALE;
-    add('darkness', () => drawDarkness(256, seed));
-    add('brush', () => drawBrush(FOG_PER_TILE * 2.6));
-    add('light-mask', () => drawLightMask(LIGHT_MASK_SIZE, LIGHT_HOLE, 0.8));
+    add('light-mask', () => drawLightMask(LIGHT_MASK_SIZE, LIGHT_EDGE));
     add('player', () => drawPlayer(artTile));
     add('projectile', () => drawProjectile(artTile));
     for (const kind of ['food', 'water', 'oil'] as const) add(`item-${kind}`, () => drawItem(kind, artTile));

@@ -11,7 +11,8 @@ Etapas 1 (prototipo), 2 (combate) y atmósfera, con arte provisorio:
 - Joystick virtual (tocando cualquier parte de la pantalla) y tres botones: **Atacar** (golpe o parry), **Especial** y **Esquivar** (mantener: correr, que gasta sed y hambre y hace ruido).
 - Cuatro horrores (Rastrero, Hueco, Plañidera, Apagavelas) que avisan antes de atacar, se alertan entre sí y a veces deambulan entre salas. Tu luz te delata.
 - Salas rectangulares, cavernas y salas con columnas, con decorado.
-- Atmósfera oscura: lo que no viste es tinta negra, el papel aparece solo bajo tu llama, y muros y columnas proyectan sombras. Lo ya visto queda apagado.
+- Atmósfera oscura: fuera de tu llama no se ve nada; muros y columnas proyectan sombras suaves. Los horrores que te miran desde la oscuridad muestran los ojos.
+- Mapa desplegable con lo explorado (botón Mapa o tecla `M`); no pausa el juego.
 - Sonido generado por código: ambiente, pasos, la llama, latido con poca vida, avisos de cada ataque y horrores que se oyen antes de verse. Botón ♪ para silenciar.
 - Viñeta que se cierra cuando te cazan y se tiñe de rojo con poca vida.
 - Hambre, sed y luz bajan con el tiempo; atacar y esquivar gastan sed.
