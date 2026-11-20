@@ -198,6 +198,19 @@ describe('player attacks', () => {
     expect(enemy.state).toBe('stunned');
   });
 
+  it('chains a blow pressed during the previous swing', () => {
+    const world = arena('headsman');
+    world.facing = { x: 1, y: 0 };
+    const attacks = () => events.filter((e) => e.type === 'attack').length;
+    const events: WorldEvent[] = [];
+    events.push(...tap(world, 'attack'));
+    events.push(...run(world, 0.3));
+    // Still recovering: this press is remembered instead of lost.
+    events.push(...tap(world, 'attack'));
+    events.push(...run(world, 0.6));
+    expect(attacks()).toBe(2);
+  });
+
   it('restarts the combo after a pause', () => {
     const world = arena('headsman');
     tap(world, 'attack');

@@ -31,6 +31,8 @@ export const COMBAT = {
     hearing: 3.5,
   },
   thirstCost: { attack: 0.6, dodge: 1, special: 1.5 },
+  /** A press during a swing is kept this long and chains the next blow. */
+  attackBuffer: 0.45,
   /** Riposte after a parry: guaranteed critical hit within this many seconds. */
   riposteFor: 2,
   critMultiplier: 2,
@@ -163,6 +165,8 @@ export class World {
   /** Special meter from 0 to 1, and minimum seconds left before the next use. */
   specialCharge = 0;
   specialCooldown = 0;
+  /** Seconds a press made during a swing is remembered, to chain the next blow. */
+  attackBuffer = 0;
   /** Position in the weapon combo and seconds left to continue it. */
   comboIndex = 0;
   comboTimer = 0;
@@ -309,6 +313,7 @@ export class World {
 
   private updateTimers(dt: number): void {
     this.parryTimer = Math.max(0, this.parryTimer - dt);
+    this.attackBuffer = Math.max(0, this.attackBuffer - dt);
     this.riposteTimer = Math.max(0, this.riposteTimer - dt);
     this.invulnerableTimer = Math.max(0, this.invulnerableTimer - dt);
     this.invisibleTimer = Math.max(0, this.invisibleTimer - dt);
@@ -343,6 +348,9 @@ export class World {
       // Every press opens the parry window, and swings.
       this.parryTimer = this.cls.parryWindow + parryBonus(this.cls.attributes);
       this.startAttack(events);
+    } else if (attackPressed && this.action.type === 'attack') {
+      // Pressed while still swinging: remember it and chain the next blow right away.
+      this.attackBuffer = COMBAT.attackBuffer;
     }
 
     if (specialPressed && (free || recovering) && this.specialReady) this.startSpecial(events);
@@ -400,6 +408,11 @@ export class World {
           };
         } else {
           this.action = { type: 'none' };
+          if (this.attackBuffer > 0) {
+            this.attackBuffer = 0;
+            this.parryTimer = this.cls.parryWindow + parryBonus(this.cls.attributes);
+            this.startAttack(events);
+          }
         }
         return;
       case 'special':
