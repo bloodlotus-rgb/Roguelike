@@ -148,9 +148,10 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
         ${uvAssign}`,
       );
     shader.fragmentShader = shader.fragmentShader
+      .replace('#include <lights_fragment_begin>', LIGHTS_WITH_INK_SHADOW)
       .replace(
         '#include <common>',
-        '#include <common>\nuniform float uFade;\nuniform float uNight;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
+        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
       )
       .replace(
         '#include <map_fragment>',
@@ -190,17 +191,27 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           float d2 = abs(fract(hp.x - hp.y) - 0.5);
           float d3 = abs(fract(hp.x * 1.3 + 0.25) - 0.5);
           float aa = clamp(fwidth(hp.x + hp.y) * 0.6, 0.002, 0.2);
-          float tone = clamp(1.0 - lit * 1.5, 0.0, 1.0);
-          // Each pass of lines comes in thin; past three quarters they all thicken into solid ink.
-          float thick = smoothstep(0.72, 1.0, tone) * 0.42;
-          float w1 = smoothstep(0.12, 0.2, tone) * 0.08 + thick;
-          float w2 = smoothstep(0.38, 0.46, tone) * 0.08 + thick;
-          float w3 = smoothstep(0.6, 0.68, tone) * 0.07 + thick;
+          // A tonal ladder with clear steps: clean paper, loose hatching, cross-hatching, a
+          // third pass, then solid ink. The ink's edge wanders a little, like a brush.
+          float wobble = inkNoise(vInkPos.xz * 3.1 + vInkPos.y * 2.3) - 0.5;
+          float tone = clamp(1.0 - lit * 1.5 + wobble * 0.08, 0.0, 1.0);
+          // Cast shadows inside the light are solid ink with a short hatched rim: the
+          // light fading with distance is drawn with lines, what blocks it with a brush.
+          float shadowed = 1.0 - smoothstep(0.25, 0.75, inkShadow + wobble * 0.25);
+          float rim = smoothstep(0.08, 0.35, shadowed) * (1.0 - smoothstep(0.65, 0.92, shadowed));
+          tone = max(tone, mix(tone, 0.6, rim));
+          float w1 = smoothstep(0.18, 0.24, tone) * 0.08;
+          float w2 = smoothstep(0.4, 0.46, tone) * 0.09;
+          float w3 = smoothstep(0.58, 0.64, tone) * 0.1 + smoothstep(0.64, 0.76, tone) * 0.14;
+          // Drawn by hand: each line wavers, presses harder or lighter, and the pen lifts now
+          // and then, less so as the shade deepens and the lines close up.
+          float lift = 1.0 - smoothstep(0.5, 0.75, tone);
           float ink = max(
-            (1.0 - smoothstep(w1 - aa, w1 + aa, d1)) * step(0.001, w1),
-            (1.0 - smoothstep(w2 - aa, w2 + aa, d2)) * step(0.001, w2));
-          ink = max(ink, (1.0 - smoothstep(w3 - aa, w3 + aa, d3)) * step(0.001, w3));
-          ink = max(ink, step(0.985, tone));
+            inkPen(hp.x + hp.y, hp.x - hp.y, w1, aa, 0.0, lift),
+            inkPen(hp.x - hp.y, hp.x + hp.y, w2, aa, 17.0, lift));
+          ink = max(ink, inkPen(hp.x * 1.3 + 0.25, hp.y, w3, aa, 41.0, lift * 0.5));
+          ink = max(ink, smoothstep(0.74, 0.78, tone));
+          ink = max(ink, smoothstep(0.82, 0.92, shadowed));
           float edge = 0.0;
           ${
             outline
@@ -283,6 +294,49 @@ function wallGeometry(level: Level, tiles: Array<[number, number]>, inset = 0): 
   g.addGroup(sideIndices, indices.length - sideIndices, 1);
   return g;
 }
+
+/**
+ * three's light loop, changed so the flame's shadow is not multiplied into the light but
+ * kept apart in `inkShadow` (1 lit, 0 in shadow): the ink shader draws cast shadows as
+ * solid ink and the light's falloff as hatching.
+ */
+const LIGHTS_WITH_INK_SHADOW = (() => {
+  const chunk = THREE.ShaderChunk.lights_fragment_begin;
+  const line = `directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( spotShadowMap[ i ], spotLightShadow.shadowMapSize, spotLightShadow.shadowIntensity, spotLightShadow.shadowBias, spotLightShadow.shadowRadius, vSpotLightCoord[ i ] ) : 1.0;`;
+  if (!chunk.includes(line)) throw new Error('three.js light chunk changed: update the ink shadow hook');
+  const replaced = chunk.replace(
+    line,
+    `inkShadow = min(inkShadow, ( directLight.visible && receiveShadow ) ? getShadow( spotShadowMap[ i ], spotLightShadow.shadowMapSize, spotLightShadow.shadowIntensity, spotLightShadow.shadowBias, spotLightShadow.shadowRadius, vSpotLightCoord[ i ] ) : 1.0);`,
+  );
+  return `float inkShadow = 1.0;\n${replaced}`;
+})();
+
+/** Solid ink seen from inside a slightly larger shell: an outline around a shape. */
+function hullMaterial(): THREE.MeshLambertMaterial {
+  return inkMaterial(new THREE.MeshLambertMaterial({ side: THREE.BackSide }), { cut: true });
+}
+
+/** Smooth value noise, for edges of ink that wander like a brush. */
+const INK_NOISE = `
+float inkHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float inkNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(inkHash(i), inkHash(i + vec2(1.0, 0.0)), u.x), mix(inkHash(i + vec2(0.0, 1.0)), inkHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+// One family of pen lines: 'across' counts lines, 'along' runs down each line. Each line
+// has its own waver, pressure and lifts; 'lift' scales how often the pen leaves the paper.
+float inkPen(float across, float along, float width, float aa, float seed, float lift) {
+  if (width <= 0.001) return 0.0;
+  float id = floor(across);
+  float waver = (inkNoise(vec2(along * 0.7, id * 3.7 + seed)) - 0.5) * 0.3;
+  float d = abs(fract(across + waver) - 0.5);
+  float w = width * (0.65 + 0.7 * inkNoise(vec2(along * 1.1, id * 1.3 + seed + 7.0)));
+  float line = 1.0 - smoothstep(w - aa, w + aa, d);
+  float gap = step(inkNoise(vec2(along * 0.5, id * 5.1 + seed + 3.0)), 0.22 * lift);
+  return line * (1.0 - gap);
+}`;
 
 /** A flat cut-out standing on the floor, facing the camera, lit like the floor under it. */
 class Cutout {
@@ -442,6 +496,8 @@ export class ThreeView {
   private readonly stone = repeating(canvasTexture(stoneColor(256)));
   private wallTiles: Array<[number, number]> = [];
   private columns: THREE.InstancedMesh | null = null;
+  /** The columns' outline: a slightly larger shell seen from inside, drawn in solid ink. */
+  private columnHull: THREE.InstancedMesh | null = null;
   private columnTiles: Array<[number, number]> = [];
   private readonly effects: Effects;
   private lastNow = 0;
@@ -640,6 +696,8 @@ export class ThreeView {
     this.columns.castShadow = true;
     this.columns.receiveShadow = true;
     this.levelGroup.add(this.columns);
+    this.columnHull = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.33, 0.36, 1, 18, 1, true), hullMaterial(), this.columnTiles.length);
+    this.levelGroup.add(this.columnHull);
     this.applyWallHeight();
 
     // Decoration painted on the floor: ink at the foot of the walls, bones, rubble, stains.
@@ -709,17 +767,26 @@ export class ThreeView {
     }
     const stone = inkMaterial(new THREE.MeshLambertMaterial({ color: 0xcdbf9f, flatShading: true }));
     const bone = inkMaterial(new THREE.MeshLambertMaterial({ color: 0xe6dcc4 }));
-    const add = (geometry: THREE.BufferGeometry, material: THREE.Material, list: THREE.Matrix4[]) => {
+    const hull = hullMaterial();
+    const grow = new THREE.Matrix4();
+    const add = (geometry: THREE.BufferGeometry, material: THREE.Material, list: THREE.Matrix4[], outline = 0) => {
       if (list.length === 0) return;
       const mesh = new THREE.InstancedMesh(geometry, material, list.length);
       list.forEach((m, i) => mesh.setMatrixAt(i, m));
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       this.levelGroup.add(mesh);
+      // A pen outline: the same shape a little larger, seen from inside, in solid ink.
+      if (outline > 0) {
+        const shell = new THREE.InstancedMesh(geometry, hull, list.length);
+        grow.makeScale(1 + outline, 1 + outline, 1 + outline);
+        list.forEach((m, i) => shell.setMatrixAt(i, m.clone().multiply(grow)));
+        this.levelGroup.add(shell);
+      }
     };
-    add(new THREE.IcosahedronGeometry(1, 0), stone, rocks);
+    add(new THREE.IcosahedronGeometry(1, 0), stone, rocks, 0.22);
     add(new THREE.CylinderGeometry(1, 0.8, 1, 6), bone, bones);
-    add(new THREE.SphereGeometry(1, 10, 8), bone, skulls);
+    add(new THREE.SphereGeometry(1, 10, 8), bone, skulls, 0.14);
   }
 
   private applyWallHeight(): void {
@@ -734,7 +801,15 @@ export class ThreeView {
         m.makeScale(1, h, 1);
         m.setPosition(x + 0.5, h / 2, y + 0.5);
         this.columns!.setMatrixAt(i, m);
+        // The outline shell: a touch wider, same height.
+        m.makeScale(1.08, h, 1.08);
+        m.setPosition(x + 0.5, h / 2, y + 0.5);
+        this.columnHull?.setMatrixAt(i, m);
       });
+      if (this.columnHull) {
+        this.columnHull.instanceMatrix.needsUpdate = true;
+        this.columnHull.computeBoundingSphere();
+      }
       this.columns.instanceMatrix.needsUpdate = true;
       this.columns.computeBoundingSphere();
     }
