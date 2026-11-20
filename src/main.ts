@@ -5,6 +5,7 @@ import { NO_INPUT, World, type ControlInput, type WorldEvent } from './core/worl
 import { DARK } from './game/art';
 import { DungeonScene, type SceneHost } from './game/DungeonScene';
 import { FirstPersonView } from './game/firstPerson';
+import { ThreeView } from './game/threeView';
 import { t, type StringKey } from './i18n/i18n';
 import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
@@ -57,6 +58,9 @@ class Session implements SceneHost {
   private danger = 0;
   view: 'top' | 'first' = storedView();
   private fp: FirstPersonView | null = null;
+  /** `?engine=three` tries the experimental 3D renderer, which draws both views. */
+  readonly engine: 'classic' | 'three' = new URL(window.location.href).searchParams.get('engine') === 'three' ? 'three' : 'classic';
+  private three: ThreeView | null = null;
   private fpAngle = 0;
   private lastInput = 0;
 
@@ -125,19 +129,30 @@ class Session implements SceneHost {
     this.applyView();
   }
 
+  get drawTop(): boolean {
+    return this.engine === 'classic' && this.view === 'top';
+  }
+
   private applyView(): void {
     const first = this.view === 'first';
-    document.body.classList.toggle('first-person', first);
     this.hud.setFirstPerson(first);
     if (first && this.world) this.fpAngle = Math.atan2(this.world.facing.y, this.world.facing.x);
-    if (first && !this.fp) this.fp = new FirstPersonView(document.getElementById('fp')!);
     this.lastInput = 0;
+    if (this.engine === 'three') {
+      document.body.classList.add('three-engine');
+      if (!this.three) this.three = new ThreeView(document.getElementById('three')!);
+      this.three.setMode(first ? 'first' : 'top');
+      return;
+    }
+    document.body.classList.toggle('first-person', first);
+    if (first && !this.fp) this.fp = new FirstPersonView(document.getElementById('fp')!);
   }
 
   onEvents(events: WorldEvent[]): void {
     const world = this.world;
     this.sound.update(world, events, this.paused);
-    if (this.view === 'first' && this.fp) this.fp.render(world, events, this.fpAngle, performance.now());
+    if (this.engine === 'three') this.three?.render(world, events, this.fpAngle, performance.now());
+    else if (this.view === 'first' && this.fp) this.fp.render(world, events, this.fpAngle, performance.now());
     this.updateDanger(world);
     if (events.some((e) => e.type === 'died')) {
       this.playing = false;
