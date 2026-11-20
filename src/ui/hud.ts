@@ -231,6 +231,7 @@ export class Hud {
   private renderInteraction(): void {
     const keys: Record<NonNullable<Interaction>, StringKey> = {
       stairs: 'descend',
+      up: 'action_up',
       camp: 'action_camp',
       fountain: 'action_fountain',
       drip: 'action_drip',

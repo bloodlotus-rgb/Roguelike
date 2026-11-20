@@ -164,7 +164,7 @@ export interface LifeOptions {
 type Command = { type: 'interact' } | { type: 'use'; uid: number } | { type: 'drop'; uid: number };
 
 /** What the hero can do where they stand. */
-export type Interaction = 'stairs' | 'camp' | 'fountain' | 'drip' | 'search' | null;
+export type Interaction = 'stairs' | 'up' | 'camp' | 'fountain' | 'drip' | 'search' | null;
 
 /** Counters behind the acquired traits. */
 export interface LifeCounters {
@@ -193,6 +193,14 @@ const freshCounters = (): LifeCounters => ({
   belowTenth: false,
   earned: [],
 });
+
+/** What a life left behind on a level it walked: so going back finds it as it was. */
+export interface LevelMemory {
+  taken: number[];
+  searched: number[];
+  drops: LevelItem[];
+  enemies: WorldSnapshot['enemies'];
+}
 
 /** Everything needed to bring a life back exactly where it was. */
 export interface WorldSnapshot {
@@ -223,6 +231,8 @@ export interface WorldSnapshot {
   searched?: number[];
   calm?: number;
   clock?: number;
+  /** Levels walked in this life, other than the current one. */
+  memory?: Array<[number, LevelMemory]>;
   fire?: boolean;
   nightmares?: boolean;
   /** This level's explored tiles, packed. */
@@ -363,13 +373,8 @@ export class World {
     world.player = { ...snapshot.player };
     world.facing = { ...snapshot.facing };
     world.survival = { ...snapshot.survival };
-    world.taken = new Set(snapshot.taken);
-    world.level.items.push(...snapshot.drops);
-    world.enemies = snapshot.enemies.map(({ roaming, ...e }) => {
-      const room = world.level.rooms[e.roamRoom];
-      const roamField = roaming && room ? floorDistances(world.level, { x: room.x + Math.floor(room.w / 2), y: room.y + Math.floor(room.h / 2) }) : null;
-      return { ...e, pos: { ...e.pos }, def: ENEMIES[e.kind], roamField };
-    });
+    world.applyLevel({ taken: snapshot.taken, searched: snapshot.searched ?? [], drops: snapshot.drops, enemies: snapshot.enemies });
+    world.memory = new Map(snapshot.memory ?? []);
     world.specialCharge = snapshot.specialCharge;
     world.specialCooldown = snapshot.specialCooldown;
     world.comboIndex = snapshot.comboIndex;
@@ -379,7 +384,7 @@ export class World {
     world.time = snapshot.time;
     if (snapshot.inventory) world.inventory = JSON.parse(JSON.stringify(snapshot.inventory));
     world.gold = snapshot.gold ?? 0;
-    world.searched = new Set(snapshot.searched ?? []);
+
     world.calm = snapshot.calm ?? 0;
     world.clock = snapshot.clock ?? 0;
     world.campfire = snapshot.fire ?? false;
@@ -408,7 +413,7 @@ export class World {
   }
 
   snapshot(): WorldSnapshot {
-    const generated = generateLevel(this.seed, this.depth, this.life).items.length;
+    const here = this.captureLevel();
     return {
       v: 1,
       seed: this.seed,
@@ -419,9 +424,10 @@ export class World {
       player: { ...this.player },
       facing: { ...this.facing },
       survival: { ...this.survival },
-      taken: [...this.taken],
-      drops: this.level.items.slice(generated).map((i) => ({ ...i })),
-      enemies: this.enemies.map(({ def: _def, roamField, ...rest }) => ({ ...rest, pos: { ...rest.pos }, roaming: roamField !== null })),
+      taken: here.taken,
+      drops: here.drops,
+      enemies: here.enemies,
+      memory: [...this.memory].map(([d, m]) => [d, JSON.parse(JSON.stringify(m))] as [number, LevelMemory]),
       specialCharge: this.specialCharge,
       specialCooldown: this.specialCooldown,
       comboIndex: this.comboIndex,
@@ -431,7 +437,7 @@ export class World {
       time: this.time,
       inventory: JSON.parse(JSON.stringify(this.inventory)),
       gold: this.gold,
-      searched: [...this.searched],
+      searched: here.searched,
       calm: this.calm,
       clock: this.clock,
       fire: this.campfire,
@@ -547,13 +553,98 @@ export class World {
 
   /** Goes one level down, keeping the survival meters and the special charge. */
   descend(): void {
-    this.storeExplored();
+    this.leaveLevel();
     this.enterLevel(this.level.depth + 1);
   }
 
-  private enterLevel(depth: number): void {
-    this.level = generateLevel(this.seed, depth, this.life);
+  /** Whether the hero stands by the way up (where they came in). */
+  get atUpStairs(): boolean {
+    const { start } = this.level;
+    return dist(this.player, { x: start.x + 0.5, y: start.y + 0.5 }) <= CONFIG.player.stairsDistance;
+  }
+
+  /**
+   * Climbs to the level above, arriving by its stairs down. From depth 1 the way up leads
+   * out to the mansion: the world stays at depth 1, and the session takes over.
+   */
+  ascend(): 'mansion' | 'climbed' {
+    if (this.depth <= 1) return 'mansion';
+    this.leaveLevel();
+    this.enterLevel(this.level.depth - 1, 'below');
+    return 'climbed';
+  }
+
+  /** A night at the mansion: safe sleep, a full belly, full waterskins; below, the night passes. */
+  restAtMansion(): WorldEvent[] {
+    const events: WorldEvent[] = [];
+    this.survival = { ...this.survival, health: this.maxHealth, hunger: 100, thirst: 100 };
+    for (const it of this.inventory.items) {
+      if (it.kind !== 'waterskin') continue;
+      it.charges = ITEMS.waterskin.charges;
+      it.turbid = false;
+    }
+    const cycle = CONFIG.time.day + CONFIG.time.night;
+    this.clock = Math.floor(this.clock / cycle) * cycle + cycle;
+    this.nightmares = false;
+    this.dawn(events, null);
+    return events;
+  }
+
+  /** Leaves an item behind for good (at the mansion there is no floor to drop it on). */
+  discardItem(uid: number): void {
+    removeItem(this.inventory, uid);
+  }
+
+  /** Buys from the mansion's shop with the hero's gold. */
+  buy(kind: ItemKind): 'bought' | 'gold' | 'room' {
+    const price = CONFIG.shop[kind as keyof typeof CONFIG.shop];
+    if (price === undefined || this.gold < price) return 'gold';
+    if (!addItem(this.inventory, kind)) return 'room';
+    this.gold -= price;
+    return 'bought';
+  }
+
+  /** Back from the mansion: in by the way down, where every life begins. */
+  returnFromSurface(): void {
     this.player = { x: this.level.start.x + 0.5, y: this.level.start.y + 0.5 };
+    this.lastViewTile = -1;
+  }
+
+  /** Levels this life has walked, as they were left. */
+  private memory = new Map<number, LevelMemory>();
+  /** Items generated with the level (the rest were dropped during this life). */
+  private baseItems = 0;
+
+  private leaveLevel(): void {
+    this.storeExplored();
+    this.memory.set(this.depth, this.captureLevel());
+  }
+
+  private captureLevel(): LevelMemory {
+    return {
+      taken: [...this.taken],
+      searched: [...this.searched],
+      drops: this.level.items.slice(this.baseItems).map((i) => ({ ...i })),
+      enemies: this.enemies.map(({ def: _def, roamField, ...rest }) => ({ ...rest, pos: { ...rest.pos }, roaming: roamField !== null })),
+    };
+  }
+
+  private applyLevel(mem: LevelMemory): void {
+    this.taken = new Set(mem.taken);
+    this.searched = new Set(mem.searched);
+    this.level.items.splice(this.baseItems);
+    this.level.items.push(...mem.drops.map((i) => ({ ...i })));
+    this.enemies = mem.enemies.map(({ roaming, ...e }) => {
+      const room = this.level.rooms[e.roamRoom];
+      const roamField = roaming && room ? floorDistances(this.level, { x: room.x + Math.floor(room.w / 2), y: room.y + Math.floor(room.h / 2) }) : null;
+      return { ...e, pos: { ...e.pos }, def: ENEMIES[e.kind], roamField };
+    });
+  }
+
+  private enterLevel(depth: number, from: 'above' | 'below' = 'above'): void {
+    this.level = generateLevel(this.seed, depth, this.life);
+    const arrival = from === 'below' ? this.level.stairs : this.level.start;
+    this.player = { x: arrival.x + 0.5, y: arrival.y + 0.5 };
     // The dynasty's map: whatever any ancestor saw here is already known.
     this.explored = unpackTiles(this.exploredByDepth[depth], this.level.width * this.level.height);
     this.visibleNow.clear();
@@ -578,6 +669,10 @@ export class World {
       const y = extraRng.int(room.y, room.y + room.h - 1);
       if (isFloor(this.level, x, y)) this.level.items.push({ id: 900 + depth, kind: extraRng.pick<LootKind>(['ration', 'oil', 'gold']), amount: goldPile(extraRng, depth), x, y });
     }
+    this.baseItems = this.level.items.length;
+    // A level already walked in this life is found as it was left.
+    const mem = this.memory?.get(depth);
+    if (mem) this.applyLevel(mem);
   }
 
   update(dt: number, input: ControlInput): WorldEvent[] {
@@ -1182,7 +1277,9 @@ export class World {
     if (this.inDanger) return void events.push({ type: 'cantBuild', reason: 'danger' });
     if (room < 0) return void events.push({ type: 'cantBuild', reason: 'corridor' });
     const taken = this.camps.some((c) => c.depth === this.depth && this.roomAt(c.x, c.y) === room);
-    const onSomething = (x === this.level.stairs.x && y === this.level.stairs.y) || this.level.features.some((f) => f.x === x && f.y === y);
+    const { stairs, start } = this.level;
+    const onSomething =
+      (x === stairs.x && y === stairs.y) || (Math.abs(x - start.x) <= 1 && Math.abs(y - start.y) <= 1) || this.level.features.some((f) => f.x === x && f.y === y);
     if (taken || onSomething) return void events.push({ type: 'cantBuild', reason: 'taken' });
     removeItem(this.inventory, uid);
     const camp: CampSite = {
@@ -1398,6 +1495,7 @@ export class World {
   /** What the action button does here. */
   get interaction(): Interaction {
     if (this.atStairs) return 'stairs';
+    if (this.atUpStairs) return 'up';
     if (this.campInReach) return 'camp';
     const f = this.featureInReach();
     if (!f) return null;

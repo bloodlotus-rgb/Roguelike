@@ -735,6 +735,7 @@ describe('camps and nights', () => {
   /** A world with a camp pitched in the first room, the hero at it. */
   function camped(): World {
     const world = arena();
+    world.player = { x: world.player.x + 2, y: world.player.y };
     const kit = world.inventory.items.find((i) => i.kind === 'campKit')!;
     world.useItem(kit.uid);
     const events = run(world, 0.05);
@@ -746,6 +747,7 @@ describe('camps and nights', () => {
     const camps: import('./dynasty').CampSite[] = [];
     const world = new World('estirpe', 'headsman', 0, 1, { camps, builder: 3, generation: 2 });
     world.enemies = [];
+    world.player = { x: world.player.x + 2, y: world.player.y };
     const kit = world.inventory.items.find((i) => i.kind === 'campKit')!;
     world.useItem(kit.uid);
     run(world, 0.05);
@@ -801,6 +803,7 @@ describe('camps and nights', () => {
     for (let life = 0; life < 30 && !attacked; life++) {
       const world = new World('estirpe-' + life, 'plunderer', life, 1);
       world.enemies = [];
+      world.player = { x: world.player.x + 2, y: world.player.y };
       const kit = world.inventory.items.find((i) => i.kind === 'campKit')!;
       world.useItem(kit.uid);
       run(world, 0.05);
@@ -837,6 +840,52 @@ describe('camps and nights', () => {
     const copy = World.restore(JSON.parse(JSON.stringify(world.snapshot())));
     expect(copy.clock).toBe(500);
     expect(copy.campfire).toBe(true);
+  });
+});
+
+describe('climbing and the mansion', () => {
+  it('climbing back finds a level as it was left, and loot does not come back', () => {
+    const world = arena();
+    const item = world.level.items[0];
+    world.taken.add(item.id);
+    world.descend();
+    expect(world.depth).toBe(2);
+    expect(world.ascend()).toBe('climbed');
+    expect(world.depth).toBe(1);
+    expect(world.taken.has(item.id)).toBe(true);
+    expect(world.atStairs).toBe(true);
+    // And the way up from depth 1 is the mansion.
+    world.returnFromSurface();
+    expect(world.interaction).toBe('up');
+    expect(world.ascend()).toBe('mansion');
+  });
+
+  it('a night at the mansion restores the body and passes the night below', () => {
+    const world = arena();
+    world.survival = { ...world.survival, health: 10, hunger: 5, thirst: 5 };
+    const day = world.day;
+    const events = world.restAtMansion();
+    expect(world.survival.health).toBe(world.maxHealth);
+    expect(world.survival.hunger).toBe(100);
+    expect(world.day).toBe(day + 1);
+    expect(events).toContainEqual({ type: 'dawn' });
+  });
+
+  it('the shop sells for gold, if there is room', () => {
+    const world = arena();
+    expect(world.buy('ration')).toBe('gold');
+    world.gold = 30;
+    expect(world.buy('ration')).toBe('bought');
+    expect(world.gold).toBe(30 - CONFIG.shop.ration);
+  });
+
+  it('walked levels survive a snapshot', () => {
+    const world = arena();
+    world.taken.add(world.level.items[0].id);
+    world.descend();
+    const copy = World.restore(JSON.parse(JSON.stringify(world.snapshot())));
+    copy.ascend();
+    expect(copy.taken.has(world['memory'].get(1)!.taken[0])).toBe(true);
   });
 });
 

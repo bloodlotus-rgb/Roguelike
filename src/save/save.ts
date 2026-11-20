@@ -11,6 +11,8 @@ export interface CurrentLife {
   memberId: number;
   /** Where this life's part of the chronicle begins, to tell it when the life ends. */
   chronicleFrom?: number;
+  /** Up at the mansion, between expeditions. */
+  atMansion?: boolean;
   world: WorldSnapshot;
 }
 

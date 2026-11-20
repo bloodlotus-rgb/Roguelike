@@ -69,6 +69,16 @@ export const CONFIG = {
     /** Reach of fountains and containers, in tiles. */
     reach: 1.1,
   },
+  /** The mansion's shop: price in gold of what it sells. */
+  shop: {
+    ration: 4,
+    marchRation: 12,
+    waterskin: 10,
+    oil: 5,
+    firewood: 3,
+    bandage: 6,
+    campKit: 25,
+  },
   /** A day below ground: long enough to explore, then a short, dangerous night. */
   time: {
     day: 420,
