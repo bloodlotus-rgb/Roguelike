@@ -21,6 +21,8 @@ describe('castWallRay', () => {
   });
 
   it('returns the maximum distance when nothing is in the way', () => {
-    expect(castWallRay(level, start, 0, 0.1)).toEqual({ enter: 0.1, exit: 0.1 });
+    const hit = castWallRay(level, start, 0, 0.1);
+    expect(hit.hit).toBe(false);
+    expect(hit.enter).toBe(0.1);
   });
 });

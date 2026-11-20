@@ -44,7 +44,7 @@ export const COMBAT = {
   glow: 0.5,
   /** The hero sees only ahead: half-angle of the vision cone, and how close is seen all around. */
   visionCone: (58 * Math.PI) / 180,
-  nearSight: 1.4,
+  nearSight: 0,
   /** Unseen horrors within this many tiles that look at the player show their eyes. */
   eyesRange: 9,
   /** A horror that notices the player warns the others within this many tiles. */
