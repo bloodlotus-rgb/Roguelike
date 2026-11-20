@@ -1,6 +1,10 @@
 import { Sound } from './audio/sound';
 import type { ClassId } from './core/classes';
+import { ancestorsOf, createDynasty, memberById, recordAcquired, recordDeath, type Dynasty } from './core/dynasty';
+import { combineEffects } from './core/traits';
 import { NO_INPUT, World, type ControlInput, type WorldEvent } from './core/world';
+import { makeSave, type SaveData } from './save/save';
+import { deleteSave, loadSave, requestPersistence, writeSave } from './save/store';
 import type { SceneHost } from './game/DungeonScene';
 import type { ClassicEngine } from './game/classic';
 import type { FirstPersonView } from './game/firstPerson';
@@ -8,6 +12,9 @@ import { ThreeView } from './game/threeView';
 import { t, type StringKey } from './i18n/i18n';
 import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
+import { LineageUi, traitList } from './ui/lineage';
+import type { MapExtras } from './ui/map';
+import { traitName } from './ui/traitText';
 import './ui/styles.css';
 
 /** A readable random seed, e.g. "ashen-crypt-417". Seeds are chosen outside game logic. */
@@ -18,16 +25,20 @@ function randomSeed(): string {
   return `${a[bytes[0] % a.length]}-${b[bytes[1] % b.length]}-${bytes[2] % 1000}`;
 }
 
-function readSeed(): string {
-  const url = new URL(window.location.href);
-  let seed = url.searchParams.get('seed')?.trim();
-  if (!seed) {
-    seed = randomSeed();
-    url.searchParams.set('seed', seed);
-    history.replaceState(null, '', url);
-  }
-  return seed;
+/** The seed asked for in the address, used only when a new dynasty is founded. */
+function requestedSeed(): string | null {
+  return new URL(window.location.href).searchParams.get('seed')?.trim() || null;
 }
+
+/** Shows the dynasty's seed in the address, so it can be shared. */
+function showSeed(seed: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set('seed', seed);
+  history.replaceState(null, '', url);
+}
+
+/** Seconds between autosaves while playing. */
+const AUTOSAVE_SECONDS = 4;
 
 const isTouch = window.matchMedia('(pointer: coarse)').matches;
 const VIEW_KEY = 'estirpe.view';
@@ -51,8 +62,16 @@ function storedView(): 'top' | 'first' {
 class Session implements SceneHost {
   world!: World;
   paused = false;
-  private life = 0;
+  dynasty!: Dynasty;
+  /** Who is down there, while a life is being played. */
+  private memberId: number | null = null;
+  /** Where this life's part of the chronicle begins. */
+  private chronicleFrom = 0;
+  /** Chosen on the roster, before choosing the class. */
+  private chosen: number | null = null;
   private playing = false;
+  private readonly lineage: LineageUi;
+
   private readonly controls: Controls;
   private readonly hud: Hud;
   private hudTimer = 0;
@@ -73,12 +92,21 @@ class Session implements SceneHost {
   private lastInput = 0;
   private lastFrame = 0;
 
-  constructor(private readonly seed: string) {
-    this.hud = new Hud(document.getElementById('hud')!, seed, {
+  constructor() {
+    const hudRoot = document.getElementById('hud')!;
+    this.hud = new Hud(hudRoot, '', {
       onChooseClass: (classId) => void this.start(classId),
+      onClassBack: () => {
+        this.hud.showClassSelect(false);
+        this.hud.setPlaying(false);
+        this.lineage.showRoster();
+      },
       onDescend: () => this.descend(),
-      onChooseAgain: () => this.chooseAgain(),
       onResume: () => this.setPaused(false),
+      onAbandon: () => {
+        this.hud.setPaused(false);
+        this.lineage.askAbandon(() => this.hud.setPaused(true));
+      },
       onOpenMap: () => this.toggleMap(),
       onToggleView: () => this.toggleView(),
       onToggleSound: () => {
@@ -94,16 +122,25 @@ class Session implements SceneHost {
       this.hud.dodgeButton,
       this.hud.specialButton,
     );
-    this.hud.showClassSelect(true);
+    this.lineage = new LineageUi(hudRoot, {
+      onPick: (id) => this.pick(id),
+      onAbandon: () => void this.abandon(),
+    });
+    this.hud.setPlaying(false);
     void this.applyView();
 
-    // Leaving the app pauses it: the game never runs while nobody is looking.
+    // Leaving the app pauses it and saves: the game never runs while nobody is looking.
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         this.setPaused(true);
         this.sound.suspend();
+        this.persist();
       }
     });
+    window.addEventListener('pagehide', () => this.persist());
+    window.setInterval(() => {
+      if (this.playing && !this.paused) this.persist();
+    }, AUTOSAVE_SECONDS * 1000);
     window.addEventListener('keydown', (e) => {
       if (!this.playing) return;
       if (e.code === 'Escape') this.setPaused(!this.paused);
@@ -177,14 +214,20 @@ class Session implements SceneHost {
       else if (e.type === 'parry') this.hud.toast('parry');
       else if (e.type === 'executed') this.hud.toast('executed');
       else if (e.type === 'playerHit' && e.lightStolen > 0) this.hud.toast('lightStolen');
+      else if (e.type === 'hardToKill') this.hud.toast('hardToKillSaved');
+      else if (e.type === 'warning') this.hud.toast('warningBehind');
+      else if (e.type === 'traitGained' && this.memberId !== null) {
+        recordAcquired(this.dynasty, this.memberId, e.trait, world.depth);
+        this.hud.toastText(t('traitGained', { trait: traitName(e.trait) }), true);
+        this.persist();
+      }
     }
-    if (events.some((e) => e.type === 'died')) {
-      this.playing = false;
-      this.hud.closeMap();
-      this.hud.setSurvival(world.survival, world.maxHealth);
-      setTimeout(() => this.hud.showDeath(world.depth), 600);
+    const died = events.find((e) => e.type === 'died');
+    if (died && died.type === 'died') {
+      this.die(died.cause);
       return;
     }
+
     // Meters and cooldowns are cheap to refresh, but there is no need to do it every frame.
     this.hudTimer++;
     if (this.hudTimer % 3 === 0 || events.length > 0) {
@@ -219,24 +262,79 @@ class Session implements SceneHost {
       if (e.state === 'dead' || !e.alerted) continue;
       if (Math.hypot(e.pos.x - world.player.x, e.pos.y - world.player.y) < 7) hunters++;
     }
-    const target = Math.min(1, hunters / 3);
+    // Dread: the fearful feel the darkness close in sooner, the serene later.
+    const dread = world.fx.dread ?? 0;
+    let target = Math.min(1, hunters / Math.max(1, 3 - dread));
+    if (dread > 0 && world.survival.light < 25) target = Math.max(target, 0.35 * dread);
     this.danger += (target - this.danger) * 0.05;
     this.vignette.style.opacity = String(0.45 + this.danger * 0.5);
     const health = world.survival.health / world.maxHealth;
-    this.hurt.style.opacity = String(health < 0.5 ? (0.5 - health) * 2 : 0);
+    const threshold = Math.max(0.2, 0.5 + dread * 0.15);
+    this.hurt.style.opacity = String(health < threshold ? ((threshold - health) / threshold) * 1 : 0);
+  }
+
+  /** Loads the dynasty, or founds one, and picks up exactly where things were left. */
+  async boot(): Promise<void> {
+    void requestPersistence();
+    const save = await loadSave();
+    if (save) {
+      this.dynasty = save.dynasty;
+    } else {
+      this.dynasty = createDynasty(requestedSeed() ?? randomSeed());
+    }
+    showSeed(this.dynasty.seed);
+    this.hud.setSeed(this.dynasty.seed);
+    this.lineage.setDynasty(this.dynasty);
+    document.body.classList.remove('booting');
+    if (save?.life) {
+      this.resume(save);
+      return;
+    }
+    this.persist();
+    this.lineage.showRoster();
+  }
+
+  private resume(save: SaveData): void {
+    const life = save.life!;
+    this.memberId = life.memberId;
+    this.chronicleFrom = life.chronicleFrom ?? this.dynasty.chronicle.length;
+    void this.begin(World.restore(life.world, this.dynasty.explored)).then(() => this.setPaused(true));
+  }
+
+  /** A member was chosen on the roster: now their class. */
+  private pick(memberId: number): void {
+    const member = memberById(this.dynasty, memberId);
+    this.chosen = memberId;
+    this.lineage.hide();
+    this.hud.showClassSelect(true, { name: member.name, bonus: combineEffects(member.traits).attrs });
   }
 
   private async start(classId: ClassId): Promise<void> {
+    if (this.chosen === null) return;
+    const member = memberById(this.dynasty, this.chosen);
+    member.classId = classId;
+    this.memberId = member.id;
+    this.chosen = null;
+    this.chronicleFrom = this.dynasty.chronicle.length;
+    await this.begin(
+      new World(this.dynasty.seed, classId, this.dynasty.lives, 1, { traits: [...member.traits], explored: this.dynasty.explored }),
+    );
+    this.persist();
+    this.showHint();
+  }
+
+  /** Puts a world in play, new or restored. */
+  private async begin(world: World): Promise<void> {
     this.sound.start();
     const fresh = !this.world;
-    this.world = new World(this.seed, classId, this.life);
+    this.world = world;
     this.playing = true;
     this.paused = false;
     this.controls.reset();
+    this.lineage.hide();
     this.hud.showClassSelect(false);
-    this.hud.hideDeath();
-    this.hud.setDepth(this.world.depth);
-    this.hud.setSurvival(this.world.survival, this.world.maxHealth);
+    this.hud.setDepth(world.depth);
+    this.hud.setSurvival(world.survival, world.maxHealth);
     await this.applyView();
     if (this.engine === 'three') {
       if (fresh) requestAnimationFrame(this.loop);
@@ -246,7 +344,52 @@ class Session implements SceneHost {
       const { bootClassic } = await import('./game/classic');
       this.classic = bootClassic(this, document.getElementById('game')!);
     }
-    this.showHint();
+  }
+
+  /** The hero fell: a generation passes, and the chronicle tells what it brought. */
+  private die(cause: import('./core/dynasty').DeathCause): void {
+    const world = this.world;
+    this.playing = false;
+    this.hud.hideAll();
+    this.hud.setSurvival(world.survival, world.maxHealth);
+    document.getElementById('hint')!.classList.add('gone');
+    if (this.memberId === null) return;
+    world.storeExplored();
+    recordDeath(this.dynasty, this.memberId, { depth: world.depth, cause, x: world.player.x, y: world.player.y });
+    this.memberId = null;
+    this.persist();
+    const from = this.chronicleFrom;
+    setTimeout(() => {
+      this.hud.setPlaying(false);
+      this.lineage.showChronicle(from, () => this.lineage.showRoster());
+    }, 1200);
+  }
+
+  /** Saves everything now: the dynasty, and the life in play if there is one. */
+  private persist(): void {
+    if (!this.dynasty) return;
+    let life: SaveData['life'] = null;
+    if (this.world && this.playing && !this.world.dead && this.memberId !== null) {
+      this.world.storeExplored();
+      life = { memberId: this.memberId, chronicleFrom: this.chronicleFrom, world: this.world.snapshot() };
+    }
+    void writeSave(makeSave(this.dynasty, life, Date.now()));
+  }
+
+  /** The end of a dynasty, by choice: everything is erased and a new one is founded. */
+  private async abandon(): Promise<void> {
+    this.playing = false;
+    this.paused = false;
+    this.memberId = null;
+    this.hud.hideAll();
+    this.hud.setPlaying(false);
+    await deleteSave();
+    this.dynasty = createDynasty(randomSeed());
+    showSeed(this.dynasty.seed);
+    this.hud.setSeed(this.dynasty.seed);
+    this.lineage.setDynasty(this.dynasty);
+    this.persist();
+    this.lineage.showRoster();
   }
 
   private showHint(): void {
@@ -260,7 +403,20 @@ class Session implements SceneHost {
   private toggleMap(): void {
     if (!this.playing) return;
     if (this.hud.mapOpen) this.hud.closeMap();
-    else this.hud.openMap(this.world);
+    else this.hud.openMap(this.world, this.mapExtras());
+  }
+
+  /** Crosses where the family fell on this level: the hero's own line, or everyone's with Old Memory. */
+  private mapExtras(): MapExtras {
+    const depth = this.world.depth;
+    let fallen = this.dynasty.members.filter((m) => m.status === 'fallen');
+    if (!this.world.fx.mapAllDeaths && this.memberId !== null) {
+      const line = new Set(ancestorsOf(this.dynasty, memberById(this.dynasty, this.memberId)).map((m) => m.id));
+      fallen = fallen.filter((m) => line.has(m.id));
+    }
+    return {
+      deaths: fallen.filter((m) => m.death?.depth === depth).map((m) => ({ x: m.death!.x, y: m.death!.y, name: m.name })),
+    };
   }
 
   private descend(): void {
@@ -270,13 +426,7 @@ class Session implements SceneHost {
     this.hud.setStairsAvailable(false);
     this.controls.reset();
     this.classic?.restart();
-  }
-
-  /** After a death: a new life, with the horrors and loot re-rolled. */
-  private chooseAgain(): void {
-    this.life++;
-    this.hud.hideDeath();
-    this.hud.showClassSelect(true);
+    this.persist();
   }
 
   private setPaused(paused: boolean): void {
@@ -284,11 +434,19 @@ class Session implements SceneHost {
     if (!paused) this.sound.start();
     this.paused = paused;
     this.controls.reset();
+    if (paused && this.memberId !== null) {
+      const member = memberById(this.dynasty, this.memberId);
+      this.hud.setHeroInfo(
+        `<p class="hero-line">${t('heroLine', { name: member.name, class: t(`className_${this.world.classId}` as StringKey) })}</p>${traitList({ ...member, traits: this.world.traits })}`,
+      );
+    }
     this.hud.setPaused(paused);
   }
 }
 
-const session = new Session(readSeed());
+document.body.classList.add('booting');
+const session = new Session();
+void session.boot();
 // `?debug=1` exposes the session for manual testing from the browser console.
 if (new URL(window.location.href).searchParams.has('debug')) {
   (window as unknown as { estirpe: Session }).estirpe = session;

@@ -39,6 +39,8 @@ function place(world: World, kind: EnemyKind, dx: number, dy: number, state: Ene
     watching: false,
     wax: 0,
     waxTick: 0,
+    bleed: 0,
+    bleedTick: 0,
   };
   world.enemies.push(enemy);
   return enemy;
@@ -476,5 +478,108 @@ describe('perception', () => {
     const light = world.survival.light;
     run(world, 0.1);
     expect(world.survival.light).toBeLessThan(light - ENEMIES.snuffer.stealsLight + 1);
+  });
+});
+
+describe('traits in a life', () => {
+  it('attributes and health follow the traits', () => {
+    const plain = new World('estirpe', 'headsman');
+    const frail = new World('estirpe', 'headsman', 0, 1, { traits: ['frail'] });
+    const big = new World('estirpe', 'headsman', 0, 1, { traits: ['giant'] });
+    expect(frail.maxHealth).toBeLessThan(plain.maxHealth);
+    expect(frail.survival.health).toBe(frail.maxHealth);
+    expect(big.attrs.str).toBe(CLASSES.headsman.attributes.str + 3);
+    expect(big.attrs.agi).toBe(CLASSES.headsman.attributes.agi - 1);
+  });
+
+  it('cat eyes see farther as the flame fades', () => {
+    const plain = arena();
+    const cat = new World('estirpe', 'headsman', 0, 1, { traits: ['catEyes'] });
+    for (const w of [plain, cat]) w.survival = { ...w.survival, light: 10 };
+    expect(cat.lightRadius).toBeGreaterThan(plain.lightRadius + 0.5);
+  });
+
+  it('hard to kill saves the hero once', () => {
+    const world = new World('estirpe', 'headsman', 0, 1, { traits: ['hardToKill'] });
+    world.enemies = [];
+    world.survival = { ...world.survival, health: 0.01, hunger: 0, thirst: 0 };
+    const events = run(world, 0.1);
+    expect(events.some((e) => e.type === 'hardToKill')).toBe(true);
+    expect(world.dead).toBe(false);
+    world.survival = { ...world.survival, health: 0.01 };
+    run(world, 0.5);
+    expect(world.dead).toBe(true);
+  });
+
+  it('a death says what caused it', () => {
+    const starved = arena();
+    starved.survival = { ...starved.survival, health: 0.01, hunger: 0 };
+    const events = run(starved, 0.2);
+    const died = events.find((e) => e.type === 'died');
+    expect(died && died.type === 'died' && died.cause).toEqual({ type: 'hunger' });
+
+    const slain = arena();
+    slain.survival = { ...slain.survival, health: 1 };
+    const husk = windupAgainst(slain, 'husk');
+    const blows = run(slain, 1);
+    const death = blows.find((e) => e.type === 'died');
+    expect(husk.kind).toBe('husk');
+    expect(death && death.type === 'died' && death.cause).toEqual({ type: 'horror', kind: 'husk' });
+  });
+
+  it('earns acquired traits for what happens in the life', () => {
+    const deep = new World('estirpe', 'headsman', 0, 5);
+    deep.enemies = [];
+    const events = run(deep, 0.1);
+    expect(events).toContainEqual({ type: 'traitGained', trait: 'survivor' });
+    expect(deep.traits).toContain('survivor');
+    // Earned once only.
+    expect(run(deep, 0.1).some((e) => e.type === 'traitGained')).toBe(false);
+
+    const scarred = arena();
+    scarred.survival = { ...scarred.survival, health: scarred.maxHealth * 0.05 };
+    expect(run(scarred, 0.05).some((e) => e.type === 'traitGained')).toBe(false);
+    scarred.survival = { ...scarred.survival, health: scarred.maxHealth * 0.5 };
+    expect(run(scarred, 0.05)).toContainEqual({ type: 'traitGained', trait: 'scar' });
+  });
+
+  it('tunnel rats find one more item on every level', () => {
+    const plain = new World('estirpe', 'headsman');
+    const rat = new World('estirpe', 'headsman', 0, 1, { traits: ['tunnelRat'] });
+    expect(rat.level.items.length).toBe(plain.level.items.length + 1);
+  });
+
+  it('the map an ancestor explored is already known', () => {
+    const explored: Record<number, string> = {};
+    const first = new World('estirpe', 'headsman', 0, 1, { explored });
+    first.reveal();
+    first.storeExplored();
+    const known = first.explored.reduce((n, v) => n + v, 0);
+    expect(known).toBeGreaterThan(0);
+    expect(explored[1]).toBeTruthy();
+    const heir = new World('estirpe', 'headsman', 1, 1, { explored });
+    expect(heir.explored.reduce((n, v) => n + v, 0)).toBe(known);
+  });
+});
+
+describe('snapshots', () => {
+  it('a restored world carries on exactly like the original', () => {
+    const world = new World('estirpe', 'plunderer', 2, 1, { traits: ['bloody', 'scavenger'] });
+    run(world, 3, move(1, 0.3));
+    run(world, 2, move(-0.2, 1));
+    const json = JSON.parse(JSON.stringify(world.snapshot()));
+    const copy = World.restore(json);
+    expect(copy.player).toEqual(world.player);
+    expect(copy.survival).toEqual(world.survival);
+    expect(copy.enemies.map((e) => [e.id, e.health, e.state])).toEqual(world.enemies.map((e) => [e.id, e.health, e.state]));
+    expect([...copy.taken]).toEqual([...world.taken]);
+    expect(copy.level.items.length).toBe(world.level.items.length);
+    expect(copy.traits).toEqual(world.traits);
+    // And from there on, both lives unfold the same.
+    run(world, 4, move(0.5, -1));
+    run(copy, 4, move(0.5, -1));
+    expect(copy.player).toEqual(world.player);
+    expect(copy.survival).toEqual(world.survival);
+    expect(copy.enemies.map((e) => [e.pos, e.health])).toEqual(world.enemies.map((e) => [e.pos, e.health]));
   });
 });

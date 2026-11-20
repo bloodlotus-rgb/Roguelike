@@ -16,7 +16,7 @@ import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
 import { drawFloorDecor, drawItem, drawProjectile } from './art';
-import { wallColor, wallRelief } from './inkTextures3d';
+import { SPAN_X, SPAN_Y, wallColor, wallRelief } from './inkTextures3d';
 import { easeInOut, easeOut, swingPhase } from './swing';
 import { Effects } from './threeEffects';
 import { drawHands, inkTexture } from './firstPerson';
@@ -64,9 +64,12 @@ const NIGHT_RADIUS = 6.5;
 /**
  * Our ink look on lit surfaces, plus the cut-away for the top view.
  *
- * Hatching: where the flame's light thins out, diagonal ink lines appear, then cross-
- * hatching, like a hand-shaded drawing. Lines live in world space so they stay put when
- * the camera moves; floors use the ground plane, walls their own face.
+ * Hatching is the only shading: lit surfaces keep the full tone of the paper, warmed by the
+ * flame, and wherever light thins out, ink lines appear, then cross-hatching, then a third
+ * pass, and finally the lines thicken until they close into solid ink, like a drawing
+ * shaded by hand. Lines live in world space so they stay put when the camera moves; floors
+ * use the ground plane, walls their own face. Back faces, only seen where the cut-away
+ * slices a wall open, are solid ink, like the cut walls in an architect's section.
  *
  * Cut-away (walls only): walls on the camera's side of the hero (south of them) are cut
  * at knee height, like a scale model, so rooms and corridors stay readable. Shadows are
@@ -88,13 +91,22 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
   const { cut = false, worldUv, grime = false } = options;
   const uvCode =
     worldUv === 'box'
-      ? `vec2 inkUv = abs(vInkNormal.y) > 0.5 ? vInkPos.xz : vec2(abs(vInkNormal.x) > 0.5 ? vInkPos.z : vInkPos.x, vInkPos.y);`
+      ? `bool inkAlongZ = abs(vInkNormal.x) > 0.5;
+         // Each straight run of wall starts somewhere else in the masonry, so the pattern
+         // never visibly repeats from one wall to the next.
+         float inkLine = floor((inkAlongZ ? vInkPos.x : vInkPos.z) + 0.5) + (inkAlongZ ? 0.0 : 517.0);
+         float inkHash = fract(sin(inkLine * 12.9898) * 43758.5453);
+         vec2 inkShift = vec2(inkHash, fract(inkHash * 7.13));
+         vec2 inkUv = abs(vInkNormal.y) > 0.5
+            ? vInkPos.xz
+            : vec2(inkAlongZ ? vInkPos.z : vInkPos.x, vInkPos.y) / vec2(${SPAN_X.toFixed(1)}, ${SPAN_Y.toFixed(1)}) + inkShift;`
       : worldUv === 'column'
         ? `vec3 inkCenter = vec3(0.0);
            #ifdef USE_INSTANCING
              inkCenter = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
            #endif
-           vec2 inkUv = vec2(atan(vInkPos.z - inkCenter.z, vInkPos.x - inkCenter.x) * 0.36, vInkPos.y);`
+           // Once around the column is once across the texture, so there is no seam.
+           vec2 inkUv = vec2(atan(vInkPos.z - inkCenter.z, vInkPos.x - inkCenter.x) / 6.28318, vInkPos.y / ${SPAN_Y.toFixed(1)});`
         : '';
   const uvAssign = worldUv
     ? `${uvCode}
@@ -150,25 +162,43 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
       )
       .replace(
         '#include <opaque_fragment>',
-        `{
+        `if (!gl_FrontFacing) {
+          outgoingLight = vec3(0.0);
+        } else {
           vec3 irradiance = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;
-          float base = max(dot(diffuseColor.rgb, vec3(0.3333)), 0.05);
-          // Lambert divides by pi; undo it so 1.0 means fully lit.
-          float lit = dot(irradiance, vec3(0.3333)) / base * 3.14159;
+          // Lambert multiplies by the paper's color and divides by pi; undo both to get the
+          // light alone, so 1.0 means fully lit.
+          vec3 lightRgb = irradiance / max(diffuseColor.rgb, vec3(0.02)) * 3.14159;
+          float lit = dot(lightRgb, vec3(0.3333));
+          // The flame's tint without its strength: the paper keeps one tone, ink does the rest.
+          vec3 tint = lightRgb / max(max(lightRgb.r, max(lightRgb.g, lightRgb.b)), 1e-4);
+          vec3 paper = diffuseColor.rgb * tint;
           vec3 n = normalize(vInkNormal);
           vec2 hp = abs(n.y) > 0.5 ? vInkPos.xz : vec2(abs(n.x) > 0.5 ? vInkPos.z : vInkPos.x, vInkPos.y);
           hp *= 7.0;
           float d1 = abs(fract(hp.x + hp.y) - 0.5);
           float d2 = abs(fract(hp.x - hp.y) - 0.5);
-          float tone = clamp(1.0 - lit, 0.0, 1.0);
-          float ink = max(step(d1, smoothstep(0.35, 1.0, tone) * 0.22), step(d2, smoothstep(0.7, 1.0, tone) * 0.16));
-          ink *= step(0.015, lit);
-          outgoingLight = mix(outgoingLight, outgoingLight * 0.2, ink);
+          float d3 = abs(fract(hp.x * 1.3 + 0.25) - 0.5);
+          float aa = clamp(fwidth(hp.x + hp.y) * 0.6, 0.002, 0.2);
+          float tone = clamp(1.0 - lit * 1.5, 0.0, 1.0);
+          // Each pass of lines comes in thin; past three quarters they all thicken into solid ink.
+          float thick = smoothstep(0.72, 1.0, tone) * 0.42;
+          float w1 = smoothstep(0.12, 0.2, tone) * 0.08 + thick;
+          float w2 = smoothstep(0.38, 0.46, tone) * 0.08 + thick;
+          float w3 = smoothstep(0.6, 0.68, tone) * 0.07 + thick;
+          float ink = max(
+            (1.0 - smoothstep(w1 - aa, w1 + aa, d1)) * step(0.001, w1),
+            (1.0 - smoothstep(w2 - aa, w2 + aa, d2)) * step(0.001, w2));
+          ink = max(ink, (1.0 - smoothstep(w3 - aa, w3 + aa, d3)) * step(0.001, w3));
+          ink = max(ink, step(0.985, tone));
+          outgoingLight = mix(paper, vec3(0.0), ink);
           if (uNight > 0.5) {
             // Sight in the dark: everything black, the drawing's own lines and the
             // shading hatches traced in white, fading out with distance.
             float far = distance(vInkPos.xz, uPlayer.xz);
             float fade = 1.0 - smoothstep(${(NIGHT_RADIUS * 0.55).toFixed(2)}, ${NIGHT_RADIUS.toFixed(2)}, far);
+            // From above, a clearing of darkness around the hero so their chalk figure stands out.
+            if (uFade > 0.5) fade *= smoothstep(0.5, 1.15, distance(vInkPos.xz, uPlayer.xz + vec2(0.0, -0.35)));
             // Contours: where the drawing changes tone sharply, and where surfaces fold.
             float texel = dot(diffuseColor.rgb, vec3(0.3333));
             float lines = smoothstep(0.08, 0.2, fwidth(texel));
@@ -186,6 +216,43 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
       );
   };
   return material;
+}
+
+/**
+ * The walls as one mesh: a face wherever a wall tile looks onto a floor tile, plus a cap
+ * on every wall tile. Faces between two walls are never built, so nothing inside a wall
+ * can catch the light when the cut-away opens it. One unit tall; scaled to the view.
+ * Groups: 0 the sides, 1 the caps.
+ */
+function wallGeometry(level: Level, tiles: Array<[number, number]>): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const indices: number[] = [];
+  let n = 0;
+  const quad = (corners: number[][], normal: number[]) => {
+    for (const c of corners) positions.push(c[0], c[1], c[2]);
+    for (let i = 0; i < 4; i++) normals.push(normal[0], normal[1], normal[2]);
+    indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
+    n += 4;
+  };
+  for (const [x, y] of tiles) {
+    // Corners listed counter-clockwise as seen from the floor side.
+    if (isFloor(level, x + 1, y)) quad([[x + 1, 0, y + 1], [x + 1, 0, y], [x + 1, 1, y], [x + 1, 1, y + 1]], [1, 0, 0]);
+    if (isFloor(level, x - 1, y)) quad([[x, 0, y], [x, 0, y + 1], [x, 1, y + 1], [x, 1, y]], [-1, 0, 0]);
+    if (isFloor(level, x, y + 1)) quad([[x, 0, y + 1], [x + 1, 0, y + 1], [x + 1, 1, y + 1], [x, 1, y + 1]], [0, 0, 1]);
+    if (isFloor(level, x, y - 1)) quad([[x + 1, 0, y], [x, 0, y], [x, 1, y], [x + 1, 1, y]], [0, 0, -1]);
+  }
+  const sideIndices = indices.length;
+  for (const [x, y] of tiles) quad([[x, 1, y + 1], [x + 1, 1, y + 1], [x + 1, 1, y], [x, 1, y]], [0, 1, 0]);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  // Texture coordinates come from the world in the shader; the attribute just has to exist.
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+  g.setIndex(indices);
+  g.addGroup(0, sideIndices, 0);
+  g.addGroup(sideIndices, indices.length - sideIndices, 1);
+  return g;
 }
 
 /** A flat cut-out standing on the floor, facing the camera, lit like the floor under it. */
@@ -257,6 +324,23 @@ class Cutout {
   }
 }
 
+/** A drawing redrawn in chalk: its ink lines turn white and its paper turns black. */
+function chalkCanvas(source: HTMLCanvasElement): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = source.width;
+  c.height = source.height;
+  const ctx = c.getContext('2d')!;
+  ctx.drawImage(source, 0, 0);
+  const image = ctx.getImageData(0, 0, c.width, c.height);
+  const d = image.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const v = 255 - (d[i] + d[i + 1] + d[i + 2]) / 3;
+    d[i] = d[i + 1] = d[i + 2] = v;
+  }
+  ctx.putImageData(image, 0, 0);
+  return c;
+}
+
 function sheetFromCanvas(canvas: HTMLCanvasElement): SpriteSheet {
   return { canvas, frameWidth: canvas.width, frameHeight: canvas.height, frames: ['only'], originX: 0.5, originY: 0.9 };
 }
@@ -322,7 +406,7 @@ export class ThreeView {
   private mode: CameraMode = 'top';
   private level: Level | null = null;
   private levelGroup = new THREE.Group();
-  private walls: THREE.InstancedMesh | null = null;
+  private walls: THREE.Mesh | null = null;
   private wallTiles: Array<[number, number]> = [];
   private columns: THREE.InstancedMesh | null = null;
   private columnTiles: Array<[number, number]> = [];
@@ -336,6 +420,8 @@ export class ThreeView {
   private readonly projectileTexture: { sheet: SpriteSheet; texture: THREE.CanvasTexture };
   private readonly eyeMaterials = new Map<EnemyKind, THREE.SpriteMaterial>();
   private hero: Cutout | null = null;
+  /** The hero's drawing as it is, and inverted (white lines on black) for sight in the dark. */
+  private heroMaps: { day: THREE.Texture; night: THREE.Texture } | null = null;
   private heroClass = '';
   private flame: THREE.Sprite;
   private readonly enemies = new Map<number, { cutout: Cutout; material: THREE.MeshBasicMaterial; eyes: THREE.Sprite }>();
@@ -480,13 +566,27 @@ export class ThreeView {
         (column ? this.columnTiles : this.wallTiles).push([x, y]);
       }
     }
+    // Both sides are drawn so a wall sliced by the cut-away shows a solid ink section;
+    // shadows still come from the back faces, as with closed blocks.
     const wallMaterial = () =>
-      new THREE.MeshLambertMaterial({ map: this.textures.wall, bumpMap: this.wallRelief, bumpScale: 3 });
+      new THREE.MeshLambertMaterial({
+        map: this.textures.wall,
+        bumpMap: this.wallRelief,
+        bumpScale: 3,
+        side: THREE.DoubleSide,
+        shadowSide: THREE.BackSide,
+      });
     const side = inkMaterial(wallMaterial(), { cut: true, worldUv: 'box', grime: true });
-    const top = inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling }), { cut: true, worldUv: 'box' });
-    const shaft = inkMaterial(wallMaterial(), { cut: true, worldUv: 'column', grime: true });
-    // Box faces: +x, -x, +y (top), -y, +z, -z.
-    this.walls = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), [side, side, top, top, side, side], this.wallTiles.length);
+    const top = inkMaterial(
+      new THREE.MeshLambertMaterial({ map: this.textures.ceiling, side: THREE.DoubleSide, shadowSide: THREE.BackSide }),
+      { cut: true, worldUv: 'box' },
+    );
+    const shaft = inkMaterial(
+      new THREE.MeshLambertMaterial({ map: this.textures.wall, bumpMap: this.wallRelief, bumpScale: 3 }),
+      { cut: true, worldUv: 'column', grime: true },
+    );
+    // One mesh with only the faces that look onto a floor, so no inner faces exist.
+    this.walls = new THREE.Mesh(wallGeometry(level, this.wallTiles), [side, top]);
     this.walls.castShadow = true;
     this.walls.receiveShadow = true;
     this.levelGroup.add(this.walls);
@@ -503,7 +603,7 @@ export class ThreeView {
     decorTexture.anisotropy = 8;
     const decor = new THREE.Mesh(
       new THREE.PlaneGeometry(level.width, level.height),
-      new THREE.MeshLambertMaterial({ map: decorTexture, transparent: true, depthWrite: false }),
+      inkMaterial(new THREE.MeshLambertMaterial({ map: decorTexture, transparent: true, depthWrite: false })),
     );
     decor.rotation.x = -Math.PI / 2;
     decor.position.set(level.width / 2, 0.004, level.height / 2);
@@ -581,13 +681,8 @@ export class ThreeView {
     if (!this.walls) return;
     const h = this.mode === 'first' ? WALL_FIRST : WALL_TOP;
     const m = new THREE.Matrix4();
-    this.wallTiles.forEach(([x, y], i) => {
-      m.makeScale(1, h, 1);
-      m.setPosition(x + 0.5, h / 2, y + 0.5);
-      this.walls!.setMatrixAt(i, m);
-    });
-    this.walls.instanceMatrix.needsUpdate = true;
-    this.walls.computeBoundingSphere();
+    // The wall mesh is built one unit tall; scaling it keeps the world-space bricks intact.
+    this.walls.scale.set(1, h, 1);
     if (this.columns) {
       this.columnTiles.forEach(([x, y], i) => {
         m.makeScale(1, h, 1);
@@ -671,8 +766,10 @@ export class ThreeView {
   private positionCamera(world: World, fpAngle: number): void {
     const p = world.player;
     cutaway.fade.value = this.mode === 'top' ? 1 : 0;
-    // The plunderer's shadow step snuffs the light, but lets them see the world in chalk.
-    cutaway.night.value = world.invisible && world.cls.special.kind === 'shadowStep' ? 1 : 0;
+    // The plunderer's shadow step snuffs the light, but lets them see the world in chalk;
+    // so do Dark Dwellers once their oil runs out.
+    const shadowStep = world.invisible && world.cls.special.kind === 'shadowStep';
+    cutaway.night.value = shadowStep || (world.fx.darkSight && world.survival.light <= 0) ? 1 : 0;
     cutaway.player.value.set(p.x, 0, p.y);
     if (this.mode === 'first') {
       this.camera.position.set(p.x, EYE, p.y);
@@ -720,6 +817,7 @@ export class ThreeView {
     );
     this.light.target.position.set(p.x + Math.cos(this.lightAngle) * 3, 0.2, p.y + Math.sin(this.lightAngle) * 3);
     this.light.distance = radius + back;
+    this.light.angle = world.visionCone;
     this.light.intensity = world.survival.light > 0 && !world.invisible ? 6 * flicker : 0;
     // Warmer and redder when it dips.
     this.light.color.setRGB(1, 0.8 + 0.06 * wave, 0.56 + 0.1 * wave - low * 0.12);
@@ -733,7 +831,9 @@ export class ThreeView {
     if (this.hero) this.scene.remove(this.hero.mesh);
     const sheet = drawHeroSheet(world.classId, 64);
     // The hero is always shown over the darkness.
-    const material = new THREE.MeshBasicMaterial({ map: canvasTexture(sheet.canvas), alphaTest: 0.5, depthTest: false, transparent: true });
+    const day = canvasTexture(sheet.canvas);
+    this.heroMaps = { day, night: canvasTexture(chalkCanvas(sheet.canvas)) };
+    const material = new THREE.MeshBasicMaterial({ map: day, alphaTest: 0.5, depthTest: false, transparent: true });
     this.hero = new Cutout(sheet, material, HERO_SIZE.h / 32);
     this.hero.mesh.renderOrder = 10;
     this.heroClass = world.classId;
@@ -767,9 +867,15 @@ export class ThreeView {
     hero.place({ x: world.player.x + world.facing.x * lunge, y: world.player.y + world.facing.y * lunge }, this.camera, flip, this.mode);
     hero.setFrame(Math.max(0, this.heroSheetFrames().indexOf(frame)));
     const heroMaterial = hero.mesh.material as THREE.MeshBasicMaterial;
-    heroMaterial.opacity = world.invisible ? 0.35 : 1;
+    const night = cutaway.night.value > 0.5;
+    // Unseen but never lost: faded in the light, a chalk figure in the dark. The alpha cut
+    // follows the opacity, or a faded hero would be cut away whole.
+    heroMaterial.opacity = night ? 1 : world.invisible ? 0.45 : 1;
+    heroMaterial.alphaTest = 0.5 * heroMaterial.opacity;
     if (now < this.effects.heroFlashUntil) heroMaterial.color.setRGB(1, 0.35, 0.3);
+    else if (night) heroMaterial.color.setRGB(0.84, 0.87, 0.92);
     else heroMaterial.color.setRGB(1, 1, 1);
+    heroMaterial.map = night ? this.heroMaps!.night : this.heroMaps!.day;
     // The flame at the hero's hand.
     const anchor = FLAME_ANCHOR[world.classId];
     const side = flip ? -1 : 1;

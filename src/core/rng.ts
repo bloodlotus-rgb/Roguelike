@@ -47,6 +47,15 @@ export class Rng {
     return new Rng([seed, ...parts].join('|'));
   }
 
+  /** The generator's internal state, to save and resume it exactly. */
+  get state(): [number, number, number, number] {
+    return [this.a >>> 0, this.b >>> 0, this.c >>> 0, this.d >>> 0];
+  }
+
+  set state(value: [number, number, number, number]) {
+    [this.a, this.b, this.c, this.d] = value;
+  }
+
   /** Float in [0, 1). */
   next(): number {
     this.a >>>= 0;

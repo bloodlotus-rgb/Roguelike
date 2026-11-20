@@ -6,11 +6,16 @@ const PAPER_DARK = '#d9cba9';
 const INK = '#211b17';
 const BLOOD = '#8b2a1f';
 
+/** What the dynasty knows besides the tiles: where its heroes fell on this level. */
+export interface MapExtras {
+  deaths?: Array<{ x: number; y: number; name: string }>;
+}
+
 /**
  * The hero's map: only what has been seen, drawn like a sketch on paper.
  * Fits the explored area into the canvas.
  */
-export function drawMap(canvas: HTMLCanvasElement, world: World): void {
+export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtras = {}): void {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const rect = canvas.getBoundingClientRect();
   canvas.width = Math.max(1, Math.round(rect.width * dpr));
@@ -23,7 +28,7 @@ export function drawMap(canvas: HTMLCanvasElement, world: World): void {
   ctx.fillStyle = PAPER;
   ctx.fillRect(0, 0, W, H);
 
-  const { level, explored } = world;
+  const { level, explored, fx } = world;
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -36,6 +41,15 @@ export function drawMap(canvas: HTMLCanvasElement, world: World): void {
       maxX = Math.max(maxX, x);
       maxY = Math.max(maxY, y);
     }
+  }
+  // Known places outside what was seen still have to fit on the page.
+  const extra: Array<{ x: number; y: number }> = [...(extras.deaths ?? [])];
+  if (fx.mapStairs) extra.push(level.stairs);
+  for (const p of extra) {
+    minX = Math.min(minX, Math.floor(p.x));
+    minY = Math.min(minY, Math.floor(p.y));
+    maxX = Math.max(maxX, Math.floor(p.x));
+    maxY = Math.max(maxY, Math.floor(p.y));
   }
   if (!Number.isFinite(minX)) return;
   const pad = 2;
@@ -101,9 +115,54 @@ export function drawMap(canvas: HTMLCanvasElement, world: World): void {
     }
   }
 
-  // The stairs down, once found.
+  // Pace Counter: the way the hero walked on this level.
+  if (fx.mapPath) {
+    ctx.fillStyle = 'rgba(139, 42, 31, 0.35)';
+    for (const tile of world.path) {
+      const p = at((tile % level.width) + 0.5, Math.floor(tile / level.width) + 0.5);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(1, size * 0.12), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Items: those seen (Retentive), and food that can be smelled nearby (Hound Nose).
+  if (fx.mapItems || fx.mapFood) {
+    for (const item of level.items) {
+      if (world.taken.has(item.id)) continue;
+      const near = Math.hypot(item.x + 0.5 - world.player.x, item.y + 0.5 - world.player.y) < 10;
+      const show = (fx.mapItems && seen(item.x, item.y)) || (fx.mapFood && item.kind === 'food' && near);
+      if (!show) continue;
+      const p = at(item.x + 0.5, item.y + 0.5);
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = Math.max(1, size / 10);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(2, size * 0.22), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // Where the family's heroes fell: a cross and a name.
+  for (const death of extras.deaths ?? []) {
+    const p = at(death.x, death.y);
+    const r = Math.max(4, size * 0.4);
+    ctx.strokeStyle = BLOOD;
+    ctx.lineWidth = Math.max(1.5, size / 7);
+    ctx.beginPath();
+    ctx.moveTo(p.x - r, p.y - r);
+    ctx.lineTo(p.x + r, p.y + r);
+    ctx.moveTo(p.x + r, p.y - r);
+    ctx.lineTo(p.x - r, p.y + r);
+    ctx.stroke();
+    ctx.fillStyle = INK;
+    ctx.font = `italic ${Math.max(10, Math.min(14, size * 0.7))}px Georgia, serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(death.name, p.x, p.y - r - 3);
+  }
+
+  // The stairs down, once found (Rune Readers know where they are from the start).
   const { stairs } = level;
-  if (seen(stairs.x, stairs.y)) {
+  if (seen(stairs.x, stairs.y) || fx.mapStairs) {
     const p = at(stairs.x, stairs.y);
     ctx.fillStyle = INK;
     ctx.fillRect(p.x + size * 0.15, p.y + size * 0.15, size * 0.7, size * 0.7);
