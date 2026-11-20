@@ -27,6 +27,12 @@ const strings = {
   },
   attack: { es: 'Atacar', en: 'Attack' },
   map: { es: 'Mapa', en: 'Map' },
+  viewTop: { es: 'Vista: cenital', en: 'View: top' },
+  viewFirst: { es: 'Vista: 1ª persona', en: 'View: 1st person' },
+  controlsHintFirst: {
+    es: 'Joystick arriba/abajo para avanzar, a los costados para girar.',
+    en: 'Joystick up/down to walk, sideways to turn.',
+  },
   mapTitle: { es: 'Profundidad {depth}', en: 'Depth {depth}' },
   mapHint: { es: 'Tocá para cerrar', en: 'Tap to close' },
   dodge: { es: 'Esquivar', en: 'Dodge' },

@@ -13,6 +13,8 @@ export interface ControlInput {
   attack: boolean;
   dodge: boolean;
   special: boolean;
+  /** Where the hero looks, when a camera decides it (first person). Otherwise movement does. */
+  aim?: { x: number; y: number };
 }
 
 export const NO_INPUT: ControlInput = { move: { x: 0, y: 0 }, attack: false, dodge: false, special: false };
@@ -323,7 +325,13 @@ export class World {
     this.prev = { attack: input.attack, dodge: input.dodge, special: input.special };
 
     const moving = length(input.move) > 0.2;
-    if (moving && this.action.type !== 'dodge') this.facing = normalize(input.move);
+    // While a blow or a special is under way, keep the direction the aim assist chose.
+    const committed = this.action.type === 'attack' || this.action.type === 'special' || this.action.type === 'dodge';
+    if (input.aim && length(input.aim) > 0) {
+      if (!committed) this.facing = normalize(input.aim);
+    } else if (moving && this.action.type !== 'dodge') {
+      this.facing = normalize(input.move);
+    }
 
     // Holding dodge runs once the roll is over; letting go or acting stops it.
     this.running = input.dodge && moving && this.action.type === 'none' && !dodgePressed;

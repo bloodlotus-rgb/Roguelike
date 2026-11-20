@@ -4,6 +4,7 @@ import type { ClassId } from './core/classes';
 import { NO_INPUT, World, type ControlInput, type WorldEvent } from './core/world';
 import { DARK } from './game/art';
 import { DungeonScene, type SceneHost } from './game/DungeonScene';
+import { FirstPersonView } from './game/firstPerson';
 import { t, type StringKey } from './i18n/i18n';
 import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
@@ -29,6 +30,17 @@ function readSeed(): string {
 }
 
 const isTouch = window.matchMedia('(pointer: coarse)').matches;
+const VIEW_KEY = 'estirpe.view';
+/** Turning speed in first person, radians per second at full stick. */
+const TURN_SPEED = 2.6;
+
+function storedView(): 'top' | 'first' {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'first' ? 'first' : 'top';
+  } catch {
+    return 'top';
+  }
+}
 
 class Session implements SceneHost {
   world!: World;
@@ -43,6 +55,10 @@ class Session implements SceneHost {
   private readonly vignette = document.getElementById('vignette')!;
   private readonly hurt = document.querySelector<HTMLElement>('#vignette .hurt')!;
   private danger = 0;
+  view: 'top' | 'first' = storedView();
+  private fp: FirstPersonView | null = null;
+  private fpAngle = 0;
+  private lastInput = 0;
 
   constructor(private readonly seed: string) {
     this.hud = new Hud(document.getElementById('hud')!, seed, {
@@ -51,6 +67,7 @@ class Session implements SceneHost {
       onChooseAgain: () => this.chooseAgain(),
       onResume: () => this.setPaused(false),
       onOpenMap: () => this.toggleMap(),
+      onToggleView: () => this.toggleView(),
       onToggleSound: () => {
         this.sound.start();
         this.sound.setMuted(!this.sound.isMuted);
@@ -65,6 +82,7 @@ class Session implements SceneHost {
       this.hud.specialButton,
     );
     this.hud.showClassSelect(true);
+    this.applyView();
 
     // Leaving the app pauses it: the game never runs while nobody is looking.
     document.addEventListener('visibilitychange', () => {
@@ -78,16 +96,48 @@ class Session implements SceneHost {
       if (e.code === 'Escape') this.setPaused(!this.paused);
       if (e.code === 'Enter' && this.world.atStairs && !this.paused) this.descend();
       if (e.code === 'KeyM') this.toggleMap();
+      if (e.code === 'KeyV') this.toggleView();
     });
   }
 
   get input(): ControlInput {
-    return this.playing && !this.paused ? this.controls.input : NO_INPUT;
+    if (!this.playing || this.paused) return NO_INPUT;
+    const raw = this.controls.input;
+    if (this.view !== 'first') return raw;
+    // Tank controls: the stick's sideways axis turns, its vertical axis walks.
+    const now = performance.now();
+    const dt = this.lastInput ? Math.min(0.1, (now - this.lastInput) / 1000) : 0;
+    this.lastInput = now;
+    this.fpAngle += raw.move.x * TURN_SPEED * dt;
+    const forward = -raw.move.y;
+    const dir = { x: Math.cos(this.fpAngle), y: Math.sin(this.fpAngle) };
+    return { ...raw, move: { x: dir.x * forward, y: dir.y * forward }, aim: dir };
+  }
+
+  /** Switches between the top view and the first-person prototype. */
+  private toggleView(): void {
+    this.view = this.view === 'first' ? 'top' : 'first';
+    try {
+      localStorage.setItem(VIEW_KEY, this.view);
+    } catch {
+      // Only a preference.
+    }
+    this.applyView();
+  }
+
+  private applyView(): void {
+    const first = this.view === 'first';
+    document.body.classList.toggle('first-person', first);
+    this.hud.setFirstPerson(first);
+    if (first && this.world) this.fpAngle = Math.atan2(this.world.facing.y, this.world.facing.x);
+    if (first && !this.fp) this.fp = new FirstPersonView(document.getElementById('fp')!);
+    this.lastInput = 0;
   }
 
   onEvents(events: WorldEvent[]): void {
     const world = this.world;
     this.sound.update(world, events, this.paused);
+    if (this.view === 'first' && this.fp) this.fp.render(world, events, this.fpAngle, performance.now());
     this.updateDanger(world);
     if (events.some((e) => e.type === 'died')) {
       this.playing = false;
@@ -139,6 +189,7 @@ class Session implements SceneHost {
     this.hud.setSurvival(this.world.survival, this.world.maxHealth);
     if (this.game) this.restartScene();
     else this.boot();
+    this.applyView();
     this.showHint();
   }
 
@@ -164,7 +215,7 @@ class Session implements SceneHost {
 
   private showHint(): void {
     const hint = document.getElementById('hint')!;
-    hint.textContent = t(isTouch ? 'controlsHint' : 'controlsHintKeys');
+    hint.textContent = t(this.view === 'first' ? 'controlsHintFirst' : isTouch ? 'controlsHint' : 'controlsHintKeys');
     hint.classList.remove('gone');
     setTimeout(() => hint.classList.add('gone'), 6000);
   }
