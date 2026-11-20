@@ -1,6 +1,6 @@
-# Guardado y linaje — propuesta v1
+# Guardado y linaje — v2
 
-> Estado: **propuesta para revisar**. Parte de lo ya decidido en `docs/concepto.md` (linaje, rasgos, héroes caídos) y lo baja a algo implementable. Lo marcado **[Propuesta]** es mío y hay que validarlo; al final están las preguntas.
+> Estado: **aprobado** (todas las propuestas). El catálogo completo de rasgos, con su efecto como jefe, está en `docs/rasgos.md`.
 
 ## Alcance
 
@@ -20,7 +20,7 @@ Esta propuesta detalla la **Etapa A**. La B la armo cuando terminemos la A.
   - **La dinastía**: semilla de la mazmorra, generación actual, integrantes (vivos y muertos), crónica, mapa heredado.
   - **La vida en curso**: quién está bajando, con qué clase, profundidad, estado del nivel (posición, medidores, horrores, objetos tomados, cargas).
 - Todo con **versión de esquema** y migraciones, para que las actualizaciones no rompan partidas.
-- **[Propuesta]** Una opción en ajustes para **abandonar la dinastía** y empezar otra con una semilla nueva (con confirmación doble). Es la única forma de "empezar de cero".
+- Una opción en ajustes para **abandonar la dinastía** y empezar otra con una semilla nueva (con confirmación doble). Es la única forma de "empezar de cero".
 
 ## La dinastía
 
@@ -28,10 +28,10 @@ Esta propuesta detalla la **Etapa A**. La B la armo cuando terminemos la A.
 
 Cada integrante tiene:
 
-- **Nombre** generado (estilo gótico, en ambos idiomas por igual). **[Propuesta]** Sin género mecánico; los nombres se sortean de una lista mixta.
+- **Nombre** generado (estilo gótico, en ambos idiomas por igual). Sin género mecánico; los nombres se sortean de una lista mixta.
 - **Progenitor** (línea única) y **generación de nacimiento**.
 - **Esperanza de vida**: 2 o 3 generaciones (sorteado al nacer).
-- **Rasgos** (ver abajo), con un tope de **5**. **[Propuesta]**
+- **Rasgos** (ver abajo), con un tope de **5**.
 - **Estado**: vivo, caído (murió bajando) o muerto de viejo.
 - Si bajó: la **clase** con la que bajó, la **profundidad** y la **causa** de su muerte.
 
@@ -52,41 +52,17 @@ La dinastía nunca se queda sin nadie: siempre quedan, como mínimo, los hereder
 ### Edad
 
 - **Joven** (recién nacido en esta generación), **adulto**, **viejo**.
-- **[Propuesta]** Los jóvenes no tienen penalización; los viejos ganan rasgos de vejez. Elegir a alguien viejo es una apuesta: más Ingenio y Voluntad, menos Fuerza y Agilidad.
+- Los jóvenes no tienen penalización; los viejos ganan rasgos de vejez. Elegir a alguien viejo es una apuesta: más Ingenio y Voluntad, menos Fuerza y Agilidad.
 
 ## Rasgos
 
-Una tabla ponderada de rasgos, de la que se sortea. Cada rasgo modifica atributos o el juego de alguna forma concreta. **[Propuesta]** Primer catálogo (unos 20):
-
-| Rasgo | Tipo | Efecto |
-|---|---|---|
-| Brazos de herrero | Nacimiento | +2 Fuerza |
-| Pies ligeros | Nacimiento | +2 Agilidad |
-| Sangre espesa | Nacimiento | +2 Vigor |
-| Mente afilada | Nacimiento | +2 Ingenio |
-| Terco | Nacimiento | +2 Voluntad |
-| Ojos de lechuza | Nacimiento | +2 Percepción |
-| Ojos de gato | Nacimiento / adquirido | La luz baja alcanza más lejos |
-| Manos rápidas | Nacimiento | Ventana de parry más amplia |
-| Pisada suave | Nacimiento | Correr hace menos ruido |
-| Estómago de hierro | Nacimiento | El hambre baja más lento |
-| Estómago chico | Defecto | El hambre baja más rápido |
-| Sediento | Defecto | La sed baja más rápido |
-| Torpe | Defecto | −2 Agilidad |
-| Enclenque | Defecto | −2 Vigor |
-| Miedo a la oscuridad | Defecto | Con poca luz, la viñeta aprieta más y el latido empieza antes |
-| Canas | Vejez | +1 Voluntad, −1 Agilidad |
-| Artritis | Vejez | −2 Agilidad, +1 Ingenio |
-| Sabiduría | Vejez | +2 Ingenio, −1 Fuerza |
-| Cicatriz | Adquirido | Sobrevivir con muy poca vida: +1 Vigor |
-| Curtido | Adquirido | Matar muchos horrores en una vida: +1 Fuerza |
-| Reflejos | Adquirido | Varios parry en una vida: ventana de parry más amplia |
+Cien rasgos en `docs/rasgos.md`: cuerpo, mente, sentidos y luz, supervivencia, combate, defectos, vejez y adquiridos. Cada uno tiene su efecto en vida y su poder como jefe.
 
 ### Cómo se heredan
 
 - Cada heredero recibe **algunos rasgos de su línea**: los del progenitor con más probabilidad, los de los abuelos con menos, y así hacia atrás.
 - Más **1 o 2 rasgos nuevos** sorteados.
-- **[Propuesta]** Los rasgos **adquiridos** pasan con baja probabilidad (por ejemplo 15 %) y los de **vejez nunca** se heredan.
+- Los rasgos **adquiridos** pasan con baja probabilidad (por ejemplo 15 %) y los de **vejez nunca** se heredan.
 - Si se pasa del tope, se descartan los más viejos.
 
 ### Rasgos adquiridos en la vida
@@ -113,7 +89,7 @@ El **árbol genealógico** completo (vivos, caídos y muertos de viejos) se pued
 ## Mapa heredado
 
 - Lo explorado por **cualquier** integrante queda en el mapa, nivel por nivel, para toda la dinastía.
-- **[Propuesta]** Marcas en el mapa: dónde cayó cada héroe (una cruz con su nombre) y las escaleras encontradas.
+- Marcas en el mapa: dónde cayó cada héroe (una cruz con su nombre) y las escaleras encontradas.
 
 ## Técnica
 
@@ -121,14 +97,3 @@ El **árbol genealógico** completo (vivos, caídos y muertos de viejos) se pued
 - El mundo (`World`) aprende a guardarse y restaurarse.
 - Guardado en `src/save/` con IndexedDB, versionado.
 - Pantallas nuevas en HTML/CSS: crónica, elegir integrante, árbol.
-
-## Preguntas
-
-1. ¿Dividimos en **Etapa A (dinastía)** y **Etapa B (héroes caídos)**?
-2. ¿**Retomar exactamente** donde estabas al volver a abrir el juego?
-3. ¿Empezar con **3 integrantes** de la primera generación?
-4. ¿**Nombres** sin género mecánico, de una lista mixta?
-5. ¿El **catálogo de rasgos** te sirve como punto de partida? ¿Agregarías o sacarías alguno?
-6. ¿Tope de **5 rasgos**, adquiridos heredables con baja probabilidad y vejez no heredable?
-7. ¿Opción de **abandonar la dinastía** para empezar otra?
-8. ¿Querés **retratos** dibujados por código para cada integrante?
