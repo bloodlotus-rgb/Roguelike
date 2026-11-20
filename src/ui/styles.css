@@ -251,7 +251,7 @@ body {
   display: grid;
   grid-template-columns: auto auto;
   grid-template-areas:
-    'descend descend'
+    'descend special'
     'dodge attack';
   align-items: end;
   justify-items: end;
@@ -265,6 +265,7 @@ body {
 
 .descend {
   grid-area: descend;
+  align-self: center;
   min-width: 120px;
   min-height: 52px;
 }
@@ -305,11 +306,19 @@ body {
   margin-bottom: 4px;
 }
 
-.dodge.cooling {
-  opacity: 0.45;
+.special {
+  grid-area: special;
+  width: 70px;
+  height: 70px;
+  margin-right: 11px;
 }
 
-.ability-ring {
+.dodge.cooling,
+.special.cooling {
+  opacity: 0.55;
+}
+
+.special-ring {
   position: absolute;
   inset: -8px;
   border-radius: 50%;
@@ -319,17 +328,13 @@ body {
   pointer-events: none;
 }
 
-.ability-ring.ready {
+.special-ring.ready {
   background: var(--flame);
-}
-
-.ability-ring.charging {
-  background: conic-gradient(var(--blood) var(--fill, 0deg), rgba(139, 42, 31, 0.15) var(--fill, 0deg));
 }
 
 /* Class selection */
 
-.class-screen {
+.screen.class-screen {
   justify-content: flex-start;
   overflow-y: auto;
   padding-top: calc(24px + env(safe-area-inset-top));
@@ -384,8 +389,18 @@ body {
   font-size: 15px;
 }
 
-.class-ability {
-  font-size: 14px;
+.class-line {
+  font-size: 13.5px;
+  line-height: 1.35;
+}
+
+.class-line b {
+  font-weight: normal;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+.special-line {
   color: var(--blood);
 }
 
@@ -440,7 +455,7 @@ body {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(150px + env(safe-area-inset-bottom));
+  bottom: calc(200px + env(safe-area-inset-bottom));
   z-index: 2;
   margin: 0;
   padding: 0 16px;

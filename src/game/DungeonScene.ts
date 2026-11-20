@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import type { Point } from '../core/dungeon';
 import type { EnemyKind } from '../core/enemies';
-import type { ControlInput, Enemy, World, WorldEvent } from '../core/world';
+import { NO_INPUT, type ControlInput, type Enemy, type World, type WorldEvent } from '../core/world';
 import type { StringKey } from '../i18n/i18n';
 import {
   drawBrush,
@@ -44,7 +44,7 @@ const PICKUP_TOAST: Record<string, StringKey> = {
 };
 
 interface Effect {
-  kind: 'swing' | 'ring' | 'drop' | 'spark';
+  kind: 'swing' | 'ring' | 'drop' | 'spark' | 'slash';
   pos: Point;
   ttl: number;
   life: number;
@@ -71,6 +71,7 @@ export class DungeonScene extends Phaser.Scene {
   private effects: Effect[] = [];
   private flickerTime = 0;
   private splatCount = 0;
+  private lastDust = 0;
 
   constructor() {
     super('dungeon');
@@ -136,7 +137,7 @@ export class DungeonScene extends Phaser.Scene {
     this.scale.on('resize', this.fitZoom, this);
     this.events.once('shutdown', () => this.scale.off('resize', this.fitZoom, this));
 
-    this.handleEvents(world.update(0, { move: { x: 0, y: 0 }, attack: false, dodge: false }));
+    this.handleEvents(world.update(0, NO_INPUT));
     this.syncAll(0);
   }
 
@@ -164,12 +165,31 @@ export class DungeonScene extends Phaser.Scene {
           this.addItemSprite(event.item.id, event.item.kind, event.item.x, event.item.y);
           break;
         case 'attack':
-          this.effects.push({ kind: 'swing', pos: event.pos, facing: event.facing, arc: event.arc, radius: event.range, ttl: 0.18, life: 0.18 });
+          this.effects.push({
+            kind: 'swing',
+            pos: event.pos,
+            facing: event.facing,
+            arc: event.arc,
+            radius: event.range,
+            ttl: event.finisher ? 0.26 : 0.18,
+            life: event.finisher ? 0.26 : 0.18,
+            color: event.finisher ? BLOOD_HEX : INK_HEX,
+          });
           break;
         case 'enemyHit':
+          if (event.burn) {
+            this.splatter(event.pos, 2, FLAME_HEX);
+            break;
+          }
           this.flashUntil.set(event.id, this.time.now + 90);
-          this.splatter(event.pos, event.crit ? 10 : 5, event.crit ? 0x8b2a1f : INK_HEX);
+          this.splatter(event.pos, event.crit ? 10 : 5, event.crit ? BLOOD_HEX : INK_HEX);
           if (event.crit) this.cameras.main.shake(90, 0.004);
+          break;
+        case 'heal':
+          this.effects.push({ kind: 'ring', pos: this.host.world.player, radius: 0.6, ttl: 0.4, life: 0.4, color: BLOOD_HEX });
+          break;
+        case 'executed':
+          this.host.onToast('executed');
           break;
         case 'enemyDied': {
           const sprite = this.enemySprites.get(event.id);
@@ -195,10 +215,15 @@ export class DungeonScene extends Phaser.Scene {
           break;
         case 'dodge':
           break;
-        case 'ability':
-          if (event.radius > 0) {
-            const color = event.kind === 'flare' ? FLAME_HEX : INK_HEX;
-            this.effects.push({ kind: 'ring', pos: event.pos, radius: event.radius, ttl: 0.35, life: 0.35, color });
+        case 'special':
+          if (event.kind === 'flare') {
+            this.effects.push({ kind: 'ring', pos: event.pos, radius: event.radius, ttl: 0.45, life: 0.45, color: FLAME_HEX });
+            this.cameras.main.flash(120, 217, 130, 43);
+          } else if (event.kind === 'shadowStep') {
+            this.splatter(event.pos, 12, INK_HEX);
+          } else if (event.kind === 'execution' && event.target) {
+            this.effects.push({ kind: 'slash', pos: event.target, ttl: 0.4, life: 0.4 });
+            this.cameras.main.shake(160, 0.008);
           }
           break;
         case 'died':
@@ -231,6 +256,7 @@ export class DungeonScene extends Phaser.Scene {
   private syncAll(dt: number, time = this.time.now): void {
     this.syncPlayer(time);
     this.syncEnemies(time);
+    this.syncItems();
     this.syncProjectiles();
     this.syncLight(dt);
     this.drawEffects(dt);
@@ -256,7 +282,10 @@ export class DungeonScene extends Phaser.Scene {
       let x = px(enemy.pos.x);
       const y = px(enemy.pos.y);
       if (enemy.state === 'windup') x += Math.sin(time / 25) * 1.5;
-      sprite.setPosition(x, y).setDepth(2 + enemy.pos.y / 1000);
+      // Marked horrors show through the fog.
+      const tile = Math.floor(enemy.pos.y) * this.host.world.level.width + Math.floor(enemy.pos.x);
+      const throughFog = enemy.wax > 0 && !this.host.world.visibleNow.has(tile);
+      sprite.setPosition(x, y).setDepth(throughFog ? 3.5 : 2 + enemy.pos.y / 1000);
       if (Math.abs(enemy.facing.x) > 0.1) sprite.setFlipX(enemy.facing.x < 0);
       sprite.setRotation(enemy.state === 'stunned' ? Math.sin(time / 80) * 0.25 : 0);
       // Wounded horrors look smudged.
@@ -265,6 +294,19 @@ export class DungeonScene extends Phaser.Scene {
       sprite.setAlpha(Phaser.Math.Linear(sprite.alpha, target, 0.25));
       if (time < (this.flashUntil.get(enemy.id) ?? 0)) sprite.setTint(BLOOD_HEX).setTintMode(Phaser.TintModes.FILL);
       else sprite.clearTint();
+    }
+  }
+
+  /** Rat eye: nearby items show through the fog for the plunderer. */
+  private syncItems(): void {
+    const world = this.host.world;
+    const sight = world.itemSight;
+    if (sight <= 0) return;
+    for (const item of world.level.items) {
+      const sprite = this.itemSprites.get(item.id);
+      if (!sprite) continue;
+      const near = Math.hypot(item.x + 0.5 - world.player.x, item.y + 0.5 - world.player.y) <= sight;
+      sprite.setDepth(near ? 3.5 : 1).setAlpha(near ? 0.85 : 1);
     }
   }
 
@@ -308,12 +350,25 @@ export class DungeonScene extends Phaser.Scene {
       this.drawTelegraph(g, enemy);
     }
 
-    // Charging the cleave.
-    const charge = world.charge;
-    if (charge >= 0 && world.cls.ability.kind === 'chargedCleave') {
-      const r = px(world.cls.ability.radius) * (0.35 + 0.65 * charge);
-      g.lineStyle(2 + charge * 2, BLOOD_HEX, 0.4 + charge * 0.5);
-      g.strokeCircle(px(world.player.x), px(world.player.y), r);
+    // Burning wax: a small flame over each marked horror.
+    for (const enemy of world.enemies) {
+      if (enemy.state === 'dead' || enemy.wax <= 0) continue;
+      const flicker = Math.sin(this.time.now / 60 + enemy.id) * 1.5;
+      g.fillStyle(FLAME_HEX, 0.85);
+      g.fillEllipse(px(enemy.pos.x), px(enemy.pos.y) - TILE * 1.15 + flicker, 5, 8);
+    }
+
+    // Running kicks up dust.
+    if (world.running && Math.floor(this.time.now / 70) !== this.lastDust) {
+      this.lastDust = Math.floor(this.time.now / 70);
+      this.effects.push({
+        kind: 'drop',
+        pos: { x: world.player.x - world.facing.x * 0.3, y: world.player.y + 0.1 },
+        vel: { x: -world.facing.x * 0.6, y: -0.3 },
+        ttl: 0.4,
+        life: 0.4,
+        color: 0x6b5f52,
+      });
     }
 
     this.effects = this.effects.filter((e) => {
@@ -326,7 +381,7 @@ export class DungeonScene extends Phaser.Scene {
         case 'swing': {
           const facing = e.facing!;
           const angle = Math.atan2(facing.y, facing.x);
-          g.lineStyle(3, INK_HEX, 0.8 * k);
+          g.lineStyle(e.color === BLOOD_HEX ? 5 : 3, e.color ?? INK_HEX, 0.8 * k);
           g.beginPath();
           g.arc(x, y, px(e.radius!) * (1.05 - 0.25 * k), angle - e.arc! / 2, angle + e.arc! / 2);
           g.strokePath();
@@ -341,6 +396,13 @@ export class DungeonScene extends Phaser.Scene {
           g.fillStyle(e.color!, k);
           g.fillCircle(x, y, 1.5 + 2 * k);
           break;
+        case 'slash': {
+          // A heavy diagonal cut across the target.
+          const len = TILE * 0.9 * (1.2 - 0.2 * k);
+          g.lineStyle(6 * k + 1, BLOOD_HEX, k);
+          g.lineBetween(x - len, y - TILE * 0.9 - len, x + len, y - TILE * 0.9 + len);
+          break;
+        }
         case 'spark':
           g.lineStyle(2.5, FLAME_HEX, k);
           for (let i = 0; i < 8; i++) {

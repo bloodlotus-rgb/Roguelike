@@ -4,6 +4,7 @@ type Vector = { x: number; y: number };
 
 const ATTACK_KEYS = ['Space', 'KeyJ'];
 const DODGE_KEYS = ['ShiftLeft', 'ShiftRight', 'KeyK'];
+const SPECIAL_KEYS = ['KeyQ', 'KeyL'];
 
 /**
  * Floating virtual joystick (touching anywhere outside the buttons places the stick
@@ -13,6 +14,7 @@ export class Controls {
   private touchVector: Vector = { x: 0, y: 0 };
   private attackTouch = false;
   private dodgeTouch = false;
+  private specialTouch = false;
   private keys = new Set<string>();
   private pointerId: number | null = null;
   private origin = { x: 0, y: 0 };
@@ -24,7 +26,9 @@ export class Controls {
     private readonly zone: HTMLElement,
     attackButton: HTMLElement,
     dodgeButton: HTMLElement,
+    specialButton: HTMLElement,
   ) {
+    this.bindButton(specialButton, (down) => (this.specialTouch = down));
     this.bindButton(attackButton, (down) => (this.attackTouch = down));
     this.bindButton(dodgeButton, (down) => (this.dodgeTouch = down));
     this.base = document.createElement('div');
@@ -39,7 +43,7 @@ export class Controls {
     zone.addEventListener('pointerup', this.onUp);
     zone.addEventListener('pointercancel', this.onUp);
     window.addEventListener('keydown', (e) => {
-      if (ATTACK_KEYS.includes(e.code) || DODGE_KEYS.includes(e.code)) e.preventDefault();
+      if ([...ATTACK_KEYS, ...DODGE_KEYS, ...SPECIAL_KEYS].includes(e.code)) e.preventDefault();
       this.keys.add(e.code);
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -52,6 +56,7 @@ export class Controls {
       move: this.vector,
       attack: this.attackTouch || ATTACK_KEYS.some((code) => k.has(code)),
       dodge: this.dodgeTouch || DODGE_KEYS.some((code) => k.has(code)),
+      special: this.specialTouch || SPECIAL_KEYS.some((code) => k.has(code)),
     };
   }
 
@@ -70,6 +75,7 @@ export class Controls {
     this.keys.clear();
     this.attackTouch = false;
     this.dodgeTouch = false;
+    this.specialTouch = false;
     this.release();
   }
 

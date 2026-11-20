@@ -14,11 +14,14 @@ export interface Point {
   y: number;
 }
 
+export type RoomShape = 'rect' | 'cave' | 'hall';
+
 export interface Room {
   x: number;
   y: number;
   w: number;
   h: number;
+  shape: RoomShape;
 }
 
 export interface LevelItem {
@@ -64,9 +67,33 @@ function overlaps(a: Room, b: Room, margin: number): boolean {
   );
 }
 
-function carveRoom(tiles: Uint8Array, width: number, room: Room): void {
+function carveRoom(tiles: Uint8Array, width: number, room: Room, rng: Rng): void {
+  const cx = room.x + (room.w - 1) / 2;
+  const cy = room.y + (room.h - 1) / 2;
   for (let y = room.y; y < room.y + room.h; y++) {
-    for (let x = room.x; x < room.x + room.w; x++) tiles[y * width + x] = Tile.Floor;
+    for (let x = room.x; x < room.x + room.w; x++) {
+      if (room.shape === 'cave') {
+        // Irregular blob: an ellipse with a ragged edge.
+        const dx = (x - cx) / (room.w / 2);
+        const dy = (y - cy) / (room.h / 2);
+        if (dx * dx + dy * dy > 1 + rng.range(-0.35, 0.15)) continue;
+      }
+      tiles[y * width + x] = Tile.Floor;
+    }
+  }
+  if (room.shape === 'hall') {
+    // Columns on a grid, never touching each other or the walls.
+    for (let y = room.y + 2; y < room.y + room.h - 2; y += 2) {
+      for (let x = room.x + 2; x < room.x + room.w - 2; x += 2) tiles[y * width + x] = Tile.Wall;
+    }
+  }
+}
+
+/** Turns into rock any floor that cannot be reached from `origin`. */
+function removeUnreachable(level: Level, origin: Point): void {
+  const dist = floorDistances(level, origin);
+  for (let i = 0; i < level.tiles.length; i++) {
+    if (level.tiles[i] === Tile.Floor && dist[i] < 0) level.tiles[i] = Tile.Wall;
   }
 }
 
@@ -141,11 +168,15 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
   for (let attempt = 0; attempt < cfg.roomAttempts && rooms.length < targetRooms; attempt++) {
     const w = rng.int(cfg.roomMinSize, cfg.roomMaxSize);
     const h = rng.int(cfg.roomMinSize, Math.min(cfg.roomMaxSize, 8));
-    const room: Room = { x: rng.int(2, width - w - 2), y: rng.int(2, height - h - 2), w, h };
+    const shapeRoll = rng.next();
+    const shape: RoomShape = w >= 7 && h >= 6 && shapeRoll < 0.35 ? 'hall' : shapeRoll > 0.72 ? 'cave' : 'rect';
+    const room: Room = { x: rng.int(2, width - w - 2), y: rng.int(2, height - h - 2), w, h, shape };
     if (rooms.some((other) => overlaps(room, other, 2))) continue;
     rooms.push(room);
   }
-  for (const room of rooms) carveRoom(tiles, width, room);
+  // The starting room is always a plain one.
+  if (rooms.length > 0) rooms[0].shape = 'rect';
+  for (const room of rooms) carveRoom(tiles, width, room, rng);
 
   // Connections: minimum spanning tree over room centers, plus a few loops.
   const centers = rooms.map(center);
@@ -187,6 +218,8 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
     items: [],
   };
 
+  removeUnreachable(level, level.start);
+
   // Stairs down: the room center farthest from the start.
   const distances = floorDistances(level, level.start);
   let farthest = 0;
@@ -213,7 +246,7 @@ function placeItems(level: Level, rng: Rng): LevelItem[] {
         const x = rng.int(room.x, room.x + room.w - 1);
         const y = rng.int(room.y, room.y + room.h - 1);
         const key = `${x},${y}`;
-        if (taken.has(key)) continue;
+        if (taken.has(key) || !isFloor(level, x, y)) continue;
         taken.add(key);
         items.push({ id: items.length, kind, x, y });
         break;
