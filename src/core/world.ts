@@ -35,6 +35,8 @@ export const COMBAT = {
   thirstCost: { attack: 0.6, dodge: 1, special: 1.5 },
   /** A press during a swing is kept this long and chains the next blow. */
   attackBuffer: 0.45,
+  /** Seconds over which recently lost health stops counting for Bloodthirst. */
+  rallyFade: 3,
   /** Riposte after a parry: guaranteed critical hit within this many seconds. */
   riposteFor: 2,
   critMultiplier: 2,
@@ -147,6 +149,8 @@ export interface LifeCounters {
   dark: number;
   nearDeaths: number;
   belowTenth: boolean;
+  /** Acquired traits already earned in this life: each is earned once, even if lost to the cap. */
+  earned?: string[];
 }
 
 const freshCounters = (): LifeCounters => ({
@@ -159,6 +163,7 @@ const freshCounters = (): LifeCounters => ({
   dark: 0,
   nearDeaths: 0,
   belowTenth: false,
+  earned: [],
 });
 
 /** Everything needed to bring a life back exactly where it was. */
@@ -199,6 +204,8 @@ export interface WorldSnapshot {
     attackBuffer: number;
     combo: number;
     lastHurtAt: number;
+    /** Health lost recently, part of which a kill wins back (Bloodthirst). */
+    rally?: number;
   };
   running: boolean;
   hurtBonusReady: boolean;
@@ -238,6 +245,8 @@ export class World {
   hardToKillUsed = false;
   private hurtBonusReady = false;
   private lastHurtAt = -99;
+  /** Health lost recently; it fades over a few seconds. */
+  rally = 0;
   private lastCause: DeathCause = { type: 'hunger' };
   private readonly exploredByDepth: Record<number, string>;
   level!: Level;
@@ -323,6 +332,7 @@ export class World {
     world.attackBuffer = t.attackBuffer;
     world.comboTimer = t.combo;
     world.lastHurtAt = t.lastHurtAt;
+    world.rally = t.rally ?? 0;
     world.running = snapshot.running;
     world.hurtBonusReady = snapshot.hurtBonusReady;
     world.lastCause = snapshot.lastCause;
@@ -369,6 +379,7 @@ export class World {
         attackBuffer: this.attackBuffer,
         combo: this.comboTimer,
         lastHurtAt: this.lastHurtAt,
+        rally: this.rally,
       },
       running: this.running,
       hurtBonusReady: this.hurtBonusReady,
@@ -553,6 +564,7 @@ export class World {
     }
     this.gainCharge(this.cls.charge.perSecond * (1 + (fx.chargeOverTime ?? 0)) * dt);
     this.time += dt;
+    this.rally *= Math.exp(-dt / COMBAT.rallyFade);
     if (fx.mapPath) this.path.add(Math.floor(this.player.y) * this.level.width + Math.floor(this.player.x));
 
     this.pickUp(events);
@@ -817,8 +829,11 @@ export class World {
     if (enemy.kind === 'crawler') this.counters.crawlerKills++;
     if (this.fx.killThirst) this.survival = { ...this.survival, thirst: Math.min(100, this.survival.thirst + this.fx.killThirst) };
     const passive = this.cls.passive;
-    if (passive.kind === 'bloodthirst') {
-      const amount = Math.round(this.maxHealth * passive.healFraction);
+    // Bloodthirst: a kill wins back part of the health lost in the last few seconds, so it
+    // rewards fighting back at once, not grinding through every horror at full health.
+    if (passive.kind === 'bloodthirst' && this.rally >= 1) {
+      const amount = Math.round(this.rally * passive.healFraction);
+      this.rally -= amount;
       this.survival = { ...this.survival, health: Math.min(this.maxHealth, this.survival.health + amount) };
       events.push({ type: 'heal', amount });
     }
@@ -920,6 +935,7 @@ export class World {
     if (fx.firstHitHalved && this.time - this.lastHurtAt > 6) damage *= 0.5;
     this.lastHurtAt = this.time;
     damage = Math.round(damage);
+    this.rally += Math.min(damage, this.survival.health);
     this.survival = {
       ...this.survival,
       health: Math.max(0, this.survival.health - damage),
@@ -935,6 +951,9 @@ export class World {
 
   /** Grants an acquired trait once, within the trait cap. */
   private gainTrait(id: string, events: WorldEvent[]): void {
+    const earned = (this.counters.earned ??= []);
+    if (earned.includes(id)) return;
+    earned.push(id);
     if (this.traits.includes(id) || !compatible(id, this.traits)) return;
     this.traits.push(id);
     while (this.traits.length > TRAIT_CAP) {

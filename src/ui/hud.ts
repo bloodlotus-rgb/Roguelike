@@ -14,6 +14,7 @@ export interface HudHandlers {
   onClassBack: () => void;
   onDescend: () => void;
   onResume: () => void;
+  onPause: () => void;
   onAbandon: () => void;
   onToggleSound: () => boolean;
   onOpenMap: () => void;
@@ -61,6 +62,7 @@ export class Hud {
         <div class="hud-side">
           <div class="depth"></div>
           <button class="map-button" type="button" data-i18n="map"></button>
+          <button class="map-button pause-button" type="button" data-i18n="pause"></button>
           <button class="view-button map-button" type="button"></button>
           <div class="hud-toggles">
             <button class="sound" type="button" aria-label="Sound"></button>
@@ -131,7 +133,8 @@ export class Hud {
     this.mapScreen = root.querySelector('.map-screen')!;
     this.mapCanvas = root.querySelector('.map-canvas')!;
     this.mapTitle = root.querySelector('.map-title')!;
-    root.querySelector('.map-button:not(.view-button)')!.addEventListener('click', handlers.onOpenMap);
+    root.querySelector('.map-button:not(.view-button):not(.pause-button)')!.addEventListener('click', handlers.onOpenMap);
+    root.querySelector('.pause-button')!.addEventListener('click', handlers.onPause);
     this.viewButton = root.querySelector('.view-button')!;
     this.viewButton.addEventListener('click', handlers.onToggleView);
     this.mapScreen.addEventListener('pointerdown', (e) => {

@@ -397,12 +397,15 @@ describe('passives', () => {
   it('heals the headsman when he kills', () => {
     const world = arena('headsman');
     world.facing = { x: 1, y: 0 };
+    // Only health lost a moment ago comes back.
     world.survival = { ...world.survival, health: 50 };
+    world.rally = 20;
     const enemy = place(world, 'crawler', 1, 0, 'idle');
     enemy.health = 1;
     const events = [...tap(world, 'attack'), ...run(world, 0.3)];
     expect(events.some((e) => e.type === 'heal')).toBe(true);
     expect(world.survival.health).toBeGreaterThan(50);
+    expect(world.survival.health).toBeLessThanOrEqual(60);
   });
 
   it('gives the plunderer item sight', () => {
@@ -581,5 +584,38 @@ describe('snapshots', () => {
     expect(copy.player).toEqual(world.player);
     expect(copy.survival).toEqual(world.survival);
     expect(copy.enemies.map((e) => [e.pos, e.health])).toEqual(world.enemies.map((e) => [e.pos, e.health]));
+  });
+});
+
+describe('fixes from play', () => {
+  it('a full set of traits does not keep earning the same ones over and over', () => {
+    const world = new World('estirpe', 'headsman', 0, 10, { traits: ['scar', 'hardened', 'reflexes', 'burnt', 'oneEyed'] });
+    world.enemies = [];
+    const gained = run(world, 2).filter((e) => e.type === 'traitGained');
+    expect(gained.map((e) => e.type === 'traitGained' && e.trait).sort()).toEqual(['cursebound', 'survivor']);
+    expect(world.traits.length).toBe(5);
+  });
+
+  it('bloodthirst only wins back health lost a moment ago', () => {
+    const fresh = arena('headsman');
+    fresh.survival = { ...fresh.survival, health: fresh.maxHealth * 0.5 };
+    const quiet = place(fresh, 'crawler', 1, 0);
+    quiet.health = 1;
+    fresh.facing = { x: 1, y: 0 };
+    run(fresh, 0.8, input({ attack: true }));
+    expect(quiet.state).toBe('dead');
+    expect(fresh.survival.health).toBe(fresh.maxHealth * 0.5);
+
+    const hurt = arena('headsman');
+    const husk = windupAgainst(hurt, 'husk');
+    run(hurt, 0.4);
+    const after = hurt.survival.health;
+    expect(after).toBeLessThan(hurt.maxHealth);
+    husk.health = 1;
+    hurt.facing = { x: husk.pos.x - hurt.player.x, y: husk.pos.y - hurt.player.y };
+    run(hurt, 0.8, input({ attack: true }));
+    expect(husk.state).toBe('dead');
+    expect(hurt.survival.health).toBeGreaterThan(after);
+    expect(hurt.survival.health).toBeLessThan(hurt.maxHealth);
   });
 });

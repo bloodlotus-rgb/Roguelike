@@ -103,6 +103,7 @@ class Session implements SceneHost {
       },
       onDescend: () => this.descend(),
       onResume: () => this.setPaused(false),
+      onPause: () => this.setPaused(true),
       onAbandon: () => {
         this.hud.setPaused(false);
         this.lineage.askAbandon(() => this.hud.setPaused(true));

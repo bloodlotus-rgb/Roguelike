@@ -85,8 +85,8 @@ const strings = {
     en: 'Flare: burns light, harms and scares; double damage to waxed horrors. Charges over time.',
   },
   classPassive_headsman: {
-    es: 'Sed de sangre: cada horror que matás te devuelve vida.',
-    en: 'Bloodthirst: every horror you kill gives you health back.',
+    es: 'Sed de sangre: matar te devuelve la mitad de la vida que perdiste hace un momento.',
+    en: 'Bloodthirst: a kill wins back half the health you just lost.',
   },
   classPassive_plunderer: {
     es: 'Ojo de rata: ves los objetos cercanos en la oscuridad y los horrores sueltan más botín.',
@@ -102,6 +102,7 @@ const strings = {
   attr_wit: { es: 'Ingenio', en: 'Wits' },
   attr_wil: { es: 'Voluntad', en: 'Will' },
   attr_per: { es: 'Percepción', en: 'Perception' },
+  pause: { es: 'Pausa', en: 'Pause' },
   chooseHow: { es: '¿Cómo baja {name}?', en: 'How does {name} descend?' },
   generation: { es: 'Generación {n}', en: 'Generation {n}' },
   age_young: { es: 'Joven', en: 'Young' },
