@@ -22,7 +22,8 @@ export type CameraMode = 'top' | 'first';
 
 const EYE = 1.15;
 const WALL_FIRST = 2.2;
-const WALL_TOP = 0.9;
+/** From above the walls stand tall too; the ones between the camera and the hero fade out. */
+const WALL_TOP = 1.6;
 const TOP_TILT = (55 * Math.PI) / 180;
 /** Tiles visible across the shortest side of the screen in the top view. */
 const TOP_TILES = 9.5;
@@ -38,15 +39,49 @@ const EYES: Record<EnemyKind, { h: number; dots: Array<[number, number, number]>
   snuffer: { h: 42.3, dots: [[-1.5, 0, 0.7], [1.5, 0, 0.7]] },
 };
 
-function canvasTexture(canvas: HTMLCanvasElement, pixelated = false): THREE.CanvasTexture {
+function canvasTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  if (pixelated) {
-    texture.magFilter = THREE.NearestFilter;
-    texture.minFilter = THREE.NearestMipmapLinearFilter;
-  }
-  texture.anisotropy = 4;
+  texture.anisotropy = 8;
   return texture;
+}
+
+/** Shared by the wall materials: whether to cut walls away, and where the hero stands. */
+const cutaway = { fade: { value: 0 }, player: { value: new THREE.Vector3() } };
+
+/**
+ * Cut-away for the top view: walls on the camera's side of the hero (south of them) are
+ * cut at knee height, like a scale model, so rooms and corridors stay readable and their
+ * outline still shows. Shadows are unaffected.
+ */
+function withCutaway(material: THREE.MeshLambertMaterial): THREE.MeshLambertMaterial {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uFade = cutaway.fade;
+    shader.uniforms.uPlayer = cutaway.player;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vCutawayPos;')
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        vec4 cutawayWorld = vec4(transformed, 1.0);
+        #ifdef USE_INSTANCING
+          cutawayWorld = instanceMatrix * cutawayWorld;
+        #endif
+        vCutawayPos = (modelMatrix * cutawayWorld).xyz;`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uFade;\nuniform vec3 uPlayer;\nvarying vec3 vCutawayPos;')
+      .replace(
+        '#include <clipping_planes_fragment>',
+        `#include <clipping_planes_fragment>
+        if (uFade > 0.5) {
+          float south = vCutawayPos.z - uPlayer.z;
+          float side = abs(vCutawayPos.x - uPlayer.x);
+          if (south > -0.15 && vCutawayPos.y > 0.3 && side < 7.0) discard;
+        }`,
+      );
+  };
+  return material;
 }
 
 /** A flat cut-out standing on the floor, facing the camera, lit like the floor under it. */
@@ -203,7 +238,8 @@ export class ThreeView {
 
   constructor(private readonly container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
-    this.renderer.setClearColor(0x110e0c, 1);
+    // Pure black: unlit geometry is black too, so nothing outside the light shows a silhouette.
+    this.renderer.setClearColor(0x000000, 1);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -224,10 +260,10 @@ export class ThreeView {
     this.scene.add(this.light.target);
 
     this.textures = {
-      wall: canvasTexture(inkTexture('wall', 128), true),
-      floor: canvasTexture(inkTexture('floor', 128), true),
-      ceiling: canvasTexture(inkTexture('ceiling', 128), true),
-      stairs: canvasTexture(inkTexture('stairs', 128), true),
+      wall: canvasTexture(inkTexture('wall', 512)),
+      floor: canvasTexture(inkTexture('floor', 256)),
+      ceiling: canvasTexture(inkTexture('ceiling', 256)),
+      stairs: canvasTexture(inkTexture('stairs', 256)),
     };
     for (const kind of ['crawler', 'husk', 'mourner', 'snuffer'] as const) {
       const sheet = drawEnemySheet(kind, 64);
@@ -318,8 +354,8 @@ export class ThreeView {
         if (touches) this.wallTiles.push([x, y]);
       }
     }
-    const side = new THREE.MeshLambertMaterial({ map: this.textures.wall });
-    const top = new THREE.MeshLambertMaterial({ map: this.textures.ceiling });
+    const side = withCutaway(new THREE.MeshLambertMaterial({ map: this.textures.wall }));
+    const top = withCutaway(new THREE.MeshLambertMaterial({ map: this.textures.ceiling }));
     // Box faces: +x, -x, +y (top), -y, +z, -z.
     this.walls = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), [side, side, top, top, side, side], this.wallTiles.length);
     this.walls.castShadow = true;
@@ -379,10 +415,12 @@ export class ThreeView {
     this.width = w;
     this.height = h;
     const portrait = w < h;
-    const ratio = this.mode === 'first' ? (portrait ? 230 : 420) / w : Math.min(window.devicePixelRatio || 1, 2);
+    // First person renders a little below full resolution, which keeps it light and soft.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const ratio = this.mode === 'first' ? Math.min(dpr, (portrait ? 520 : 960) / w) : dpr;
     this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(w, h, true);
-    this.renderer.domElement.classList.toggle('pixelated', this.mode === 'first');
+    this.renderer.domElement.classList.toggle('pixelated', false);
     this.hands.width = Math.round(w * (this.mode === 'first' ? ratio : 0.5));
     this.hands.height = Math.round(h * (this.mode === 'first' ? ratio : 0.5));
     this.camera.aspect = w / h;
@@ -398,6 +436,8 @@ export class ThreeView {
 
   private placeCamera(world: World, fpAngle: number): void {
     const p = world.player;
+    cutaway.fade.value = this.mode === 'top' ? 1 : 0;
+    cutaway.player.value.set(p.x, 0, p.y);
     if (this.mode === 'first') {
       this.camera.position.set(p.x, EYE, p.y);
       this.camera.lookAt(p.x + Math.cos(fpAngle), EYE, p.y + Math.sin(fpAngle));
