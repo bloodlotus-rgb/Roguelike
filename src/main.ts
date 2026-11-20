@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
+import { Sound } from './audio/sound';
 import type { ClassId } from './core/classes';
 import { NO_INPUT, World, type ControlInput, type WorldEvent } from './core/world';
-import { PAPER } from './game/art';
+import { DARK } from './game/art';
 import { DungeonScene, type SceneHost } from './game/DungeonScene';
 import { t, type StringKey } from './i18n/i18n';
 import { Controls } from './ui/controls';
@@ -38,6 +39,10 @@ class Session implements SceneHost {
   private readonly hud: Hud;
   private game: Phaser.Game | null = null;
   private hudTimer = 0;
+  private readonly sound = new Sound();
+  private readonly vignette = document.getElementById('vignette')!;
+  private readonly hurt = document.querySelector<HTMLElement>('#vignette .hurt')!;
+  private danger = 0;
 
   constructor(private readonly seed: string) {
     this.hud = new Hud(document.getElementById('hud')!, seed, {
@@ -45,7 +50,13 @@ class Session implements SceneHost {
       onDescend: () => this.descend(),
       onChooseAgain: () => this.chooseAgain(),
       onResume: () => this.setPaused(false),
+      onToggleSound: () => {
+        this.sound.start();
+        this.sound.setMuted(!this.sound.isMuted);
+        return !this.sound.isMuted;
+      },
     });
+    this.hud.setSoundOn(!this.sound.isMuted);
     this.controls = new Controls(
       document.getElementById('touch-zone')!,
       this.hud.attackButton,
@@ -56,7 +67,10 @@ class Session implements SceneHost {
 
     // Leaving the app pauses it: the game never runs while nobody is looking.
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) this.setPaused(true);
+      if (document.hidden) {
+        this.setPaused(true);
+        this.sound.suspend();
+      }
     });
     window.addEventListener('keydown', (e) => {
       if (!this.playing) return;
@@ -71,6 +85,8 @@ class Session implements SceneHost {
 
   onEvents(events: WorldEvent[]): void {
     const world = this.world;
+    this.sound.update(world, events, this.paused);
+    this.updateDanger(world);
     if (events.some((e) => e.type === 'died')) {
       this.playing = false;
       this.hud.setSurvival(world.survival, world.maxHealth);
@@ -91,7 +107,25 @@ class Session implements SceneHost {
     this.hud.toast(key);
   }
 
+  /**
+   * The screen closes in when horrors hunt you and turns red when you are hurt.
+   * Smoothed so it breathes instead of flickering.
+   */
+  private updateDanger(world: World): void {
+    let hunters = 0;
+    for (const e of world.enemies) {
+      if (e.state === 'dead' || !e.alerted) continue;
+      if (Math.hypot(e.pos.x - world.player.x, e.pos.y - world.player.y) < 7) hunters++;
+    }
+    const target = Math.min(1, hunters / 3);
+    this.danger += (target - this.danger) * 0.05;
+    this.vignette.style.opacity = String(0.45 + this.danger * 0.5);
+    const health = world.survival.health / world.maxHealth;
+    this.hurt.style.opacity = String(health < 0.5 ? (0.5 - health) * 2 : 0);
+  }
+
   private start(classId: ClassId): void {
+    this.sound.start();
     this.world = new World(this.seed, classId, this.life);
     this.playing = true;
     this.paused = false;
@@ -113,7 +147,7 @@ class Session implements SceneHost {
       parent,
       width: parent.clientWidth * dpr,
       height: parent.clientHeight * dpr,
-      backgroundColor: PAPER,
+      backgroundColor: DARK,
       scale: { mode: Phaser.Scale.NONE },
       input: { keyboard: false, mouse: false, touch: false },
       render: { antialias: true, roundPixels: false },
@@ -154,6 +188,7 @@ class Session implements SceneHost {
 
   private setPaused(paused: boolean): void {
     if (!this.playing) return;
+    if (!paused) this.sound.start();
     this.paused = paused;
     this.controls.reset();
     this.hud.setPaused(paused);

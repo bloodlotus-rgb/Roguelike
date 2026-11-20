@@ -9,12 +9,13 @@ import {
   drawItem,
   drawLevel,
   drawLightMask,
-  drawPaper,
+  drawDarkness,
   drawPlayer,
   drawProjectile,
   drawSplat,
-  PAPER,
+  DARK,
 } from './art';
+import { isFloor } from '../core/dungeon';
 
 /** World units per tile. */
 export const TILE = 32;
@@ -24,6 +25,11 @@ const ART_SCALE = 1.5;
 const FOG_PER_TILE = 12;
 const LIGHT_MASK_SIZE = 1024;
 const LIGHT_HOLE = 0.06;
+/** Shadows are soft enough for a low-resolution texture too. */
+const SHADOW_PER_TILE = 16;
+const DARK_HEX = 0x110e0c;
+/** How many tiles fit across the shortest side of the screen. */
+const VIEW_TILES = 9.5;
 const INK_HEX = 0x211b17;
 const BLOOD_HEX = 0x8b2a1f;
 const FLAME_HEX = 0xd9822b;
@@ -62,6 +68,9 @@ export class DungeonScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Image;
   private fog!: Phaser.GameObjects.RenderTexture;
   private lightMask!: Phaser.GameObjects.Image;
+  private shadows!: Phaser.GameObjects.RenderTexture;
+  private shadowGfx!: Phaser.GameObjects.Graphics;
+  private shadowKey = '';
   private fx!: Phaser.GameObjects.Graphics;
   private itemSprites = new Map<number, Phaser.GameObjects.Image>();
   private enemySprites = new Map<number, Phaser.GameObjects.Image>();
@@ -120,17 +129,27 @@ export class DungeonScene extends Phaser.Scene {
       .setOrigin(0)
       .setScale(fogScale)
       .setDepth(3);
-    this.fog.repeat('paper', undefined, 0, 0, this.fog.width, this.fog.height);
+    this.fog.repeat('darkness', undefined, 0, 0, this.fog.width, this.fog.height);
     const explored: number[] = [];
     world.explored.forEach((seen, index) => {
       if (seen) explored.push(index);
     });
     this.eraseFog(explored);
 
+    // Shadows cast by walls and columns inside the light.
+    this.shadows = this.add
+      .renderTexture(0, 0, level.width * SHADOW_PER_TILE, level.height * SHADOW_PER_TILE)
+      .setOrigin(0)
+      .setScale(TILE / SHADOW_PER_TILE)
+      .setDepth(3.9)
+      .setAlpha(0.8);
+    this.shadowGfx = this.make.graphics({}, false);
+    this.shadowKey = '';
+
     this.lightMask = this.add.image(0, 0, 'light-mask').setDepth(4);
 
     const camera = this.cameras.main;
-    camera.setBackgroundColor(PAPER);
+    camera.setBackgroundColor(DARK);
     camera.setBounds(-TILE * 4, -TILE * 4, (level.width + 8) * TILE, (level.height + 8) * TILE);
     camera.startFollow(this.player, false, 0.15, 0.15);
     this.fitZoom();
@@ -336,7 +355,69 @@ export class DungeonScene extends Phaser.Scene {
     const flicker = 1 + Math.sin(t * 9.1) * 0.012 + Math.sin(t * 23.7) * 0.008;
     const radius = this.host.world.lightRadius * TILE * flicker;
     const scale = radius / ((LIGHT_MASK_SIZE / 2) * LIGHT_HOLE);
-    this.lightMask.setPosition(this.player.x, this.player.y - TILE * 0.3).setScale(scale);
+    // The ragged edge crawls slowly.
+    this.lightMask
+      .setPosition(this.player.x, this.player.y - TILE * 0.3)
+      .setScale(scale)
+      .setRotation(t * 0.07);
+    this.updateShadows();
+  }
+
+  /**
+   * Each wall tile next to the floor casts a shadow away from the flame, starting at its
+   * far side so the wall itself stays lit. Redrawn only when the light moves.
+   */
+  private updateShadows(): void {
+    const world = this.host.world;
+    const lx = world.player.x;
+    const ly = world.player.y - 0.3;
+    const radius = world.lightRadius;
+    const key = `${lx.toFixed(2)},${ly.toFixed(2)},${radius.toFixed(1)}`;
+    if (key === this.shadowKey) return;
+    this.shadowKey = key;
+
+    const level = world.level;
+    const g = this.shadowGfx;
+    g.clear();
+    g.fillStyle(DARK_HEX, 1);
+    const k = SHADOW_PER_TILE;
+    const reach = radius + 1.5;
+    const project = (x: number, y: number) => {
+      const dx = x - lx;
+      const dy = y - ly;
+      const d = Math.hypot(dx, dy) || 1e-6;
+      const extra = Math.max(0, reach - d);
+      return { x: (x + (dx / d) * extra) * k, y: (y + (dy / d) * extra) * k };
+    };
+    const r = Math.ceil(reach);
+    for (let ty = Math.floor(ly) - r; ty <= Math.floor(ly) + r; ty++) {
+      for (let tx = Math.floor(lx) - r; tx <= Math.floor(lx) + r; tx++) {
+        if (isFloor(level, tx, ty)) continue;
+        const nearFloor =
+          isFloor(level, tx - 1, ty) || isFloor(level, tx + 1, ty) || isFloor(level, tx, ty - 1) || isFloor(level, tx, ty + 1);
+        if (!nearFloor) continue;
+        // Back-facing edges: the ones whose outward normal points away from the light.
+        const edges: Array<[number, number, number, number]> = [];
+        if (ly < ty) edges.push([tx, ty + 1, tx + 1, ty + 1]);
+        if (ly > ty + 1) edges.push([tx, ty, tx + 1, ty]);
+        if (lx < tx) edges.push([tx + 1, ty, tx + 1, ty + 1]);
+        if (lx > tx + 1) edges.push([tx, ty, tx, ty + 1]);
+        for (const [x1, y1, x2, y2] of edges) {
+          const a = project(x1, y1);
+          const b = project(x2, y2);
+          g.beginPath();
+          g.moveTo(x1 * k, y1 * k);
+          g.lineTo(x2 * k, y2 * k);
+          g.lineTo(b.x, b.y);
+          g.lineTo(a.x, a.y);
+          g.closePath();
+          g.fillPath();
+        }
+      }
+    }
+    this.shadows.clear();
+    this.shadows.draw(g);
+    this.shadows.render();
   }
 
   private drawEffects(dt: number): void {
@@ -471,7 +552,7 @@ export class DungeonScene extends Phaser.Scene {
   private fitZoom(): void {
     const { width, height } = this.scale.gameSize;
     // Show about 11 tiles across the shortest side of the screen.
-    const zoom = Phaser.Math.Clamp(Math.min(width, height) / (TILE * 11), 0.75, 6);
+    const zoom = Phaser.Math.Clamp(Math.min(width, height) / (TILE * VIEW_TILES), 0.75, 6);
     this.cameras.main.setZoom(zoom);
   }
 
@@ -481,9 +562,9 @@ export class DungeonScene extends Phaser.Scene {
       if (!this.textures.exists(key)) this.textures.addCanvas(key, make());
     };
     const artTile = TILE * ART_SCALE;
-    add('paper', () => drawPaper(256, seed));
+    add('darkness', () => drawDarkness(256, seed));
     add('brush', () => drawBrush(FOG_PER_TILE * 2.6));
-    add('light-mask', () => drawLightMask(LIGHT_MASK_SIZE, LIGHT_HOLE, 0.68));
+    add('light-mask', () => drawLightMask(LIGHT_MASK_SIZE, LIGHT_HOLE, 0.8));
     add('player', () => drawPlayer(artTile));
     add('projectile', () => drawProjectile(artTile));
     for (const kind of ['food', 'water', 'oil'] as const) add(`item-${kind}`, () => drawItem(kind, artTile));

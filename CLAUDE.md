@@ -30,7 +30,8 @@ El concepto vigente está en `docs/concepto.md`. Ante contradicciones mandan las
 ## Contenido y derechos
 
 - Todo el contenido es original. Se toman ideas de mecánicas de otros juegos (supervivencia, roguelikes, linajes), pero nunca sus nombres, personajes, arte, música ni su estilo visual reconocible.
-- Arte provisorio hasta definir el arte final. Estilo objetivo: tinta y papel, vista cenital 3/4.
+- Arte provisorio hasta definir el arte final. Estilo objetivo: tinta y papel oscuro (la oscuridad es tinta; el papel solo bajo la llama), vista cenital 3/4.
+- Sonido generado con Web Audio en `src/audio/`, sin archivos de audio de terceros.
 
 ## Git
 
