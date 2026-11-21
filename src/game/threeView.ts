@@ -1,8 +1,8 @@
 /**
  * Experimental 3D renderer: one dungeon, two cameras.
  *
- * The level is built in 3D from the grid (walls as blocks, floor and ceiling as quads with
- * ink textures). The hero's flame is a spot light shaped like the vision cone, with real
+ * The level is built in 3D from its voxels (one mesher for walls, floors, ceilings and the
+ * rock below; see voxelMesh.ts), with ink textures. The hero's flame is a spot light shaped like the vision cone, with real
  * shadows, so walls and loot can be half lit. Characters and items are flat cut-outs with
  * the same animated drawings as the top view. The top camera looks down at about 55°; the
  * first-person camera sits at eye height.
@@ -22,7 +22,8 @@ import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures
 import { InkPost } from './inkPost';
 import { BRICK_DEPTH, FLAG_TOP, layBricks, layFlagstones, type Brick } from './masonry';
 import { styleIndex } from './style';
-import { CEILING, ceilingHeights } from '../core/voxels';
+import { CEILING, ceilingHeights, HIGH, levelVoxels, Material, type Voxels } from '../core/voxels';
+import { meshVoxels, type MeshBuffers } from './voxelMesh';
 import { BounceLight, type LightSource } from './bounce';
 import { onSettings, qualityProfile, settings } from '../settings/settings';
 import { bridgeModel, pieceModel, rubbleModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
@@ -430,12 +431,6 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
   return material;
 }
 
-/**
- * The walls as one mesh: a face wherever a wall tile looks onto a floor tile, plus a cap
- * on every wall tile. Faces between two walls are never built, so nothing inside a wall
- * can catch the light when the cut-away opens it. One unit tall; scaled to the view.
- * Groups: 0 the sides, 1 the caps.
- */
 /** A wall block is as tall as the tallest space it faces. */
 function wallTop(level: Level, ceilings: Float32Array, x: number, y: number): number {
   let top = 0;
@@ -450,45 +445,29 @@ function wallTop(level: Level, ceilings: Float32Array, x: number, y: number): nu
   return top || CEILING.passage;
 }
 
-function wallGeometry(level: Level, tiles: Array<[number, number]>, inset = 0, topOf: (x: number, y: number) => number = () => 1): THREE.BufferGeometry {
+/** A geometry from the mesher's arrays (several parts in one, one group each). */
+function meshGeometry(parts: MeshBuffers[], colors = false): THREE.BufferGeometry {
   const positions: number[] = [];
   const normals: number[] = [];
+  const uvs: number[] = [];
+  const tints: number[] = [];
   const indices: number[] = [];
-  let n = 0;
-  const quad = (corners: number[][], normal: number[]) => {
-    for (const c of corners) positions.push(c[0], c[1], c[2]);
-    for (let i = 0; i < 4; i++) normals.push(normal[0], normal[1], normal[2]);
-    indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
-    n += 4;
-  };
-  for (const [x, y] of tiles) {
-    // Corners listed counter-clockwise as seen from the floor side.
-    // The faces sit back by `inset`, behind the bricks laid on them.
-    const e = inset;
-    const xp = x + 1 - e;
-    const xm = x + e;
-    const zp = y + 1 - e;
-    const zm = y + e;
-    const open = (tx: number, ty: number) => isFloor(level, tx, ty) || isChasm(level, tx, ty) || isDeep(level, tx, ty);
-    const t = topOf(x, y);
-    if (open(x + 1, y)) quad([[xp, 0, y + 1], [xp, 0, y], [xp, t, y], [xp, t, y + 1]], [1, 0, 0]);
-    if (open(x - 1, y)) quad([[xm, 0, y], [xm, 0, y + 1], [xm, t, y + 1], [xm, t, y]], [-1, 0, 0]);
-    if (open(x, y + 1)) quad([[x, 0, zp], [x + 1, 0, zp], [x + 1, t, zp], [x, t, zp]], [0, 0, 1]);
-    if (open(x, y - 1)) quad([[x + 1, 0, zm], [x, 0, zm], [x, t, zm], [x + 1, t, zm]], [0, 0, -1]);
-  }
-  const sideIndices = indices.length;
-  for (const [x, y] of tiles) {
-    const t = topOf(x, y);
-    quad([[x, t, y + 1], [x + 1, t, y + 1], [x + 1, t, y], [x, t, y]], [0, 1, 0]);
-  }
   const g = new THREE.BufferGeometry();
+  for (const b of parts) {
+    const base = positions.length / 3;
+    const start = indices.length;
+    for (const v of b.positions) positions.push(v);
+    for (const v of b.normals) normals.push(v);
+    for (const v of b.uvs) uvs.push(v);
+    for (const v of b.colors) tints.push(v);
+    for (const i of b.indices) indices.push(base + i);
+    g.addGroup(start, indices.length - start, g.groups.length);
+  }
   g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-  // Texture coordinates come from the world in the shader; the attribute just has to exist.
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  if (colors) g.setAttribute('color', new THREE.Float32BufferAttribute(tints, 3));
   g.setIndex(indices);
-  g.addGroup(0, sideIndices, 0);
-  g.addGroup(sideIndices, indices.length - sideIndices, 1);
   return g;
 }
 
@@ -756,6 +735,12 @@ export class ThreeView {
   private level: Level | null = null;
   private levelGroup = new THREE.Group();
   private walls: THREE.Mesh | null = null;
+  /** The floor (with terrace fronts), the ceiling and the rock below the floor, from the voxels. */
+  private floorMesh: THREE.Mesh | null = null;
+  private rockMesh: THREE.Mesh | null = null;
+  /** The level's voxels as drawn: the stairs and holes opened up for the meshes made apart. */
+  private voxels: Voxels | null = null;
+  private holes = new Map<number, number>();
   /** Real bricks, one instanced mesh per block of the level so unseen ones are skipped. */
   private bricks: THREE.InstancedMesh[] = [];
   /**
@@ -775,7 +760,6 @@ export class ThreeView {
   }
   private brickMaterial: THREE.MeshLambertMaterial | null = null;
   private readonly stone = repeating(canvasTexture(stoneColor(256)));
-  private wallTiles: Array<[number, number]> = [];
   private columns: THREE.InstancedMesh | null = null;
   /** The columns' outline: a slightly larger shell seen from inside, drawn in solid ink. */
   private columnHull: THREE.InstancedMesh | null = null;
@@ -1075,13 +1059,24 @@ export class ThreeView {
     }
     this.enemies.clear();
 
-    // Floor and ceiling quads, one per floor tile.
-    const floor = this.tileQuads(level, 0, true);
-    const floorMesh = new THREE.Mesh(floor, inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.floor })));
+    this.voxelsOf(level);
+    // The floor, terraces and ramps (geometry filled in by applyWallHeight, per view).
+    const floorMesh = new THREE.Mesh(new THREE.BufferGeometry(), inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.floor })));
     floorMesh.receiveShadow = true;
     // The floor is a slab: it shades the level below, which shows only through the holes.
     floorMesh.castShadow = true;
+    this.floorMesh = floorMesh;
     this.levelGroup.add(floorMesh);
+    // Below the floor: the sides of chasms, of holes and of basins, darker the deeper.
+    this.rockMesh = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling, vertexColors: true, side: THREE.DoubleSide }), {
+        worldUv: 'box',
+        grime: true,
+      }),
+    );
+    this.rockMesh.receiveShadow = true;
+    this.levelGroup.add(this.rockMesh);
     this.layPaving(level);
     this.buildPieces(level);
     // Camps of old, cold until someone of the family lights them.
@@ -1101,14 +1096,10 @@ export class ThreeView {
     this.waterGroup = null;
     this.waterKey = '';
     if (level.gallery) this.levelGroup.add(this.railingMesh(level));
-    this.ceiling = new THREE.Mesh(
-      this.ceilingGeometry(level),
-      inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling })),
-    );
+    this.ceiling = new THREE.Mesh(new THREE.BufferGeometry(), inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling })));
     this.levelGroup.add(this.ceiling);
 
-    // Walls: only the blocks that touch a floor tile.
-    this.wallTiles = [];
+    // Lone wall tiles inside halls are round columns, drawn apart.
     this.columnTiles = [];
     for (let y = 0; y < level.height; y++) {
       for (let x = 0; x < level.width; x++) {
@@ -1117,7 +1108,7 @@ export class ThreeView {
         for (let dy = -1; dy <= 1 && !touches; dy++) for (let dx = -1; dx <= 1; dx++) if (isFloor(level, x + dx, y + dy) || isChasm(level, x + dx, y + dy) || isDeep(level, x + dx, y + dy)) touches = true;
         if (!touches) continue;
         const column = isFloor(level, x - 1, y) && isFloor(level, x + 1, y) && isFloor(level, x, y - 1) && isFloor(level, x, y + 1);
-        (column ? this.columnTiles : this.wallTiles).push([x, y]);
+        if (column) this.columnTiles.push([x, y]);
       }
     }
     // Behind the bricks, a bed of dark mortar. Both sides are drawn so a wall sliced by the
@@ -1153,8 +1144,8 @@ export class ThreeView {
       new THREE.MeshLambertMaterial({ map: this.textures.wall, bumpMap: this.wallRelief, bumpScale: 3, flatShading: true }),
       { cut: true, worldUv: 'column', grime: true, erode: 0.08 },
     );
-    // One mesh with only the faces that look onto a floor, so no inner faces exist.
-    this.walls = new THREE.Mesh(wallGeometry(level, this.wallTiles, FLAT_WALLS ? 0 : BRICK_DEPTH, (x, y) => this.wallTopAt(x, y)), [side, top]);
+    // One mesh with only the faces that look onto open air, so no inner faces exist.
+    this.walls = new THREE.Mesh(new THREE.BufferGeometry(), [side, top]);
     this.walls.castShadow = true;
     this.walls.receiveShadow = true;
     this.levelGroup.add(this.walls);
@@ -1180,18 +1171,6 @@ export class ThreeView {
     decor.receiveShadow = true;
     this.levelGroup.add(decor);
     this.buildDebris(level);
-    // The pit: a hole of solid ink with a ragged rim.
-    // The pit is a real hole: the edges of the floor slab around it.
-    const slab = new THREE.Group();
-    for (const [dx, dz, w, d] of [[0, -0.5, 1, 0.08], [0, 0.5, 1, 0.08], [-0.5, 0, 0.08, 1], [0.5, 0, 0.08, 1]] as const) {
-      const edge = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), this.mats.stone);
-      edge.position.set(level.pit.x + 0.5 + dx, -0.15, level.pit.y + 0.5 + dz);
-      edge.castShadow = true;
-      edge.receiveShadow = true;
-      slab.add(edge);
-    }
-    this.levelGroup.add(slab);
-
     this.effects.reset();
   }
 
@@ -1354,14 +1333,64 @@ export class ThreeView {
     return wallTop(this.level, this.ceilings, x, y);
   }
 
+  /**
+   * The voxels as drawn. The stairs and the pit are meshes of their own: the floor is opened
+   * over the steps (the walls beside them start at the floor), and the pit and the gallery
+   * are drawn as holes through a thin slab, with the level below showing through.
+   */
+  private voxelsOf(level: Level): void {
+    const v = levelVoxels(level);
+    const W = level.width;
+    this.holes = new Map();
+    const ceilings = ceilingHeights(level);
+    for (const p of level.down.steps) {
+      v.set(p.x, p.y, [{ bottom: ceilings[p.y * W + p.x] || CEILING.passage, top: HIGH, mat: Material.Rock }]);
+      this.holes.set(p.y * W + p.x, 0);
+    }
+    for (const p of level.up.steps) {
+      v.set(p.x, p.y, []);
+      this.holes.set(p.y * W + p.x, 0);
+    }
+    const slab = -0.3;
+    this.holes.set(level.pit.y * W + level.pit.x, slab);
+    for (let y = 0; y < level.height; y++) for (let x = 0; x < W; x++) if (isVoid(level, x, y)) this.holes.set(y * W + x, slab);
+    // The sinkhole's shaft is drawn with the water (it changes when dammed).
+    if (level.sink) this.holes.set(level.sink.y * W + level.sink.x, 0);
+    this.voxels = v;
+  }
+
+  private remesh(): void {
+    const level = this.level;
+    if (!level || !this.voxels) return;
+    const W = level.width;
+    const columns = new Set(this.columnTiles.map(([x, y]) => y * W + x));
+    const m = meshVoxels(this.voxels, {
+      maxZ: this.mode === 'first' ? CEILING.hall + 0.5 : WALL_TOP,
+      minZ: -CHASM_DEPTH,
+      fade: CHASM_DEPTH,
+      inset: FLAT_WALLS ? 0 : BRICK_DEPTH,
+      clipBelow: (x, y) => this.holes.get(y * W + x),
+      hollow: (x, y) => columns.has(y * W + x),
+    });
+    const swap = (mesh: THREE.Mesh | null, geometry: THREE.BufferGeometry) => {
+      if (!mesh) return geometry.dispose();
+      mesh.geometry.dispose();
+      mesh.geometry = geometry;
+    };
+    swap(this.walls, meshGeometry([m.wall, m.cap]));
+    swap(this.floorMesh, meshGeometry([m.floor]));
+    swap(this.ceiling, meshGeometry([m.ceiling]));
+    swap(this.rockMesh, meshGeometry([m.rock], true));
+  }
+
   private applyWallHeight(): void {
     if (!this.walls || !this.level) return;
     const level = this.level;
     const top = (x: number, y: number) => this.wallTopAt(x, y);
     const m = new THREE.Matrix4();
-    // Walls are rebuilt to the height of what they face (in first person) or low (from above).
-    this.walls.geometry.dispose();
-    this.walls.geometry = wallGeometry(level, this.wallTiles, FLAT_WALLS ? 0 : BRICK_DEPTH, top);
+    // Walls, floors and ceilings come out of the voxels, cut low from above and whole in
+    // first person (up to over the tallest halls, where the stairs up rise out of sight).
+    this.remesh();
     this.layBricks(this.mode === 'first' ? CEILING.hall : WALL_TOP);
     if (this.columns) {
       this.columnTiles.forEach(([x, y], i) => {
@@ -1529,8 +1558,6 @@ export class ThreeView {
           const alongX = dy !== 0;
           add(alongX ? 1 : 0.06, 0.06, alongX ? 0.06 : 1, ex, 0.62, ez);
           add(0.07, 0.62, 0.07, ex - (alongX ? 0.45 : 0), 0.31, ez - (alongX ? 0 : 0.45));
-          // The edge of the floor slab.
-          add(alongX ? 1 : 0.08, 0.3, alongX ? 0.08 : 1, x + 0.5 + dx * 0.54, -0.15, y + 0.5 + dy * 0.54);
         }
       }
     }
@@ -1591,57 +1618,13 @@ export class ThreeView {
     return g;
   }
 
-  /**
-   * Chasms: the rock walls of the crack going down until the light gives out, over a
-   * bottom of solid ink, and the dungeon's old bridges across them.
-   */
+  /** Chasms: a bottom of solid ink where the light gives out, and the dungeon's old bridges. */
   private chasmMesh(level: Level): THREE.Group {
     const g = new THREE.Group();
-    const deep = (x: number, y: number) => isChasm(level, x, y) || isBridge(level, x, y);
-    const positions: number[] = [];
-    const normals: number[] = [];
-    const colors: number[] = [];
-    const indices: number[] = [];
-    let n = 0;
+    // Their rock sides come out of the voxels (see remesh).
     const bottom: Array<[number, number]> = [];
-    for (let y = 0; y < level.height; y++) {
-      for (let x = 0; x < level.width; x++) {
-        if (!deep(x, y)) continue;
-        bottom.push([x, y]);
-        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-          if (deep(x + dx, y + dy)) continue;
-          // The face on the far edge of this tile, looking back into the crack.
-          const ex = dx === 1 ? x + 1 : dx === -1 ? x : null;
-          const ez = dy === 1 ? y + 1 : dy === -1 ? y : null;
-          const a = ex !== null ? { x: ex, z: y } : { x, z: ez! };
-          const b = ex !== null ? { x: ex, z: y + 1 } : { x: x + 1, z: ez! };
-          positions.push(a.x, 0, a.z, b.x, 0, b.z, b.x, -CHASM_DEPTH, b.z, a.x, -CHASM_DEPTH, a.z);
-          for (let i = 0; i < 4; i++) normals.push(-dx, 0, -dy);
-          // Darker the deeper: the rock sinks into ink.
-          colors.push(1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0);
-          const flip = dx === 1 || dy === -1;
-          if (flip) indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
-          else indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
-          n += 4;
-        }
-      }
-    }
-    if (n === 0) return g;
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geo.setIndex(indices);
-    const rock = new THREE.Mesh(
-      geo,
-      inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling, vertexColors: true, side: THREE.DoubleSide }), {
-        worldUv: 'box',
-        grime: true,
-      }),
-    );
-    rock.receiveShadow = true;
-    g.add(rock);
+    for (let y = 0; y < level.height; y++) for (let x = 0; x < level.width; x++) if (isChasm(level, x, y) || isBridge(level, x, y)) bottom.push([x, y]);
+    if (bottom.length === 0) return g;
     const floor = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.05, 1), this.mats.ink, bottom.length);
     const m = new THREE.Matrix4();
     bottom.forEach(([x, y], i) => floor.setMatrixAt(i, m.makeTranslation(x + 0.5, -CHASM_DEPTH, y + 0.5)));
@@ -1739,24 +1722,21 @@ export class ThreeView {
     const surface = new THREE.Mesh(deepSheet.geo, inkMaterial(new THREE.MeshLambertMaterial({ color: 0x5d7480 }), { flow: true }));
     surface.receiveShadow = true;
     g.add(surface);
-    // The basin's lip: stone from the floor down to the water.
+    // The sinkhole's shaft, down to the level below (the basins' lips come from the voxels).
     const positions: number[] = [];
     const normals: number[] = [];
     const indices: number[] = [];
     let n = 0;
     for (let y = 0; y < level.height; y++) {
       for (let x = 0; x < level.width; x++) {
-        if (!isDeep(level, x, y)) continue;
-        // The sinkhole is a shaft of rock down to the level below.
-        const shaft = isSink(x, y);
+        if (!isSink(x, y)) continue;
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-          if (!shaft && isDeep(level, x + dx, y + dy)) continue;
           const ex = dx === 1 ? x + 1 : dx === -1 ? x : null;
           const ez = dy === 1 ? y + 1 : dy === -1 ? y : null;
           const a = ex !== null ? { x: ex, z: y } : { x, z: ez! };
           const b = ex !== null ? { x: ex, z: y + 1 } : { x: x + 1, z: ez! };
-          const top = shaft && isDeep(level, x + dx, y + dy) ? -0.16 : 0;
-          const bottom = shaft ? -LEVEL_HEIGHT : -0.16;
+          const top = isDeep(level, x + dx, y + dy) ? -0.16 : 0;
+          const bottom = -LEVEL_HEIGHT;
           positions.push(a.x, top, a.z, b.x, top, b.z, b.x, bottom, b.z, a.x, bottom, a.z);
           for (let i = 0; i < 4; i++) normals.push(-dx, 0, -dy);
           if (dx === 1 || dy === -1) indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
@@ -1806,124 +1786,6 @@ export class ThreeView {
     obj.rotation.y = alongX ? 0 : Math.PI / 2;
     obj.position.set(x + 0.5, 0, y + 0.5);
     return obj;
-  }
-
-  /**
-   * The ceiling over every open tile at the height of its space, and where a low ceiling
-   * meets a higher one, the face of stone between them (the lintel over an opening).
-   */
-  private ceilingGeometry(level: Level): THREE.BufferGeometry {
-    const positions: number[] = [];
-    const normals: number[] = [];
-    const uvs: number[] = [];
-    const indices: number[] = [];
-    let n = 0;
-    const c = this.ceilings;
-    const W = level.width;
-    const upSteps = new Set(level.up.steps.map((p) => p.y * W + p.x));
-    for (let ty = 0; ty < level.height; ty++) {
-      for (let tx = 0; tx < level.width; tx++) {
-        const h = c[ty * W + tx];
-        if (!h) continue;
-        // The stairs up rise through a hole in the ceiling.
-        if (!upSteps.has(ty * W + tx)) {
-          positions.push(tx, h, ty, tx + 1, h, ty, tx + 1, h, ty + 1, tx, h, ty + 1);
-          for (let i = 0; i < 4; i++) normals.push(0, -1, 0);
-          uvs.push(0, 1, 1, 1, 1, 0, 0, 0);
-          indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
-          n += 4;
-        }
-        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-          const nx = tx + dx;
-          const ny = ty + dy;
-          if (nx < 0 || ny < 0 || nx >= level.width || ny >= level.height) continue;
-          const other = c[ny * W + nx];
-          if (!other || other <= h) continue;
-          // From this ceiling up to the neighbour's, facing the neighbour (its side sees it).
-          const ex = dx === 1 ? tx + 1 : dx === -1 ? tx : null;
-          const ez = dy === 1 ? ty + 1 : dy === -1 ? ty : null;
-          const a = ex !== null ? { x: ex, z: ty } : { x: tx, z: ez! };
-          const b = ex !== null ? { x: ex, z: ty + 1 } : { x: tx + 1, z: ez! };
-          positions.push(a.x, h, a.z, b.x, h, b.z, b.x, other, b.z, a.x, other, a.z);
-          for (let i = 0; i < 4; i++) normals.push(dx, 0, dy);
-          uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
-          if (dx === 1 || dy === -1) indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
-          else indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
-          n += 4;
-        }
-      }
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-    g.setIndex(indices);
-    return g;
-  }
-
-  /** One textured quad per floor tile, at height `y`, facing up (floor) or down (ceiling). */
-  private tileQuads(level: Level, y: number, up: boolean): THREE.BufferGeometry {
-    const positions: number[] = [];
-    const normals: number[] = [];
-    const uvs: number[] = [];
-    const indices: number[] = [];
-    let n = 0;
-    for (let ty = 0; ty < level.height; ty++) {
-      for (let tx = 0; tx < level.width; tx++) {
-        // The ceiling runs on over chasms and deep water; the floor stops at their edge.
-        if (!isFloor(level, tx, ty) && (up || !(isChasm(level, tx, ty) || isDeep(level, tx, ty)))) continue;
-        // The stairs down and the pit open holes in the floor; the stairs up rise through
-        // the ceiling.
-        const hole = (sw: Stairwell) => sw.steps.some((p) => p.x === tx && p.y === ty);
-        if (up && (hole(level.down) || (tx === level.pit.x && ty === level.pit.y))) continue;
-        // Bridges are planks over the drop, drawn as models.
-        if (up && isBridge(level, tx, ty)) continue;
-        if (!up && hole(level.up)) continue;
-        // Terraces stand raised and ramps slope; the ceiling stays flat.
-        const at = (cx: number, cy: number) => (up ? y + groundHeight(level, { x: tx + cx, y: ty + cy }) : y);
-        const e = 0.001;
-        positions.push(tx, at(e, e), ty, tx + 1, at(1 - e, e), ty, tx + 1, at(1 - e, 1 - e), ty + 1, tx, at(e, 1 - e), ty + 1);
-        for (let i = 0; i < 4; i++) normals.push(0, up ? 1 : -1, 0);
-        uvs.push(0, 1, 1, 1, 1, 0, 0, 0);
-        if (up) indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
-        else indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
-        n += 4;
-      }
-    }
-    // The fronts of terraces and the sides of ramps, down to the low floor beside them.
-    if (up) {
-      for (let ty = 0; ty < level.height; ty++) {
-        for (let tx = 0; tx < level.width; tx++) {
-          const ground = groundAt(level, tx, ty);
-          if (!isFloor(level, tx, ty) || ground === Ground.Low) continue;
-          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-            if (!isFloor(level, tx + dx, ty + dy) || groundAt(level, tx + dx, ty + dy) !== Ground.Low) continue;
-            // The shared edge, from one end to the other, wound to face the low tile.
-            const ex = dx === 1 ? tx + 1 : dx === -1 ? tx : null;
-            const ez = dy === 1 ? ty + 1 : dy === -1 ? ty : null;
-            const a = ex !== null ? { x: ex, z: ty } : { x: tx, z: ez! };
-            const b = ex !== null ? { x: ex, z: ty + 1 } : { x: tx + 1, z: ez! };
-            const top = (p: { x: number; z: number }) => y + groundHeight(level, { x: Math.min(tx + 0.999, Math.max(tx + 0.001, p.x)), y: Math.min(ty + 0.999, Math.max(ty + 0.001, p.z)) });
-            const ha = top(a);
-            const hb = top(b);
-            if (ha < 0.01 && hb < 0.01) continue;
-            positions.push(a.x, y, a.z, b.x, y, b.z, b.x, hb, b.z, a.x, ha, a.z);
-            for (let i = 0; i < 4; i++) normals.push(dx, 0, dy);
-            uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
-            const flip = dx === 1 || dy === -1;
-            if (flip) indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
-            else indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
-            n += 4;
-          }
-        }
-      }
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-    g.setIndex(indices);
-    return g;
   }
 
   // Camera and light ----------------------------------------------------------------

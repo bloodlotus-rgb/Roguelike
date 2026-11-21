@@ -80,3 +80,24 @@ casilla bajo un balcón: roca [-∞, 0] · aire [0, 2.6] · losa [2.6, 2.9] · a
   - Las alturas de techo pasan del dibujo al núcleo.
 - **Tests**: las consultas, una losa tipo balcón con dos superficies en la misma casilla, y que las columnas de un nivel coinciden con lo que el juego usa hoy.
 - **El juego todavía no cambia**: la V2 dibuja desde los vóxeles y la V3 mueve los cuerpos sobre ellos.
+
+## V2 implementada
+
+- **Un solo mallador** (`src/game/voxelMesh.ts`) dibuja el nivel desde sus columnas:
+  - una **cara vertical** donde una casilla tiene aire y la vecina algo sólido a esa altura;
+  - el **piso** en el tope de cada tramo con aire encima, y el **techo** en la base de cada tramo con aire debajo.
+- Cada cara se dibuja según lo que es:
+  - **piso**: pisos, frentes de terraza y costados de rampa;
+  - **pared**: la roca sobre el piso, metida detrás de los ladrillos;
+  - **tapa**: el tope de las paredes donde la vista cenital las corta;
+  - **techo**: techos y dinteles (donde un techo bajo se encuentra con uno alto);
+  - **roca**: todo lo que está bajo el piso (abismos, pozos, bordes de las pozas profundas), cada vez más oscuro.
+- **Reemplaza a cinco constructores**: el de pisos y terrazas, el de paredes, el de techos y dinteles, las paredes de los abismos y los bordes de las pozas. También el borde del pozo y el de la galería, que ahora son caras de la losa.
+- **Las rampas son tramos con el tope inclinado**: guardan la altura de cada esquina.
+- **Se dibujan aparte** (como antes): los escalones y el pozo de la escalera, las columnas redondas, el sumidero, el nivel de abajo visto por los huecos, los puentes, el agua, los ladrillos y las baldosas.
+- Con las vistas: desde arriba las paredes se cortan bajas, con tapa; en primera persona llegan al techo de cada espacio, y sobre la escalera de subida el hueco sube hasta perderse.
+- **Se ve igual que hoy**: comparado en capturas con la versión anterior (abismos, terrazas, escaleras, galerías, pozas, ríos y los tres estilos).
+- Arreglos:
+  - los costados de las rampas tenían agujeros que dejaban ver el negro: ahora son de piedra;
+  - el techo bajo de la escalera de subida abría una casilla de pared en el extremo de la escalera (V1).
+- **Pendiente para la V3**: héroe y horrores siguen moviéndose sobre la grilla de siempre; la V3 los pasa a los vóxeles.
