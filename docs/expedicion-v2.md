@@ -174,3 +174,6 @@ Ya acordamos agregarlas "en algún momento". **[Propuesta]** Lo dejo para una et
    - Los niveles probablemente tengan que crecer más.
 2. **Herramientas para el cuerpo durante el día**: el **alto con riesgo**, **racionar con estados de hambre y sed**, y **lo que da la mazmorra**, con su precio. **El cinturón queda afuera.**
 3. **Orden**: primero proporciones y arquitectura (`arquitectura.md`). El día, el cuerpo y los objetos van después.
+4. **Campamentos**:
+   - El kit **se puede levantar y llevar** al nivel siguiente, o dejar el campamento armado para la familia.
+   - Además hay **puestos de la mazmorra**: lugares para acampar que se reactivan sin kit, como un campamento abandonado, una cocina o un refugio (ver `arquitectura.md`).

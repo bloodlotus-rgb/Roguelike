@@ -240,3 +240,23 @@ El día, el alto, el cinturón y los objetos (en `expedicion-v2.md`) pueden ir e
 1. **Se arranca por acá**: proporciones, después la grilla 3D, las piezas y las locaciones.
 2. **Las locaciones las diseño yo en tandas de 10 a 15**, y vos revisás cada tanda: descartás, cambiás o agregás.
 3. **El nivel es un proyecto de varios días** (ver `expedicion-v2.md`). Eso pide **accesos al nivel siguiente que haya que buscar y abrir**, y probablemente **niveles más grandes**.
+4. **Accesos al nivel siguiente**:
+   - Cada nivel tiene **2 o 3 accesos hacia abajo** (escalera, pozo, sumidero, derrumbe), lejos de donde se llega.
+   - La mayoría **hay que abrirlos**: puerta trabada o con llave, derrumbe, reja, mecanismo.
+   - El nivel crece a unas **3 veces el área actual**, en **sectores separados por puertas**.
+5. **Puestos de la mazmorra**: algunas locaciones sirven de campamento sin kit (campamento abandonado, cocina, dormitorio, refugio cerrado, horno de cal).
+
+## Etapas
+
+- **A1 · Proporciones**:
+  - paredes más altas según el espacio;
+  - pasillos de 2 casillas y salas más amplias;
+  - puertas y barricadas dobles;
+  - niveles de unas 3 veces el área actual.
+- **A2 · Sectores y accesos**:
+  - el nivel en sectores separados por puertas;
+  - 2 o 3 accesos cerrados hacia abajo;
+  - levantar y llevar el campamento.
+- **A3 · Grilla 3D y formato de locaciones**, con 5 locaciones de prueba, incluidos los primeros puestos.
+- **A4 · Piezas**, primera tanda.
+- **A5 en adelante · Locaciones** en tandas de 10 a 15, revisadas por vos.
