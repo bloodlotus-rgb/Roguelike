@@ -13,6 +13,7 @@ const COLOURS: Record<BlockKind, string> = {
   vertical: '#7d93a3',
   well: '#c0392b',
   tunnel: '#8a7a60',
+  complex: '#a98fbf',
 };
 
 export function showJenga(seed: string, zone: number): void {

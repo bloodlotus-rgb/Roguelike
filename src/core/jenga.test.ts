@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assembleZone, distances, Face, opposite, zoneText, type ZoneLayout, type ZoneSpec } from './jenga';
+import { assembleZone, distances, Face, isSpace, opposite, zoneText, type ZoneLayout, type ZoneSpec } from './jenga';
 
 const STEP: Record<number, [number, number, number]> = { 0: [1, 0, 0], 1: [0, 1, 0], 2: [-1, 0, 0], 3: [0, -1, 0], 4: [0, 0, -1], 5: [0, 0, 1] };
 const spec = (over: Partial<ZoneSpec> = {}): ZoneSpec => ({ seed: 'estirpe', zone: 0, width: 24, depth: 24, storeys: 4, arrival: [12, 12], exit: true, ...over });
@@ -51,6 +51,56 @@ describe('the jenga: a zone from pieces on the grid of cells', () => {
         expect(built / l.cells.length).toBeGreaterThan(0.25);
         expect(built / l.cells.length).toBeLessThan(0.6);
       }
+    }
+  });
+
+  it('rooms hang from the circulation: never a room straight onto a room', () => {
+    for (const seed of ['estirpe', 'abc', 'zz', 'mansion']) {
+      const l = assembleZone(spec({ seed }));
+      const g = grid(l);
+      let roomJoins = 0;
+      let joins = 0;
+      for (const b of live(l)) {
+        for (const op of b.openings) {
+          const [dx, dy, dz] = STEP[op.face];
+          if (!g.inside(op.cell[0] + dx, op.cell[1] + dy, op.cell[2] + dz)) continue;
+          const other = l.blocks[l.cells[g.index(op.cell[0] + dx, op.cell[1] + dy, op.cell[2] + dz)]];
+          joins++;
+          if (isSpace(b.def.kind) && isSpace(other.def.kind)) {
+            roomJoins++;
+            expect(op.role).toBe('i');
+          }
+        }
+      }
+      expect(roomJoins).toBe(0);
+      expect(joins).toBeGreaterThan(100);
+    }
+  });
+
+  it('the circulation has loops (ways round), several per storey', () => {
+    for (const seed of ['estirpe', 'abc', 'zz']) {
+      const l = assembleZone(spec({ seed }));
+      const g = grid(l);
+      // Cycles in the circulation: joins − pieces + groups, among circulation pieces.
+      const circ = live(l).filter((b) => !isSpace(b.def.kind));
+      const ids = new Set(circ.map((b) => b.id));
+      let edges = 0;
+      const parent = new Map<number, number>(circ.map((b) => [b.id, b.id]));
+      const root = (x: number): number => (parent.get(x) === x ? x : root(parent.get(x)!));
+      for (const b of circ) {
+        for (const op of b.openings) {
+          const [dx, dy, dz] = STEP[op.face];
+          if (!g.inside(op.cell[0] + dx, op.cell[1] + dy, op.cell[2] + dz)) continue;
+          const o = l.cells[g.index(op.cell[0] + dx, op.cell[1] + dy, op.cell[2] + dz)];
+          if (ids.has(o) && o > b.id) {
+            edges++;
+            parent.set(root(o), root(b.id));
+          }
+        }
+      }
+      const groups = new Set(circ.map((b) => root(b.id))).size;
+      const loops = edges - circ.length + groups;
+      expect(loops).toBeGreaterThanOrEqual(4 * 2);
     }
   });
 

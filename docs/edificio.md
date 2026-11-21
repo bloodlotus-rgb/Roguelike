@@ -238,6 +238,19 @@ Dos piezas vecinas encajan si sus aberturas coinciden.
 - **Para mirarlo**: `?jenga=view&zone=N&seed=…` dibuja la zona piso por piso (vista de desarrollo).
 - **Todavía no se juega**: es el plano de la zona, no sus vóxeles.
 
+### Ed3a, segunda vuelta: la circulación primero
+
+- **Aberturas con rol**: cada puerta da a la **circulación** o es **interior** (une dos ambientes de una misma pieza). Una sala nunca se abre directo a otra sala: cuelga de la circulación. Así no hay sucesiones de habitaciones. Antes, el 12 % de las uniones eran sala con sala y había cadenas de hasta 12 salas seguidas; ahora no hay ninguna.
+- **El armado en pasadas**:
+  1. las escaleras entre pisos;
+  2. la **red de circulación**: pasillos largos, pocos cruces;
+  3. **anillos**: algunos pasillos sin salida se unen con túneles cortos a la circulación cercana, para que haya rodeos y escapes;
+  4. las **salas colgadas**: a los costados de los pasillos (abriéndoles una puerta lateral) y en sus puntas;
+  5. más circulación y más salas, por vueltas, hasta la densidad buscada;
+  6. los túneles que unen lo suelto, y la salida.
+- **Piezas compuestas** (varias salas con su circulación propia, que sigue en la de la zona): el **ala** (un pasillo con tres cuartos a un costado) y el **claustro** (una galería alrededor de un patio, con celdas).
+- **Resultado**: alrededor del 58 % de lo construido son salas y el 42 % circulación, con anillos en todos los pisos (tests).
+
 ### Lo que sigue
 
 - **Ed3b · Jugar en el jenga**, detrás de un interruptor (`?jenga=1`) hasta que tenga agua, abismos y locaciones:
