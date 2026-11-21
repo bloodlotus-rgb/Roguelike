@@ -66,6 +66,11 @@ export interface Work {
   span?: Array<{ x: number; y: number }>;
 }
 
+/** Whether a work stands on a tile (a work that spans several, like a double barricade, counts on each). */
+export function covers(w: Work, x: number, y: number): boolean {
+  return (w.x === x && w.y === y) || !!w.span?.some((p) => p.x === x && p.y === y);
+}
+
 /** A camp pitched by someone of the family: it stays for everyone until it wears away. */
 export interface CampSite {
   id: number;

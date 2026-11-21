@@ -5,13 +5,14 @@ import type { WorldSnapshot } from '../core/world';
  * What is kept between sessions: the dynasty, and the life being played if there is one.
  * There is a single save and it is overwritten continuously: nothing can be undone.
  */
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 /**
  * Saves older than this cannot be brought forward: version 5 stacked the levels in one
- * space, and version 6 made them far bigger, so every level changed shape (camps, works and
- * maps would land in the rock). Older dynasties are set aside and a new one begins.
+ * space, version 6 made them far bigger and version 7 bigger still, with passages two tiles
+ * wide, so every level changed shape (camps, works and maps would land in the rock). Older
+ * dynasties are set aside and a new one begins.
  */
-const OLDEST_READABLE = 6;
+const OLDEST_READABLE = 7;
 
 export interface CurrentLife {
   memberId: number;

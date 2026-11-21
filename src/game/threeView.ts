@@ -10,6 +10,7 @@
  * Pure presentation: it reads the world and never changes it.
  */
 import * as THREE from 'three';
+import { covers } from '../core/dynasty';
 import type { Level, Point } from '../core/dungeon';
 import { CONFIG } from '../core/config';
 import { generateLevel, Ground, groundAt, groundHeight, isBridge, isChasm, isDeep, isFloor, isShallow, isVoid, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
@@ -32,7 +33,6 @@ import { drawEnemySheet, drawHeroSheet, ENEMY_SIZE, FLAME_ANCHOR, HERO_SIZE, typ
 export type CameraMode = 'top' | 'first';
 
 const EYE = 1.15;
-const WALL_FIRST = 2.2;
 /** How far down a chasm's rock walls are drawn, past where any light reaches. */
 const CHASM_DEPTH = 6;
 /** From above the walls stand tall too; the ones between the camera and the hero fade out. */
@@ -435,7 +435,39 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
  * can catch the light when the cut-away opens it. One unit tall; scaled to the view.
  * Groups: 0 the sides, 1 the caps.
  */
-function wallGeometry(level: Level, tiles: Array<[number, number]>, inset = 0): THREE.BufferGeometry {
+/**
+ * How high the ceiling is over each open tile in first person: passages 3, rooms 4, great
+ * halls 5.5; over the stairs up it comes down to meet the flight.
+ */
+export const CEILING = { passage: 3, room: 4, hall: 5.5, stairs: LEVEL_HEIGHT + 0.6 };
+function ceilingHeights(level: Level): Float32Array {
+  const { width, height } = level;
+  const heights = new Float32Array(width * height);
+  const open = (x: number, y: number) => isFloor(level, x, y) || isVoid(level, x, y) || isChasm(level, x, y) || isDeep(level, x, y);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (open(x, y)) heights[y * width + x] = CEILING.passage;
+  for (const r of level.rooms) {
+    const tall = r.shape === 'hall' || r.w * r.h >= 150 ? CEILING.hall : CEILING.room;
+    for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) if (open(x, y)) heights[y * width + x] = tall;
+  }
+  for (const p of [...level.up.steps, level.up.top, level.up.bottom]) heights[p.y * width + p.x] = Math.min(heights[p.y * width + p.x] || CEILING.stairs, CEILING.stairs);
+  return heights;
+}
+
+/** A wall block is as tall as the tallest space it faces. */
+function wallTop(level: Level, ceilings: Float32Array, x: number, y: number): number {
+  let top = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= level.width || ny >= level.height) continue;
+      top = Math.max(top, ceilings[ny * level.width + nx]);
+    }
+  }
+  return top || CEILING.passage;
+}
+
+function wallGeometry(level: Level, tiles: Array<[number, number]>, inset = 0, topOf: (x: number, y: number) => number = () => 1): THREE.BufferGeometry {
   const positions: number[] = [];
   const normals: number[] = [];
   const indices: number[] = [];
@@ -455,13 +487,17 @@ function wallGeometry(level: Level, tiles: Array<[number, number]>, inset = 0): 
     const zp = y + 1 - e;
     const zm = y + e;
     const open = (tx: number, ty: number) => isFloor(level, tx, ty) || isChasm(level, tx, ty) || isDeep(level, tx, ty);
-    if (open(x + 1, y)) quad([[xp, 0, y + 1], [xp, 0, y], [xp, 1, y], [xp, 1, y + 1]], [1, 0, 0]);
-    if (open(x - 1, y)) quad([[xm, 0, y], [xm, 0, y + 1], [xm, 1, y + 1], [xm, 1, y]], [-1, 0, 0]);
-    if (open(x, y + 1)) quad([[x, 0, zp], [x + 1, 0, zp], [x + 1, 1, zp], [x, 1, zp]], [0, 0, 1]);
-    if (open(x, y - 1)) quad([[x + 1, 0, zm], [x, 0, zm], [x, 1, zm], [x + 1, 1, zm]], [0, 0, -1]);
+    const t = topOf(x, y);
+    if (open(x + 1, y)) quad([[xp, 0, y + 1], [xp, 0, y], [xp, t, y], [xp, t, y + 1]], [1, 0, 0]);
+    if (open(x - 1, y)) quad([[xm, 0, y], [xm, 0, y + 1], [xm, t, y + 1], [xm, t, y]], [-1, 0, 0]);
+    if (open(x, y + 1)) quad([[x, 0, zp], [x + 1, 0, zp], [x + 1, t, zp], [x, t, zp]], [0, 0, 1]);
+    if (open(x, y - 1)) quad([[x + 1, 0, zm], [x, 0, zm], [x, t, zm], [x + 1, t, zm]], [0, 0, -1]);
   }
   const sideIndices = indices.length;
-  for (const [x, y] of tiles) quad([[x, 1, y + 1], [x + 1, 1, y + 1], [x + 1, 1, y], [x, 1, y]], [0, 1, 0]);
+  for (const [x, y] of tiles) {
+    const t = topOf(x, y);
+    quad([[x, t, y + 1], [x + 1, t, y + 1], [x + 1, t, y], [x, t, y]], [0, 1, 0]);
+  }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
@@ -739,6 +775,21 @@ export class ThreeView {
   private walls: THREE.Mesh | null = null;
   /** Real bricks, one instanced mesh per block of the level so unseen ones are skipped. */
   private bricks: THREE.InstancedMesh[] = [];
+  /**
+   * Chunks of masonry and paving drawn only near the hero: past the reach of any light
+   * (direct or bounced) they would be ink anyway, and the levels are vast.
+   */
+  private nearOnly: THREE.InstancedMesh[] = [];
+
+  private cullFar(world: World): void {
+    const reach = 18;
+    const p = world.player;
+    for (const mesh of this.nearOnly) {
+      const c = mesh.boundingSphere?.center;
+      if (!c) continue;
+      mesh.visible = Math.hypot(c.x - p.x, c.z - p.y) < reach + (mesh.boundingSphere?.radius ?? 0);
+    }
+  }
   private brickMaterial: THREE.MeshLambertMaterial | null = null;
   private readonly stone = repeating(canvasTexture(stoneColor(256)));
   private wallTiles: Array<[number, number]> = [];
@@ -960,6 +1011,7 @@ export class ThreeView {
     this.syncDoors(world);
     this.syncProjectiles(world);
     cutaway.time.value = (now / 1000) % 1000;
+    this.cullFar(world);
     this.updateBounce(world, now);
     if (this.post && qualityProfile().post) this.post.render(this.renderer, this.scene, this.camera, now);
     else this.renderer.render(this.scene, this.camera);
@@ -999,6 +1051,8 @@ export class ThreeView {
 
   private buildLevel(level: Level): void {
     this.level = level;
+    this.nearOnly = [];
+    this.ceilings = ceilingHeights(level);
     this.bounce?.dispose();
     this.bounce = new BounceLight(level);
     this.bounceTile = -1;
@@ -1056,7 +1110,7 @@ export class ThreeView {
     this.waterKey = '';
     if (level.gallery) this.levelGroup.add(this.railingMesh(level));
     this.ceiling = new THREE.Mesh(
-      this.tileQuads(level, WALL_FIRST, false),
+      this.ceilingGeometry(level),
       inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling })),
     );
     this.levelGroup.add(this.ceiling);
@@ -1108,7 +1162,7 @@ export class ThreeView {
       { cut: true, worldUv: 'column', grime: true, erode: 0.12 },
     );
     // One mesh with only the faces that look onto a floor, so no inner faces exist.
-    this.walls = new THREE.Mesh(wallGeometry(level, this.wallTiles, FLAT_WALLS ? 0 : BRICK_DEPTH), [side, top]);
+    this.walls = new THREE.Mesh(wallGeometry(level, this.wallTiles, FLAT_WALLS ? 0 : BRICK_DEPTH, (x, y) => this.wallTopAt(x, y)), [side, top]);
     this.walls.castShadow = true;
     this.walls.receiveShadow = true;
     this.levelGroup.add(this.walls);
@@ -1122,7 +1176,7 @@ export class ThreeView {
     this.applyWallHeight();
 
     // Decoration painted on the floor: ink at the foot of the walls, bones, rubble, stains.
-    const decorTexture = new THREE.CanvasTexture(drawFloorDecor(level, 32));
+    const decorTexture = new THREE.CanvasTexture(drawFloorDecor(level, Math.min(32, Math.floor(4096 / Math.max(level.width, level.height)))));
     decorTexture.colorSpace = THREE.SRGBColorSpace;
     decorTexture.anisotropy = 8;
     const decor = new THREE.Mesh(
@@ -1222,15 +1276,27 @@ export class ThreeView {
     add(new THREE.SphereGeometry(1, 10, 8), bone, skulls, 0.14);
   }
 
+  /** Ceiling height over each tile in first person (see `ceilingHeights`). */
+  private ceilings: Float32Array = new Float32Array(1);
+
+  /** How tall a wall block stands in this view: as its space in first person, low from above. */
+  private wallTopAt(x: number, y: number): number {
+    if (this.mode !== 'first' || !this.level) return WALL_TOP;
+    return wallTop(this.level, this.ceilings, x, y);
+  }
+
   private applyWallHeight(): void {
-    if (!this.walls) return;
-    const h = this.mode === 'first' ? WALL_FIRST : WALL_TOP;
+    if (!this.walls || !this.level) return;
+    const level = this.level;
+    const top = (x: number, y: number) => this.wallTopAt(x, y);
     const m = new THREE.Matrix4();
-    // The wall mesh is built one unit tall; scaling it keeps the world-space bricks intact.
-    this.walls.scale.set(1, h, 1);
-    this.layBricks(h);
+    // Walls are rebuilt to the height of what they face (in first person) or low (from above).
+    this.walls.geometry.dispose();
+    this.walls.geometry = wallGeometry(level, this.wallTiles, FLAT_WALLS ? 0 : BRICK_DEPTH, top);
+    this.layBricks(this.mode === 'first' ? CEILING.hall : WALL_TOP);
     if (this.columns) {
       this.columnTiles.forEach(([x, y], i) => {
+        const h = top(x, y);
         m.makeScale(1, h, 1);
         m.setPosition(x + 0.5, h / 2, y + 0.5);
         this.columns!.setMatrixAt(i, m);
@@ -1247,8 +1313,9 @@ export class ThreeView {
       this.columns.computeBoundingSphere();
     }
     if (this.ceiling) this.ceiling.visible = this.mode === 'first';
-    if (this.fallColumn) {
+    if (this.fallColumn && level.fall) {
       // Built one unit tall, from 0.9 down to -0.1: stretched up to the ceiling.
+      const h = this.mode === 'first' ? this.ceilings[level.fall.y * level.width + level.fall.x] || CEILING.room : WALL_TOP;
       this.fallColumn.scale.y = h + 0.1;
       this.fallColumn.position.y = (h + 0.1) / 2 - 0.1;
     }
@@ -1263,11 +1330,12 @@ export class ThreeView {
       this.levelGroup.remove(mesh);
       mesh.dispose();
     }
+    this.nearOnly = this.nearOnly.filter((m) => !this.bricks.includes(m));
     this.bricks = [];
     const level = this.level;
     if (!level || !this.brickMaterial || FLAT_WALLS) return;
     const columns = new Set(this.columnTiles.map(([x, y]) => y * level.width + x));
-    const all = layBricks(level, height, (x, y) => columns.has(y * level.width + x));
+    const all = layBricks(level, height, (x, y) => columns.has(y * level.width + x), (x, y) => this.wallTopAt(x, y));
     const CHUNK = 12;
     const chunks = new Map<number, typeof all>();
     for (const b of all) {
@@ -1277,12 +1345,14 @@ export class ThreeView {
       list.push(b);
     }
     // More vertices to wear away the better the quality.
-    const seg = { low: 1, medium: 1, high: 2, ultra: 3 }[settings().quality];
-    const geometry = new THREE.BoxGeometry(1, 1, 1, seg + 1, seg, seg);
+    // A plain block wears at its corners already; ultra gives the faces more to wear away.
+    const seg = settings().quality === 'ultra' ? 2 : 1;
+    const geometry = new THREE.BoxGeometry(1, 1, 1, seg, seg, seg);
     for (const list of chunks.values()) {
       const mesh = stoneMesh(geometry, this.brickMaterial, list);
       mesh.castShadow = true;
       this.bricks.push(mesh);
+      this.nearOnly.push(mesh);
       this.levelGroup.add(mesh);
     }
   }
@@ -1308,7 +1378,7 @@ export class ThreeView {
       outline: true,
       erode: 0.14,
     });
-    const seg = { low: 1, medium: 1, high: 2, ultra: 3 }[quality];
+    const seg = quality === 'ultra' ? 2 : 1;
     const geometry = new THREE.BoxGeometry(1, 1, 1, seg, 1, seg);
     const CHUNK = 12;
     const chunks = new Map<number, Brick[]>();
@@ -1318,7 +1388,11 @@ export class ThreeView {
       if (!list) chunks.set(key, (list = []));
       list.push(b);
     }
-    for (const list of chunks.values()) this.levelGroup.add(stoneMesh(geometry, material, list));
+    for (const list of chunks.values()) {
+      const mesh = stoneMesh(geometry, material, list);
+      this.nearOnly.push(mesh);
+      this.levelGroup.add(mesh);
+    }
   }
 
   /** Whether this level is paved with flagstones (things on the floor sit on top of them). */
@@ -1662,6 +1736,59 @@ export class ThreeView {
     obj.rotation.y = alongX ? 0 : Math.PI / 2;
     obj.position.set(x + 0.5, 0, y + 0.5);
     return obj;
+  }
+
+  /**
+   * The ceiling over every open tile at the height of its space, and where a low ceiling
+   * meets a higher one, the face of stone between them (the lintel over an opening).
+   */
+  private ceilingGeometry(level: Level): THREE.BufferGeometry {
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    let n = 0;
+    const c = this.ceilings;
+    const W = level.width;
+    const upSteps = new Set(level.up.steps.map((p) => p.y * W + p.x));
+    for (let ty = 0; ty < level.height; ty++) {
+      for (let tx = 0; tx < level.width; tx++) {
+        const h = c[ty * W + tx];
+        if (!h) continue;
+        // The stairs up rise through a hole in the ceiling.
+        if (!upSteps.has(ty * W + tx)) {
+          positions.push(tx, h, ty, tx + 1, h, ty, tx + 1, h, ty + 1, tx, h, ty + 1);
+          for (let i = 0; i < 4; i++) normals.push(0, -1, 0);
+          uvs.push(0, 1, 1, 1, 1, 0, 0, 0);
+          indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
+          n += 4;
+        }
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const nx = tx + dx;
+          const ny = ty + dy;
+          if (nx < 0 || ny < 0 || nx >= level.width || ny >= level.height) continue;
+          const other = c[ny * W + nx];
+          if (!other || other <= h) continue;
+          // From this ceiling up to the neighbour's, facing the neighbour (its side sees it).
+          const ex = dx === 1 ? tx + 1 : dx === -1 ? tx : null;
+          const ez = dy === 1 ? ty + 1 : dy === -1 ? ty : null;
+          const a = ex !== null ? { x: ex, z: ty } : { x: tx, z: ez! };
+          const b = ex !== null ? { x: ex, z: ty + 1 } : { x: tx + 1, z: ez! };
+          positions.push(a.x, h, a.z, b.x, h, b.z, b.x, other, b.z, a.x, other, a.z);
+          for (let i = 0; i < 4; i++) normals.push(dx, 0, dy);
+          uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
+          if (dx === 1 || dy === -1) indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
+          else indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
+          n += 4;
+        }
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    g.setIndex(indices);
+    return g;
   }
 
   /** One textured quad per floor tile, at height `y`, facing up (floor) or down (ceiling). */
@@ -2030,7 +2157,7 @@ export class ThreeView {
     const H = 1.5;
     for (const d of level.doorways) {
       const tile = d.y * level.width + d.x;
-      const barricade = world.works.find((w) => w.kind === 'barricade' && w.depth === world.depth && w.x === d.x && w.y === d.y);
+      const barricade = world.works.find((w) => w.kind === 'barricade' && w.depth === world.depth && covers(w, d.x, d.y));
       const door = world.doorStates.get(tile);
       if (!barricade && (!door || door.state === 'broken')) continue;
       seen.add(tile);

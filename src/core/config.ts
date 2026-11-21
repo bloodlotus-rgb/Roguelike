@@ -2,16 +2,18 @@
 export const CONFIG = {
   level: {
     // Extensive floor plans: about two and a half times the area of the first levels.
-    width: 100,
-    height: 76,
-    roomAttempts: 420,
-    minRooms: 16,
-    maxRooms: 30,
-    roomMinSize: 4,
-    roomMaxSize: 12,
-    extraConnections: 7,
+    // A level is a project of several days: about three times the area of the last ones,
+    // with passages two tiles wide and rooms from 6 to 18 tiles across.
+    width: 170,
+    height: 130,
+    roomAttempts: 1400,
+    minRooms: 24,
+    maxRooms: 44,
+    roomMinSize: 6,
+    roomMaxSize: 18,
+    extraConnections: 12,
     /** Horrors per level, as a multiple of the base budget (hordes in the bigger levels). */
-    hordeScale: 2.4,
+    hordeScale: 5,
     /** Chance a level has a gallery (a double-height room over a hall below). */
     galleryChance: 0.5,
     /** Share of passages that are winding natural tunnels instead of straight corridors. */
@@ -28,26 +30,26 @@ export const CONFIG = {
     /** Chance a river drains down a sinkhole and falls to the level below. */
     waterfallChance: 0.5,
     /** Chance a level has a collapse or two in its corridors. */
-    rubbleChance: 0.6,
+    rubbleChance: 0.8,
     /** Widest stretch of chasm a leap carries over, in tiles. */
     leapSpan: 1.5,
   },
   items: {
     // Scaled to the bigger levels: about as much per room as before.
-    ration: { min: 2, max: 4 },
-    oil: { min: 2, max: 4 },
-    gold: { min: 5, max: 9 },
-    marchRationChance: 0.5,
-    mushroom: { min: 2, max: 5 },
+    ration: { min: 5, max: 10 },
+    oil: { min: 6, max: 11 },
+    gold: { min: 12, max: 22 },
+    marchRationChance: 0.8,
+    mushroom: { min: 5, max: 12 },
     mushroomPoison: 0.35,
   },
   features: {
-    fountain: { min: 2, max: 4 },
-    drip: { min: 2, max: 6 },
+    fountain: { min: 5, max: 9 },
+    drip: { min: 5, max: 14 },
     /** Share of room entrances that have a door. */
     doorChance: 0.4,
-    remains: { min: 4, max: 8 },
-    crate: { min: 6, max: 10 },
+    remains: { min: 10, max: 20 },
+    crate: { min: 15, max: 26 },
   },
   player: {
     /** Tiles per second: a slow, careful advance. */

@@ -1,4 +1,5 @@
 import { isBridge, isChasm, isDeep, isFloor, isShallow, isVoid } from '../core/dungeon';
+import { covers } from '../core/dynasty';
 import type { World } from '../core/world';
 
 const PAPER = '#ece2cb';
@@ -377,7 +378,7 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
   for (const d of level.doorways) {
     if (!seen(d.x, d.y)) continue;
     const tile = d.y * level.width + d.x;
-    const barricade = world.works.some((w) => w.kind === 'barricade' && w.depth === world.depth && w.x === d.x && w.y === d.y);
+    const barricade = world.works.some((w) => w.kind === 'barricade' && w.depth === world.depth && covers(w, d.x, d.y));
     const door = world.doorStates.get(tile);
     if (!barricade && (!door || door.state === 'broken')) continue;
     const shut = level.closed?.has(tile) ?? false;

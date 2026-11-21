@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { maxHealth } from './attributes';
 import { CLASSES, type ClassId } from './classes';
-import { generateLevel, isFloor } from './dungeon';
+import { doorwayPartner, generateLevel, isFloor } from './dungeon';
 import { ENEMIES, type EnemyKind } from './enemies';
 import { CONFIG } from './config';
 import { addItem } from './inventory';
@@ -1010,6 +1010,8 @@ describe('chasms', () => {
 describe('water', () => {
   /** Shallow water across the clearing, just ahead of the hero. */
   function ford(world: World): number {
+    // Nothing else to interact with around (fountains, remains, crates).
+    world.level.features = [];
     const cx = Math.floor(world.player.x);
     const cy = Math.floor(world.player.y);
     world.level.water = world.level.water ?? new Uint8Array(world.level.tiles.length);
@@ -1127,6 +1129,37 @@ describe('floods', () => {
     expect(below.falling).toBe(false);
     dawn(below);
     expect(floods[depth]).toBe(4);
+  });
+});
+
+describe('double doors', () => {
+  it('both leaves open and shut together, and planks bar the whole entrance', () => {
+    const works: import('./dynasty').Work[] = [];
+    const w = new World('estirpe', 'headsman', 0, 2, { works });
+    w.enemies = [];
+    const d = w.level.doors.find((o) => doorwayPartner(w.level, o))!;
+    const partner = doorwayPartner(w.level, d)!;
+    const tile = (p: { x: number; y: number }) => p.y * w.level.width + p.x;
+    const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(
+      ([dx, dy]) => w.level.rooms.some((r) => d.x + dx >= r.x && d.x + dx < r.x + r.w && d.y + dy >= r.y && d.y + dy < r.y + r.h),
+    )!;
+    w.player = { x: d.x + side[0] + 0.5, y: d.y + side[1] + 0.5 };
+    const before = w.doorStates.get(tile(d))!.state;
+    expect(w.doorStates.get(tile(partner))!.state).toBe(before);
+    w.interact();
+    w.update(0.02, NO_INPUT);
+    const after = w.doorStates.get(tile(d))!.state;
+    expect(after).not.toBe(before);
+    expect(w.doorStates.get(tile(partner))!.state).toBe(after);
+    // Barricade it: one work across both tiles, both shut.
+    w.inventory.items = w.inventory.items.filter((i) => i.kind !== 'campKit');
+    addItem(w.inventory, 'planks');
+    w.useItem(w.inventory.items.find((i) => i.kind === 'planks')!.uid);
+    w.update(0.02, NO_INPUT);
+    const bar = works.find((x) => x.kind === 'barricade')!;
+    expect(bar.span).toHaveLength(1);
+    expect(w.level.closed?.has(tile(d))).toBe(true);
+    expect(w.level.closed?.has(tile(partner))).toBe(true);
   });
 });
 

@@ -273,10 +273,15 @@ function removeUnreachable(level: Level, origin: Point): void {
  */
 function carveTunnel(tiles: Uint8Array, width: number, height: number, from: Point, to: Point, rng: Rng): void {
   let { x, y } = from;
+  // Two tiles wide like the corridors, now and then wider.
   const carve = (cx: number, cy: number) => {
-    if (cx >= 2 && cy >= 2 && cx < width - 2 && cy < height - 2) tiles[cy * width + cx] = Tile.Floor;
+    for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      const tx = cx + dx;
+      const ty = cy + dy;
+      if (tx >= 2 && ty >= 2 && tx < width - 2 && ty < height - 2) tiles[ty * width + tx] = Tile.Floor;
+    }
   };
-  for (let steps = 0; steps < 400 && (x !== to.x || y !== to.y); steps++) {
+  for (let steps = 0; steps < 900 && (x !== to.x || y !== to.y); steps++) {
     carve(x, y);
     if (rng.chance(0.18)) carve(x + rng.int(-1, 1), y + rng.int(-1, 1));
     const dx = Math.sign(to.x - x);
@@ -295,8 +300,14 @@ function carveTunnel(tiles: Uint8Array, width: number, height: number, from: Poi
 }
 
 function carveCorridor(tiles: Uint8Array, width: number, from: Point, to: Point, horizontalFirst: boolean): void {
+  // Passages two tiles wide: a square brush of two by two.
+  const height = tiles.length / width;
   const carve = (x: number, y: number) => {
-    tiles[y * width + x] = Tile.Floor;
+    for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      const cx = x + dx;
+      const cy = y + dy;
+      if (cx >= 1 && cy >= 1 && cx < width - 1 && cy < height - 1) tiles[cy * width + cx] = Tile.Floor;
+    }
   };
   let { x, y } = from;
   const stepX = () => {
@@ -761,7 +772,7 @@ function generateLayout(seed: string, depth: number): Level {
   const targetRooms = rng.int(cfg.minRooms, cfg.maxRooms);
   for (let attempt = 0; attempt < cfg.roomAttempts && rooms.length < targetRooms; attempt++) {
     const w = rng.int(cfg.roomMinSize, cfg.roomMaxSize);
-    const h = rng.int(cfg.roomMinSize, Math.min(cfg.roomMaxSize, 8));
+    const h = rng.int(cfg.roomMinSize, Math.round(cfg.roomMaxSize * 0.75));
     const shapeRoll = rng.next();
     const shape: RoomShape = w >= 7 && h >= 6 && shapeRoll < 0.3 ? 'hall' : shapeRoll > 0.62 ? 'cave' : 'rect';
     const room: Room = { x: rng.int(2, width - w - 2), y: rng.int(2, height - h - 2), w, h, shape };
@@ -990,7 +1001,15 @@ function generateLayout(seed: string, depth: number): Level {
   level.features = features;
   level.doorways = findDoorways(level);
   const doorRng = Rng.derive(seed, 'doors', depth);
-  level.doors = level.doorways.filter(() => doorRng.chance(CONFIG.features.doorChance));
+  // A two-tile entrance gets a double door, or none.
+  const hasDoor = new Map<string, boolean>();
+  level.doors = level.doorways.filter((d) => {
+    const partner = doorwayPartner(level, d);
+    const known = partner && hasDoor.get(`${partner.x},${partner.y}`);
+    const door = known ?? doorRng.chance(CONFIG.features.doorChance);
+    hasDoor.set(`${d.x},${d.y}`, door);
+    return door;
+  });
   level.rubble = collapse(level, Rng.derive(seed, 'rubble', depth), [...upBlock, ...downBlock, level.pit, level.landing]);
   layouts.set(key, level);
   return level;
@@ -1045,30 +1064,36 @@ function collapse(level: Level, rng: Rng, keepClear: Point[]): Point[] {
       if (!isFloor(level, x, y) || inRoom(x, y)) continue;
       const p = { x, y };
       if (near(p, keepClear, 4) || near(p, level.doorways, 1)) continue;
-      // A straight stretch: floor on two opposite sides, rock on the other two.
-      const straightX = isFloor(level, x - 1, y) && isFloor(level, x + 1, y) && !isFloor(level, x, y - 1) && !isFloor(level, x, y + 1);
-      const straightY = isFloor(level, x, y - 1) && isFloor(level, x, y + 1) && !isFloor(level, x - 1, y) && !isFloor(level, x + 1, y);
-      if (straightX || straightY) candidates.push(p);
+      // A straight stretch two tiles wide: the stones fill it from wall to wall.
+      const run = (ax: number, ay: number, cx: number, cy: number) =>
+        isFloor(level, x - ax, y - ay) && isFloor(level, x + ax, y + ay) &&
+        isFloor(level, x + cx, y + cy) && !inRoom(x + cx, y + cy) &&
+        isFloor(level, x + cx - ax, y + cy - ay) && isFloor(level, x + cx + ax, y + cy + ay) &&
+        !isFloor(level, x - cx, y - cy) && !isFloor(level, x + 2 * cx, y + 2 * cy);
+      if (run(1, 0, 0, 1)) candidates.push(p, { x, y: y + 1 });
+      else if (run(0, 1, 1, 0)) candidates.push(p, { x: x + 1, y });
     }
   }
   const chosen: Point[] = [];
-  const count = rng.chance(CONFIG.level.rubbleChance) ? rng.int(1, 2) : 0;
-  for (let attempt = 0; attempt < 30 && chosen.length < count && candidates.length > 0; attempt++) {
-    const p = candidates.splice(rng.int(0, candidates.length - 1), 1)[0];
-    if (near(p, chosen, 6)) continue;
+  const count = rng.chance(CONFIG.level.rubbleChance) ? rng.int(2, 5) : 1;
+  for (let attempt = 0; attempt < 40 && chosen.length < count * 2 && candidates.length >= 2; attempt++) {
+    const k = rng.int(0, candidates.length / 2 - 1) * 2;
+    const pair = candidates.splice(k, 2);
+    if (near(pair[0], chosen, 6)) continue;
     // Everything must still be reachable with the stones in place.
-    const closed = new Set([...chosen, p].map((q) => q.y * width + q.x));
+    const closed = new Set([...chosen, ...pair].map((q) => q.y * width + q.x));
     const dist = floorDistances({ ...level, closed }, level.start);
     let cut = false;
     for (let i = 0; i < dist.length && !cut; i++) if (level.tiles[i] === Tile.Floor && !closed.has(i) && dist[i] === -1) cut = true;
-    if (!cut) chosen.push(p);
+    if (!cut) chosen.push(...pair);
   }
   return chosen;
 }
 
 /**
- * Room entrances one tile wide: corridor tiles (outside every room) next to a room tile,
- * with wall on both sides across the passage.
+ * Room entrances one or two tiles wide: corridor tiles (outside every room) next to a room
+ * tile, walled on both sides across the passage. A two-tile entrance is a pair of
+ * doorways side by side (see `doorwayPartner`): its doors open and shut together.
  */
 function findDoorways(level: Level): Point[] {
   const inRoom = (x: number, y: number) => level.rooms.some((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
@@ -1076,11 +1101,16 @@ function findDoorways(level: Level): Point[] {
   for (let y = 1; y < level.height - 1; y++) {
     for (let x = 1; x < level.width - 1; x++) {
       if (!isFloor(level, x, y) || inRoom(x, y)) continue;
-      const nextToRoom = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => isFloor(level, x + dx, y + dy) && inRoom(x + dx, y + dy));
-      if (!nextToRoom) continue;
-      const walledX = !isFloor(level, x - 1, y) && !isFloor(level, x + 1, y);
-      const walledY = !isFloor(level, x, y - 1) && !isFloor(level, x, y + 1);
-      if (walledX || walledY) result.push({ x, y });
+      // The passage meets a room on one side; across it, it is one or two tiles wide,
+      // walled on both sides.
+      const into = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dy]) => isFloor(level, x + dx, y + dy) && inRoom(x + dx, y + dy));
+      if (!into) continue;
+      const [px, py] = [-into[1], into[0]];
+      const open = (k: number) => isFloor(level, x + px * k, y + py * k) && !inRoom(x + px * k, y + py * k);
+      const wall = (k: number) => !isFloor(level, x + px * k, y + py * k);
+      const one = wall(1) && wall(-1);
+      const two = (open(1) && wall(2) && wall(-1)) || (open(-1) && wall(-2) && wall(1));
+      if (one || two) result.push({ x, y });
     }
   }
   return result;
@@ -1088,6 +1118,11 @@ function findDoorways(level: Level): Point[] {
 
 function rngCount(rng: Rng, range: { min: number; max: number }): number {
   return rng.int(range.min, range.max);
+}
+
+/** The other half of a two-tile entrance, if this doorway is one. */
+export function doorwayPartner(level: Level, d: Point): Point | null {
+  return level.doorways.find((o) => Math.abs(o.x - d.x) + Math.abs(o.y - d.y) === 1) ?? null;
 }
 
 /** Free floor tiles inside rooms, never on the start, the stairs or each other. */

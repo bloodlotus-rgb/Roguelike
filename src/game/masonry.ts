@@ -37,7 +37,8 @@ function courses(rng: Rng, height: number): Array<[number, number]> {
   const list: Array<[number, number]> = [];
   let y = 0;
   while (y < height - 0.04) {
-    const h = Math.min(rng.range(0.14, 0.3), height - y);
+    // Bricks near the floor, big ashlar blocks higher up (fewer, and the eye barely reaches).
+    const h = Math.min(y < 2.2 ? rng.range(0.14, 0.3) : rng.range(0.4, 0.62), height - y);
     list.push([y, y + h]);
     y += h;
   }
@@ -107,7 +108,12 @@ function runs(level: Level): Run[] {
 }
 
 /** Lays the bricks of every exposed wall face of the level, up to `height`. */
-export function layBricks(level: Level, height: number, skip: (x: number, y: number) => boolean = () => false): Brick[] {
+export function layBricks(
+  level: Level,
+  height: number,
+  skip: (x: number, y: number) => boolean = () => false,
+  top: (x: number, y: number) => number = () => height,
+): Brick[] {
   const courseRng = Rng.derive(level.seed, 'courses', level.depth);
   const rows = courses(courseRng, height);
   const bricks: Brick[] = [];
@@ -126,7 +132,7 @@ export function layBricks(level: Level, height: number, skip: (x: number, y: num
       let s = from - rng.range(0, 0.4);
       while (s < to - 0.02) {
         // Mostly ordinary bricks, now and then a long block or a short one.
-        const len = rng.chance(0.12) ? rng.range(0.6, 0.85) : rng.range(0.2, 0.55);
+        const len = y0 >= 2.2 ? rng.range(0.6, 1.1) : rng.chance(0.12) ? rng.range(0.6, 0.85) : rng.range(0.2, 0.55);
         const a = Math.max(s, from);
         const b = Math.min(s + len, to);
         s += len;
@@ -138,14 +144,18 @@ export function layBricks(level: Level, height: number, skip: (x: number, y: num
         const tileX = run.alongZ ? (run.normal === 1 ? run.plane - 1 : run.plane) : mid;
         const tileY = run.alongZ ? mid : run.normal === 1 ? run.plane - 1 : run.plane;
         if (skip(tileX, tileY)) continue;
+        // Walls are as tall as the space they face: the last course is cut to fit.
+        const limit = top(tileX, tileY);
+        if (y0 >= limit - 0.05) continue;
+        const yTop = Math.min(y1, limit);
         const depth = d * rng.range(0.6, 1.35);
         const along = (a + b) / 2;
         const across = run.plane - run.normal * (d - depth / 2);
         const length = b - a - GAP;
-        const tall = y1 - y0 - GAP;
+        const tall = yTop - y0 - GAP;
         bricks.push({
           x: run.alongZ ? across : along,
-          y: (y0 + y1) / 2,
+          y: (y0 + yTop) / 2,
           z: run.alongZ ? along : across,
           sx: run.alongZ ? depth : length,
           sy: tall * rng.range(0.9, 1),
