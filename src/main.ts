@@ -18,6 +18,8 @@ import { LineageUi, traitList } from './ui/lineage';
 import type { MapExtras } from './ui/map';
 import { traitName } from './ui/traitText';
 import './ui/styles.css';
+import { SettingsScreen } from './ui/settingsScreen';
+import { actionFor, settings } from './settings/settings';
 
 /** A readable random seed, e.g. "ashen-crypt-417". Seeds are chosen outside game logic. */
 function randomSeed(): string {
@@ -90,6 +92,7 @@ class Session implements SceneHost {
   private classic: ClassicEngine | null = null;
   private fp: FirstPersonView | null = null;
   private fpAngle = 0;
+  private settingsScreen: SettingsScreen;
   private lastInput = 0;
   private lastFrame = 0;
 
@@ -124,6 +127,18 @@ class Session implements SceneHost {
         this.sound.setMuted(!this.sound.isMuted);
         return !this.sound.isMuted;
       },
+      onOpenSettings: () => {
+        // The game does not stop on its own while the page is open: pause it.
+        if (this.playing && !this.paused) this.setPaused(true);
+        this.settingsScreen.show();
+      },
+    });
+    this.settingsScreen = new SettingsScreen(hudRoot, {
+      view: () => this.view,
+      setView: (view) => {
+        if (view !== this.view) this.toggleView();
+      },
+      onClose: () => this.controls.reset(),
     });
     this.hud.setSoundOn(!this.sound.isMuted);
     this.controls = new Controls(
@@ -168,11 +183,16 @@ class Session implements SceneHost {
       if (this.playing && !this.paused) this.persist();
     }, AUTOSAVE_SECONDS * 1000);
     window.addEventListener('keydown', (e) => {
-      if (!this.playing) return;
-      if (e.code === 'Escape') this.setPaused(!this.paused);
-      if ((e.code === 'Enter' || e.code === 'KeyE') && !this.paused) this.act();
-      if (e.code === 'KeyM') this.toggleMap();
-      if (e.code === 'KeyV') this.toggleView();
+      if (this.settingsScreen.open) {
+        if (e.code === 'Escape') this.settingsScreen.hide();
+        return;
+      }
+      if (!this.playing || e.repeat) return;
+      const action = actionFor(e.code);
+      if (action === 'pause') this.setPaused(!this.paused);
+      if (action === 'interact' && !this.paused) this.act();
+      if (action === 'map') this.toggleMap();
+      if (action === 'view') this.toggleView();
     });
   }
 
@@ -184,7 +204,7 @@ class Session implements SceneHost {
     const now = performance.now();
     const dt = this.lastInput ? Math.min(0.1, (now - this.lastInput) / 1000) : 0;
     this.lastInput = now;
-    this.fpAngle += raw.move.x * TURN_SPEED * dt;
+    this.fpAngle += raw.move.x * TURN_SPEED * settings().turn * dt;
     const forward = -raw.move.y;
     const dir = { x: Math.cos(this.fpAngle), y: Math.sin(this.fpAngle) };
     return { ...raw, move: { x: dir.x * forward, y: dir.y * forward }, aim: dir };

@@ -1,3 +1,4 @@
+import { onSettings, settings } from '../settings/settings';
 import type { EnemyState, World, WorldEvent } from '../core/world';
 
 /**
@@ -44,6 +45,11 @@ interface ToneOptions {
 export class Sound {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  /** Two buses under the master, each with its own volume: blows and cues, and the ambience. */
+  private fxBus: GainNode | null = null;
+  private ambientBus: GainNode | null = null;
+  /** Which bus the sounds being made now go to. */
+  private bus: 'fx' | 'ambient' = 'fx';
   private noise: AudioBuffer | null = null;
   private muted: boolean;
   private last = 0;
@@ -59,6 +65,17 @@ export class Sound {
       // Storage may be unavailable; default to sound on.
     }
     this.muted = muted;
+    onSettings(() => this.applyVolumes());
+  }
+
+  /** Volumes from the settings (and the mute toggle). */
+  private applyVolumes(): void {
+    if (!this.ctx || !this.master) return;
+    const v = settings().volume;
+    const t = this.ctx.currentTime;
+    this.master.gain.setTargetAtTime(this.muted ? 0 : v.master, t, 0.05);
+    this.fxBus?.gain.setTargetAtTime(v.effects, t, 0.05);
+    this.ambientBus?.gain.setTargetAtTime(v.ambient, t, 0.05);
   }
 
   get isMuted(): boolean {
@@ -72,7 +89,7 @@ export class Sound {
     } catch {
       // Not remembered, that's all.
     }
-    if (this.master && this.ctx) this.master.gain.setTargetAtTime(muted ? 0 : 0.8, this.ctx.currentTime, 0.05);
+    this.applyVolumes();
   }
 
   /** Must be called from a user gesture (browsers block audio until then). */
@@ -84,8 +101,14 @@ export class Sound {
       const compressor = this.ctx.createDynamicsCompressor();
       compressor.connect(this.ctx.destination);
       this.master = this.ctx.createGain();
-      this.master.gain.value = this.muted ? 0 : 0.8;
+      this.master.gain.value = this.muted ? 0 : settings().volume.master;
       this.master.connect(compressor);
+      this.fxBus = this.ctx.createGain();
+      this.fxBus.gain.value = settings().volume.effects;
+      this.fxBus.connect(this.master);
+      this.ambientBus = this.ctx.createGain();
+      this.ambientBus.gain.value = settings().volume.ambient;
+      this.ambientBus.connect(this.master);
       this.noise = this.makeNoise();
       this.startDrone();
     }
@@ -106,8 +129,11 @@ export class Sound {
       for (const e of events) if (e.type === 'died') this.death();
       return;
     }
+    this.bus = 'fx';
     for (const event of events) this.onEvent(world, event);
+    this.bus = 'ambient';
     this.loops(world, dt);
+    this.bus = 'fx';
     this.horrors(world, dt);
   }
 
@@ -325,7 +351,7 @@ export class Sound {
     filter.type = 'lowpass';
     filter.frequency.value = 180;
     filter.connect(gain);
-    gain.connect(this.master!);
+    gain.connect(this.ambientBus!);
     for (const f of [41, 41.6, 61.7]) {
       const osc = ctx.createOscillator();
       osc.type = 'sawtooth';
@@ -352,10 +378,11 @@ export class Sound {
 
   private output(pan = 0): AudioNode {
     const ctx = this.ctx!;
-    if (!ctx.createStereoPanner) return this.master!;
+    const bus = (this.bus === 'ambient' ? this.ambientBus : this.fxBus) ?? this.master!;
+    if (!ctx.createStereoPanner) return bus;
     const panner = ctx.createStereoPanner();
     panner.pan.value = pan;
-    panner.connect(this.master!);
+    panner.connect(bus);
     return panner;
   }
 

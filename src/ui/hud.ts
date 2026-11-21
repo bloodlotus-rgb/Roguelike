@@ -4,7 +4,6 @@ import type { Survival } from '../core/survival';
 import type { World } from '../core/world';
 import type { Interaction } from '../core/world';
 import { BackpackUi } from './backpack';
-import { setVisualStyle, visualStyle, VISUAL_STYLES, type VisualStyle } from '../game/style';
 import { drawMap, drawMark, MAP_ZOOM, type MapExtras, type MapMark, type MapView } from './map';
 import { getLang, onLangChange, setLang, t, type StringKey } from '../i18n/i18n';
 
@@ -24,6 +23,7 @@ export interface HudHandlers {
   onToggleSound: () => boolean;
   onOpenMap: () => void;
   onToggleView: () => void;
+  onOpenSettings: () => void;
 }
 
 /** HTML overlay on top of the canvas: meters, depth, buttons and screens. */
@@ -76,9 +76,11 @@ export class Hud {
           <div class="hud-toggles">
             <button class="sound" type="button" aria-label="Sound"></button>
             <button class="lang" type="button" aria-label="Language"></button>
+            <button class="gear" type="button" aria-label="Settings">⚙</button>
           </div>
         </div>
       </header>
+      <button class="gear-title" type="button" aria-label="Settings">⚙</button>
       <div class="toasts" aria-live="polite"></div>
       <div class="purse"><span data-i18n="gold"></span> <b class="gold-value">0</b></div>
       <div class="seed"><span data-i18n="seed"></span>: <span class="seed-value"></span></div>
@@ -113,12 +115,7 @@ export class Hud {
         <h2 data-i18n="paused"></h2>
         <div class="hero-info"></div>
         <div class="backpack-slot"></div>
-        <div class="style-picker">
-          <span data-i18n="styleLabel"></span>
-          <div class="style-options">
-            ${VISUAL_STYLES.map((s) => `<button type="button" class="style-option" data-style="${s}" data-i18n="style_${s}"></button>`).join('')}
-          </div>
-        </div>
+        <button class="paper-button open-settings" type="button" data-i18n="settings"></button>
         <button class="paper-button resume" type="button" data-i18n="resume"></button>
         <button class="link-button abandon" type="button" data-i18n="abandon"></button>
       </section>
@@ -190,15 +187,7 @@ export class Hud {
     this.descendButton.addEventListener('click', handlers.onDescend);
     root.querySelector('.resume')!.addEventListener('click', handlers.onResume);
     root.querySelector('.abandon')!.addEventListener('click', handlers.onAbandon);
-    const styleButtons = root.querySelectorAll<HTMLButtonElement>('.style-option');
-    const markStyle = () => styleButtons.forEach((b) => b.classList.toggle('chosen', b.dataset.style === visualStyle()));
-    styleButtons.forEach((b) =>
-      b.addEventListener('click', () => {
-        setVisualStyle(b.dataset.style as VisualStyle);
-        markStyle();
-      }),
-    );
-    markStyle();
+    root.querySelector('.open-settings')!.addEventListener('click', handlers.onOpenSettings);
     root.querySelector('.class-back')!.addEventListener('click', handlers.onClassBack);
     root.querySelectorAll<HTMLButtonElement>('.class-card').forEach((card) => {
       card.addEventListener('click', () => handlers.onChooseClass(card.dataset.class as ClassId));
@@ -212,6 +201,8 @@ export class Hud {
     soundButton.addEventListener('click', () => renderSound(handlers.onToggleSound()));
     const langButton = root.querySelector<HTMLButtonElement>('.lang')!;
     langButton.addEventListener('click', () => setLang(getLang() === 'es' ? 'en' : 'es'));
+    root.querySelector('.gear')!.addEventListener('click', handlers.onOpenSettings);
+    root.querySelector('.gear-title')!.addEventListener('click', handlers.onOpenSettings);
 
     const translate = () => {
       root.querySelectorAll<HTMLElement>('[data-i18n]').forEach((el) => {

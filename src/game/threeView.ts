@@ -21,6 +21,7 @@ import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures
 import { InkPost } from './inkPost';
 import { BRICK_DEPTH, layBricks } from './masonry';
 import { styleIndex } from './style';
+import { onSettings, qualityProfile, settings } from '../settings/settings';
 import { bridgeModel, rubbleModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
 import { easeInOut, easeOut, swingPhase } from './swing';
 import { Effects } from './threeEffects';
@@ -737,7 +738,18 @@ export class ThreeView {
     // A real flame: light falls with the square of the distance (decay 2).
     this.light = new THREE.SpotLight(0xffd6a0, FLAME_POWER, 8, COMBAT.visionCone, 0.06, 2);
     this.light.castShadow = true;
-    this.light.shadow.mapSize.set(2048, 2048);
+    this.light.shadow.mapSize.set(qualityProfile().shadow, qualityProfile().shadow);
+    // Settings that change the picture take effect at once.
+    onSettings(() => {
+      const size = qualityProfile().shadow;
+      if (this.light.shadow.mapSize.x !== size) {
+        this.light.shadow.mapSize.set(size, size);
+        this.light.shadow.map?.dispose();
+        this.light.shadow.map = null;
+      }
+      this.width = 0;
+      this.resize();
+    });
     this.light.shadow.bias = -0.0008;
     this.light.shadow.camera.near = 0.1;
     this.scene.add(this.light);
@@ -836,7 +848,7 @@ export class ThreeView {
     this.ensureHero(world);
     this.resize();
     for (const e of events) {
-      if (e.type === 'enemyHit' && !e.burn) this.flashUntil.set(e.id, now + 90);
+      if (e.type === 'enemyHit' && !e.burn && settings().flashes) this.flashUntil.set(e.id, now + 90);
     }
     const moved = Math.hypot(world.player.x - this.lastPos.x, world.player.y - this.lastPos.y);
     this.lastPos = { ...world.player };
@@ -859,7 +871,7 @@ export class ThreeView {
     this.syncDoors(world);
     this.syncProjectiles(world);
     cutaway.time.value = (now / 1000) % 1000;
-    if (this.post) this.post.render(this.renderer, this.scene, this.camera, now);
+    if (this.post && qualityProfile().post) this.post.render(this.renderer, this.scene, this.camera, now);
     else this.renderer.render(this.scene, this.camera);
     this.drawHandsOverlay(world, now, moved > 0.002);
   }
@@ -1577,8 +1589,10 @@ export class ThreeView {
     this.height = h;
     const portrait = w < h;
     // First person renders a little below full resolution, which keeps it light and soft.
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const ratio = this.mode === 'first' ? Math.min(dpr, (portrait ? 760 : 1400) / w) : dpr;
+    // The quality setting scales it all (Ultra goes past the usual cap).
+    const { scale } = qualityProfile();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2) * scale;
+    const ratio = this.mode === 'first' ? Math.min(dpr, ((portrait ? 760 : 1400) / w) * scale) : dpr;
     this.renderer.setPixelRatio(ratio);
     // Hatch lines about 6 CSS pixels apart, whatever the screen.
     // Fine lines, about four and a half CSS pixels apart.
@@ -1590,8 +1604,9 @@ export class ThreeView {
     this.camera.aspect = w / h;
     if (this.mode === 'first') {
       // Portrait keeps a fixed horizontal field of view; wide screens use their width.
-      const hfov = (62 * Math.PI) / 180;
-      this.camera.fov = portrait ? (2 * Math.atan(Math.tan(hfov / 2) / this.camera.aspect) * 180) / Math.PI : 62;
+      const fov = settings().fov;
+      const hfov = (fov * Math.PI) / 180;
+      this.camera.fov = portrait ? (2 * Math.atan(Math.tan(hfov / 2) / this.camera.aspect) * 180) / Math.PI : fov;
     } else {
       this.camera.fov = 40;
     }
@@ -1601,7 +1616,7 @@ export class ThreeView {
   private placeCamera(world: World, fpAngle: number): void {
     this.positionCamera(world, fpAngle);
     // Shake on heavy blows.
-    const shake = this.effects.shake;
+    const shake = settings().shake ? this.effects.shake : 0;
     if (shake > 0) {
       const t = performance.now() / 1000;
       this.camera.position.x += Math.sin(t * 71) * shake;
