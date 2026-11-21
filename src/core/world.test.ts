@@ -36,6 +36,10 @@ function intoRoom(world: World): World {
 function arena(classId: ClassId = 'headsman'): World {
   const world = intoRoom(new World('estirpe', classId));
   world.enemies = [];
+  // A clearing of open floor around the hero, so tests do not depend on the level's shape.
+  const cx = Math.floor(world.player.x);
+  const cy = Math.floor(world.player.y);
+  for (let y = cy - 5; y <= cy + 5; y++) for (let x = cx - 5; x <= cx + 5; x++) world.level.tiles[y * world.level.width + x] = 1;
   world.update(0.016, NO_INPUT);
   return world;
 }
@@ -945,6 +949,100 @@ describe('works', () => {
     expect(works[0]).toMatchObject({ kind: 'chalk', sign: 'water' });
     expect(works[0].angle).toBeCloseTo(Math.PI / 2);
     expect(chalk.charges).toBe(4);
+  });
+});
+
+describe('chasms', () => {
+  /** A crack `wide` tiles across the clearing, just ahead of the hero. */
+  function crack(world: World, wide: number): number {
+    const cx = Math.floor(world.player.x);
+    const cy = Math.floor(world.player.y);
+    for (let k = 1; k <= wide; k++) for (let y = cy - 5; y <= cy + 5; y++) world.level.tiles[y * world.level.width + cx + k] = 3;
+    world.player = { x: cx + 0.6, y: cy + 0.5 };
+    world.facing = { x: 1, y: 0 };
+    return cx;
+  }
+
+  it('nobody walks into a chasm', () => {
+    const world = arena('headsman');
+    const cx = crack(world, 1);
+    run(world, 1, move(1, 0));
+    expect(world.player.x).toBeLessThan(cx + 1);
+    tap(world, 'dodge');
+    run(world, 0.6);
+    expect(world.player.x).toBeLessThan(cx + 1);
+  });
+
+  it('the plunderer leaps a chasm one tile wide with a dodge, but not a wider one', () => {
+    const world = arena('plunderer');
+    const cx = crack(world, 1);
+    const events = tap(world, 'dodge');
+    run(world, 0.6);
+    expect(events.some((e) => e.type === 'leap')).toBe(true);
+    expect(world.player.x).toBeGreaterThan(cx + 2);
+
+    const wide = arena('plunderer');
+    const wx = crack(wide, 2);
+    tap(wide, 'dodge');
+    run(wide, 0.6);
+    expect(wide.player.x).toBeLessThan(wx + 1);
+  });
+
+  it('planks laid at the edge make a bridge the family keeps', () => {
+    const world = arena('headsman');
+    const cx = crack(world, 2);
+    world.inventory.items = world.inventory.items.filter((i) => i.kind !== 'campKit');
+    addItem(world.inventory, 'planks');
+    const planks = world.inventory.items.find((i) => i.kind === 'planks')!;
+    world.useItem(planks.uid);
+    world.update(0.02, NO_INPUT);
+    const bridge = world.works.find((w) => w.kind === 'bridge');
+    expect(bridge?.span).toHaveLength(2);
+    expect(world.level.bridges.length).toBeGreaterThanOrEqual(2);
+    run(world, 1.5, move(1, 0));
+    expect(world.player.x).toBeGreaterThan(cx + 3);
+  });
+});
+
+describe('collapses', () => {
+  it('some corridors are blocked by stones that can be dug out, loudly, for the whole family', () => {
+    let world: World | null = null;
+    for (const seed of ['estirpe', 'tainted', 'abc', '12345', 'mansion', 'ashen']) {
+      const w = new World(seed, 'headsman', 0, 1, { works: [] });
+      for (let i = 0; i < 4 && w.rubble.length === 0; i++) w.descend();
+      if (w.rubble.length > 0) {
+        world = w;
+        break;
+      }
+    }
+    expect(world).not.toBeNull();
+    const w = world!;
+    const stones = w.rubble[0];
+    const tile = stones.y * w.level.width + stones.x;
+    expect(w.level.closed?.has(tile)).toBe(true);
+    // Stand next to it, along the corridor.
+    const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dy]) => isFloor(w.level, stones.x + dx, stones.y + dy))!;
+    w.enemies = [place(w, 'crawler', 0, 0, 'idle')];
+    w.player = { x: stones.x + side[0] + 0.5, y: stones.y + side[1] + 0.5 };
+    const far = w.enemies[0];
+    far.pos = { x: w.player.x + 6, y: w.player.y };
+    far.state = 'idle';
+    far.alerted = false;
+    w.update(0.02, NO_INPUT);
+    expect(w.interaction).toBe('clear');
+    w.interact();
+    const events = run(w, CONFIG.works.digTime + 0.5);
+    expect(events.some((e) => e.type === 'dig')).toBe(true);
+    // The noise carried.
+    expect(far.alerted).toBe(true);
+    // (It may have come and stopped the work; if so, clear it away and finish.)
+    if (w.digging === null && w.rubble.some((p) => p.x === stones.x && p.y === stones.y)) {
+      w.enemies = [];
+      w.interact();
+      run(w, CONFIG.works.digTime + 0.5);
+    }
+    expect(w.works.some((x) => x.kind === 'cleared')).toBe(true);
+    expect(w.level.closed?.has(tile)).toBe(false);
   });
 });
 

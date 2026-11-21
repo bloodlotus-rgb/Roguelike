@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import type { Level, Point } from '../core/dungeon';
 import { CONFIG } from '../core/config';
-import { generateLevel, isFloor, isVoid, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
+import { generateLevel, Ground, groundAt, groundHeight, isBridge, isChasm, isFloor, isVoid, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
 import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
@@ -20,7 +20,7 @@ import { drawChalk, drawFloorDecor, drawProjectile } from './art';
 import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
 import { InkPost } from './inkPost';
 import { BRICK_DEPTH, layBricks } from './masonry';
-import { campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
+import { bridgeModel, rubbleModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
 import { easeInOut, easeOut, swingPhase } from './swing';
 import { Effects } from './threeEffects';
 import { drawHands, inkTexture } from './firstPerson';
@@ -30,6 +30,8 @@ export type CameraMode = 'top' | 'first';
 
 const EYE = 1.15;
 const WALL_FIRST = 2.2;
+/** How far down a chasm's rock walls are drawn, past where any light reaches. */
+const CHASM_DEPTH = 6;
 /** From above the walls stand tall too; the ones between the camera and the hero fade out. */
 const WALL_TOP = 1.6;
 const TOP_TILT = (55 * Math.PI) / 180;
@@ -324,10 +326,11 @@ function wallGeometry(level: Level, tiles: Array<[number, number]>, inset = 0): 
     const xm = x + e;
     const zp = y + 1 - e;
     const zm = y + e;
-    if (isFloor(level, x + 1, y)) quad([[xp, 0, y + 1], [xp, 0, y], [xp, 1, y], [xp, 1, y + 1]], [1, 0, 0]);
-    if (isFloor(level, x - 1, y)) quad([[xm, 0, y], [xm, 0, y + 1], [xm, 1, y + 1], [xm, 1, y]], [-1, 0, 0]);
-    if (isFloor(level, x, y + 1)) quad([[x, 0, zp], [x + 1, 0, zp], [x + 1, 1, zp], [x, 1, zp]], [0, 0, 1]);
-    if (isFloor(level, x, y - 1)) quad([[x + 1, 0, zm], [x, 0, zm], [x, 1, zm], [x + 1, 1, zm]], [0, 0, -1]);
+    const open = (tx: number, ty: number) => isFloor(level, tx, ty) || isChasm(level, tx, ty);
+    if (open(x + 1, y)) quad([[xp, 0, y + 1], [xp, 0, y], [xp, 1, y], [xp, 1, y + 1]], [1, 0, 0]);
+    if (open(x - 1, y)) quad([[xm, 0, y], [xm, 0, y + 1], [xm, 1, y + 1], [xm, 1, y]], [-1, 0, 0]);
+    if (open(x, y + 1)) quad([[x, 0, zp], [x + 1, 0, zp], [x + 1, 1, zp], [x, 1, zp]], [0, 0, 1]);
+    if (open(x, y - 1)) quad([[x + 1, 0, zm], [x, 0, zm], [x, 1, zm], [x + 1, 1, zm]], [0, 0, -1]);
   }
   const sideIndices = indices.length;
   for (const [x, y] of tiles) quad([[x, 1, y + 1], [x + 1, 1, y + 1], [x + 1, 1, y], [x, 1, y]], [0, 1, 0]);
@@ -731,6 +734,11 @@ export class ThreeView {
     this.scene.add(this.flame);
   }
 
+  /** Height of the ground at a tile's centre, on the level being drawn. */
+  private groundAt(x: number, y: number): number {
+    return this.level ? groundHeight(this.level, { x: x + 0.5, y: y + 0.5 }) : 0;
+  }
+
   /** A soft glow around a flame, scaled relative to it. */
   private halo(scale: number): THREE.Sprite {
     const halo = new THREE.Sprite(this.haloMaterial);
@@ -834,6 +842,7 @@ export class ThreeView {
     this.levelGroup.add(this.stairsMesh(level.down, 'down'));
     this.levelGroup.add(this.stairsMesh(level.up, 'up'));
     this.levelGroup.add(this.belowMesh(level));
+    this.levelGroup.add(this.chasmMesh(level));
     if (level.gallery) this.levelGroup.add(this.railingMesh(level));
     this.ceiling = new THREE.Mesh(
       this.tileQuads(level, WALL_FIRST, false),
@@ -846,9 +855,9 @@ export class ThreeView {
     this.columnTiles = [];
     for (let y = 0; y < level.height; y++) {
       for (let x = 0; x < level.width; x++) {
-        if (isFloor(level, x, y) || isVoid(level, x, y)) continue;
+        if (isFloor(level, x, y) || isVoid(level, x, y) || isChasm(level, x, y)) continue;
         let touches = false;
-        for (let dy = -1; dy <= 1 && !touches; dy++) for (let dx = -1; dx <= 1; dx++) if (isFloor(level, x + dx, y + dy)) touches = true;
+        for (let dy = -1; dy <= 1 && !touches; dy++) for (let dx = -1; dx <= 1; dx++) if (isFloor(level, x + dx, y + dy) || isChasm(level, x + dx, y + dy)) touches = true;
         if (!touches) continue;
         const column = isFloor(level, x - 1, y) && isFloor(level, x + 1, y) && isFloor(level, x, y - 1) && isFloor(level, x, y + 1);
         (column ? this.columnTiles : this.wallTiles).push([x, y]);
@@ -943,7 +952,7 @@ export class ThreeView {
     const start = level.start;
     for (let y = 0; y < level.height; y++) {
       for (let x = 0; x < level.width; x++) {
-        if (!isFloor(level, x, y)) continue;
+        if (!isFloor(level, x, y) || isBridge(level, x, y)) continue;
         if (Math.abs(x - start.x) + Math.abs(y - start.y) < 2) continue;
         if (x === level.stairs.x && y === level.stairs.y) continue;
         const nearWall = !isFloor(level, x - 1, y) || !isFloor(level, x + 1, y) || !isFloor(level, x, y - 1) || !isFloor(level, x, y + 1);
@@ -955,7 +964,7 @@ export class ThreeView {
           for (let i = 0; i < count; i++) {
             const size = rng.range(0.03, 0.1);
             e.set(rng.range(0, Math.PI), rng.range(0, Math.PI), rng.range(0, Math.PI));
-            v.set(cx + rng.range(-0.22, 0.22), size * 0.6, cz + rng.range(-0.22, 0.22));
+            v.set(cx + rng.range(-0.22, 0.22), size * 0.6 + groundHeight(level, { x: x + 0.5, y: y + 0.5 }), cz + rng.range(-0.22, 0.22));
             sc.set(size, size * rng.range(0.6, 1), size);
             rocks.push(new THREE.Matrix4().compose(v, q.setFromEuler(e), sc));
           }
@@ -963,14 +972,14 @@ export class ThreeView {
         if (rng.chance(0.04)) {
           for (let i = 0; i < rng.int(1, 3); i++) {
             e.set(Math.PI / 2, rng.range(0, Math.PI), 0, 'YXZ');
-            v.set(x + rng.range(0.2, 0.8), 0.02, y + rng.range(0.2, 0.8));
+            v.set(x + rng.range(0.2, 0.8), 0.02 + groundHeight(level, { x: x + 0.5, y: y + 0.5 }), y + rng.range(0.2, 0.8));
             sc.set(0.02, rng.range(0.14, 0.26), 0.02);
             bones.push(new THREE.Matrix4().compose(v, q.setFromEuler(e), sc));
           }
         }
         if (rng.chance(0.012)) {
           e.set(rng.range(-0.3, 0.3), rng.range(0, Math.PI * 2), 0);
-          v.set(x + rng.range(0.25, 0.75), 0.055, y + rng.range(0.25, 0.75));
+          v.set(x + rng.range(0.25, 0.75), 0.055 + groundHeight(level, { x: x + 0.5, y: y + 0.5 }), y + rng.range(0.25, 0.75));
           sc.set(0.075, 0.065, 0.085);
           skulls.push(new THREE.Matrix4().compose(v, q.setFromEuler(e), sc));
         }
@@ -1192,6 +1201,81 @@ export class ThreeView {
     return g;
   }
 
+  /**
+   * Chasms: the rock walls of the crack going down until the light gives out, over a
+   * bottom of solid ink, and the dungeon's old bridges across them.
+   */
+  private chasmMesh(level: Level): THREE.Group {
+    const g = new THREE.Group();
+    const deep = (x: number, y: number) => isChasm(level, x, y) || isBridge(level, x, y);
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const colors: number[] = [];
+    const indices: number[] = [];
+    let n = 0;
+    const bottom: Array<[number, number]> = [];
+    for (let y = 0; y < level.height; y++) {
+      for (let x = 0; x < level.width; x++) {
+        if (!deep(x, y)) continue;
+        bottom.push([x, y]);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          if (deep(x + dx, y + dy)) continue;
+          // The face on the far edge of this tile, looking back into the crack.
+          const ex = dx === 1 ? x + 1 : dx === -1 ? x : null;
+          const ez = dy === 1 ? y + 1 : dy === -1 ? y : null;
+          const a = ex !== null ? { x: ex, z: y } : { x, z: ez! };
+          const b = ex !== null ? { x: ex, z: y + 1 } : { x: x + 1, z: ez! };
+          positions.push(a.x, 0, a.z, b.x, 0, b.z, b.x, -CHASM_DEPTH, b.z, a.x, -CHASM_DEPTH, a.z);
+          for (let i = 0; i < 4; i++) normals.push(-dx, 0, -dy);
+          // Darker the deeper: the rock sinks into ink.
+          colors.push(1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0);
+          const flip = dx === 1 || dy === -1;
+          if (flip) indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
+          else indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
+          n += 4;
+        }
+      }
+    }
+    if (n === 0) return g;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.setIndex(indices);
+    const rock = new THREE.Mesh(
+      geo,
+      inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling, vertexColors: true, side: THREE.DoubleSide }), {
+        worldUv: 'box',
+        grime: true,
+      }),
+    );
+    rock.receiveShadow = true;
+    g.add(rock);
+    const floor = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.05, 1), this.mats.ink, bottom.length);
+    const m = new THREE.Matrix4();
+    bottom.forEach(([x, y], i) => floor.setMatrixAt(i, m.makeTranslation(x + 0.5, -CHASM_DEPTH, y + 0.5)));
+    g.add(floor);
+    // The dungeon's own bridges (the family's are drawn with the other works).
+    const old = new Set(generateLevel(level.seed, level.depth, 0).bridges);
+    for (const tile of old) {
+      const x = tile % level.width;
+      const y = Math.floor(tile / level.width);
+      g.add(this.bridgeAt(level, x, y, true));
+    }
+    return g;
+  }
+
+  /** A tile of bridge, turned to run between its two banks. */
+  private bridgeAt(level: Level, x: number, y: number, old: boolean): THREE.Group {
+    const obj = outlined(bridgeModel(this.mats, old, x * 31 + y), this.mats);
+    // Chasm on the sides means the bridge runs the other way.
+    const alongX = isChasm(level, x, y - 1) || isChasm(level, x, y + 1) || isBridge(level, x, y - 1) || isBridge(level, x, y + 1);
+    obj.rotation.y = alongX ? 0 : Math.PI / 2;
+    obj.position.set(x + 0.5, 0, y + 0.5);
+    return obj;
+  }
+
   /** One textured quad per floor tile, at height `y`, facing up (floor) or down (ceiling). */
   private tileQuads(level: Level, y: number, up: boolean): THREE.BufferGeometry {
     const positions: number[] = [];
@@ -1201,18 +1285,52 @@ export class ThreeView {
     let n = 0;
     for (let ty = 0; ty < level.height; ty++) {
       for (let tx = 0; tx < level.width; tx++) {
-        if (!isFloor(level, tx, ty)) continue;
+        // The ceiling runs on over chasms; the floor stops at their edge.
+        if (!isFloor(level, tx, ty) && (up || !isChasm(level, tx, ty))) continue;
         // The stairs down and the pit open holes in the floor; the stairs up rise through
         // the ceiling.
         const hole = (sw: Stairwell) => sw.steps.some((p) => p.x === tx && p.y === ty);
         if (up && (hole(level.down) || (tx === level.pit.x && ty === level.pit.y))) continue;
+        // Bridges are planks over the drop, drawn as models.
+        if (up && isBridge(level, tx, ty)) continue;
         if (!up && hole(level.up)) continue;
-        positions.push(tx, y, ty, tx + 1, y, ty, tx + 1, y, ty + 1, tx, y, ty + 1);
+        // Terraces stand raised and ramps slope; the ceiling stays flat.
+        const at = (cx: number, cy: number) => (up ? y + groundHeight(level, { x: tx + cx, y: ty + cy }) : y);
+        const e = 0.001;
+        positions.push(tx, at(e, e), ty, tx + 1, at(1 - e, e), ty, tx + 1, at(1 - e, 1 - e), ty + 1, tx, at(e, 1 - e), ty + 1);
         for (let i = 0; i < 4; i++) normals.push(0, up ? 1 : -1, 0);
         uvs.push(0, 1, 1, 1, 1, 0, 0, 0);
         if (up) indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
         else indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
         n += 4;
+      }
+    }
+    // The fronts of terraces and the sides of ramps, down to the low floor beside them.
+    if (up) {
+      for (let ty = 0; ty < level.height; ty++) {
+        for (let tx = 0; tx < level.width; tx++) {
+          const ground = groundAt(level, tx, ty);
+          if (!isFloor(level, tx, ty) || ground === Ground.Low) continue;
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+            if (!isFloor(level, tx + dx, ty + dy) || groundAt(level, tx + dx, ty + dy) !== Ground.Low) continue;
+            // The shared edge, from one end to the other, wound to face the low tile.
+            const ex = dx === 1 ? tx + 1 : dx === -1 ? tx : null;
+            const ez = dy === 1 ? ty + 1 : dy === -1 ? ty : null;
+            const a = ex !== null ? { x: ex, z: ty } : { x: tx, z: ez! };
+            const b = ex !== null ? { x: ex, z: ty + 1 } : { x: tx + 1, z: ez! };
+            const top = (p: { x: number; z: number }) => y + groundHeight(level, { x: Math.min(tx + 0.999, Math.max(tx + 0.001, p.x)), y: Math.min(ty + 0.999, Math.max(ty + 0.001, p.z)) });
+            const ha = top(a);
+            const hb = top(b);
+            if (ha < 0.01 && hb < 0.01) continue;
+            positions.push(a.x, y, a.z, b.x, y, b.z, b.x, hb, b.z, a.x, ha, a.z);
+            for (let i = 0; i < 4; i++) normals.push(dx, 0, dy);
+            uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
+            const flip = dx === 1 || dy === -1;
+            if (flip) indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
+            else indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
+            n += 4;
+          }
+        }
       }
     }
     const g = new THREE.BufferGeometry();
@@ -1471,7 +1589,7 @@ export class ThreeView {
       let entry = this.items.get(item.id);
       if (!entry) {
         const obj = outlined(lootModel(item.kind, this.mats), this.mats, 0.008);
-        obj.position.set(item.x + 0.5, 0, item.y + 0.5);
+        obj.position.set(item.x + 0.5, this.groundAt(item.x, item.y), item.y + 0.5);
         // A touch larger than life, so it reads from above.
         obj.scale.setScalar(1.7);
         // Each lies at its own angle.
@@ -1479,7 +1597,7 @@ export class ThreeView {
         this.scene.add(obj);
         const glint = new THREE.Sprite(this.glintMaterial);
         glint.scale.set(0.3, 0.3, 1);
-        glint.position.set(item.x + 0.5, 0.35, item.y + 0.5);
+        glint.position.set(item.x + 0.5, 0.35 + this.groundAt(item.x, item.y), item.y + 0.5);
         this.scene.add(glint);
         entry = { obj, glint };
         this.items.set(item.id, entry);
@@ -1504,7 +1622,7 @@ export class ThreeView {
       if (entry && entry.key === key) continue;
       if (entry) this.scene.remove(entry.obj);
       const obj = outlined(featureModel(f.kind, this.mats, key.endsWith('true')), this.mats);
-      obj.position.set(f.x + 0.5, 0, f.y + 0.5);
+      obj.position.set(f.x + 0.5, this.groundAt(f.x, f.y), f.y + 0.5);
       obj.scale.setScalar(1.25);
       obj.rotation.y = ((f.id * 40503) % 360) * (Math.PI / 180);
       this.scene.add(obj);
@@ -1583,6 +1701,19 @@ export class ThreeView {
   }
 
   private ropeKey = '';
+  private rubbleKey = '';
+  private rubbleMeshes: THREE.Object3D[] = [];
+
+  /** Collapses not yet dug out on this level. */
+  private syncRubble(world: World): void {
+    for (const m of this.rubbleMeshes) this.scene.remove(m);
+    this.rubbleMeshes = world.rubble.map((p) => {
+      const obj = outlined(rubbleModel(this.mats, p.x * 17 + p.y * 5), this.mats);
+      obj.position.set(p.x + 0.5, 0, p.y + 0.5);
+      this.scene.add(obj);
+      return obj;
+    });
+  }
 
   private syncWorks(world: World, now: number): void {
     const ropeKey = `${world.depth}:${world.works.filter((w) => w.kind === 'rope').map((w) => `${w.depth}-${w.condition > 0}`).join(',')}`;
@@ -1590,10 +1721,26 @@ export class ThreeView {
       this.ropeKey = ropeKey;
       this.syncRopes(world);
     }
+    const rubbleKey = `${world.depth}:${world.rubble.map((p) => `${p.x},${p.y}`).join(';')}`;
+    if (rubbleKey !== this.rubbleKey) {
+      this.rubbleKey = rubbleKey;
+      this.syncRubble(world);
+    }
     const seen = new Set<number>();
-    const lit: Array<{ x: number; y: number; d: number }> = [];
+    const lit: Array<{ x: number; y: number; d: number; h: number }> = [];
     for (const w of world.works) {
-      if (w.depth !== world.depth || (w.kind !== 'torch' && w.kind !== 'chalk')) continue;
+      if (w.depth !== world.depth) continue;
+      if (w.kind === 'bridge') {
+        seen.add(w.id);
+        if (!this.works.has(w.id)) {
+          const obj = new THREE.Group();
+          for (const p of w.span ?? []) obj.add(this.bridgeAt(this.level!, p.x, p.y, false));
+          this.scene.add(obj);
+          this.works.set(w.id, { obj, key: 'bridge' });
+        }
+        continue;
+      }
+      if (w.kind !== 'torch' && w.kind !== 'chalk') continue;
       seen.add(w.id);
       const burning = w.kind === 'torch' && w.condition > 0;
       const key = w.kind === 'torch' ? `torch-${burning}` : `chalk-${w.sign}`;
@@ -1603,11 +1750,11 @@ export class ThreeView {
         if (entry?.flame) this.scene.remove(entry.flame);
         if (w.kind === 'torch') {
           const obj = outlined(torchModel(this.mats), this.mats);
-          obj.position.set(w.x + 0.5, 0, w.y + 0.5);
+          obj.position.set(w.x + 0.5, this.groundAt(w.x, w.y), w.y + 0.5);
           const flame = new THREE.Sprite(this.flameMaterial);
         flame.add(this.halo(3.4));
           flame.add(this.halo(3));
-          flame.position.set(w.x + 0.5, TORCH_FLAME, w.y + 0.5);
+          flame.position.set(w.x + 0.5, TORCH_FLAME + this.groundAt(w.x, w.y), w.y + 0.5);
           flame.visible = burning;
           this.scene.add(flame);
           entry = { obj, key, flame };
@@ -1618,7 +1765,7 @@ export class ThreeView {
             inkMaterial(new THREE.MeshLambertMaterial({ map: this.chalkTextures.get(w.sign ?? 'arrow')!, transparent: true, depthWrite: false })),
           );
           decal.rotation.set(-Math.PI / 2, 0, -(w.angle ?? 0));
-          decal.position.set(w.x + 0.5, 0.006, w.y + 0.5);
+          decal.position.set(w.x + 0.5, 0.006 + this.groundAt(w.x, w.y), w.y + 0.5);
           decal.receiveShadow = true;
           entry = { obj: decal, key };
         }
@@ -1629,7 +1776,7 @@ export class ThreeView {
         const d = Math.hypot(w.x + 0.5 - world.player.x, w.y + 0.5 - world.player.y);
         const flicker = 1 + Math.sin(now / 80 + w.id) * 0.08;
         entry.flame.scale.set(0.22 * flicker, 0.32 * flicker, 1);
-        lit.push({ x: w.x + 0.5, y: w.y + 0.5, d });
+        lit.push({ x: w.x + 0.5, y: w.y + 0.5, d, h: this.groundAt(w.x, w.y) });
       }
     }
     for (const [id, entry] of this.works) {
@@ -1647,7 +1794,7 @@ export class ThreeView {
         return;
       }
       const flicker = 1 + Math.sin(now / 80 + i * 2) * 0.07 + Math.sin(now / 31 + i) * 0.05;
-      light.position.set(torch.x, TORCH_FLAME, torch.y);
+      light.position.set(torch.x, TORCH_FLAME + torch.h, torch.y);
       light.intensity = 2.4 * flicker;
     });
   }
@@ -1663,11 +1810,11 @@ export class ThreeView {
       let entry = this.camps.get(camp.id);
       if (!entry) {
         const obj = outlined(campModel(this.mats), this.mats);
-        obj.position.set(camp.x + 0.5, 0, camp.y + 0.5);
+        obj.position.set(camp.x + 0.5, this.groundAt(camp.x, camp.y), camp.y + 0.5);
         obj.scale.setScalar(1.4);
         this.scene.add(obj);
         const flame = new THREE.Sprite(this.flameMaterial);
-        flame.position.set(camp.x + 0.78, 0.26, camp.y + 0.57);
+        flame.position.set(camp.x + 0.78, 0.26 + this.groundAt(camp.x, camp.y), camp.y + 0.57);
         this.scene.add(flame);
         entry = { obj, flame };
         this.camps.set(camp.id, entry);
@@ -1676,7 +1823,7 @@ export class ThreeView {
       if (lit) {
         const flicker = 1 + Math.sin(now / 90) * 0.08 + Math.sin(now / 37) * 0.05;
         entry.flame.scale.set(0.32 * flicker, 0.42 * flicker, 1);
-        this.campLight.position.set(camp.x + 0.7, 0.55, camp.y + 0.55);
+        this.campLight.position.set(camp.x + 0.7, 0.55 + this.groundAt(camp.x, camp.y), camp.y + 0.55);
         this.campLight.intensity = 3 * flicker;
       }
     }

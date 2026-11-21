@@ -123,6 +123,51 @@ export function torchModel(m: ModelMaterials): Parts {
   return g;
 }
 
+/**
+ * One tile of bridge over a chasm, walked along x: planks across two beams. An old bridge
+ * of the dungeon has posts and a rope rail; one the family laid is just planks, unevenly
+ * cut. `seed` varies the planks from tile to tile.
+ */
+export function bridgeModel(m: ModelMaterials, old: boolean, seed: number): Parts {
+  const g = new THREE.Group();
+  const wobble = (k: number) => Math.sin(seed * 12.9898 + k * 78.233) * 0.5;
+  for (const z of [-0.36, 0.36]) part(g, box(1.02, 0.08, 0.08), m.wood, 0, -0.07, z);
+  for (let i = 0; i < 6; i++) {
+    const len = old ? 0.96 : 0.84 + wobble(i) * 0.14;
+    part(g, box(0.15, 0.04, len), m.wood, -0.42 + i * 0.168, -0.01, old ? 0 : wobble(i + 9) * 0.05, 0, old ? 0 : wobble(i + 3) * 0.12, 0);
+  }
+  if (old) {
+    for (const z of [-0.47, 0.47]) {
+      part(g, cyl(0.03, 0.035, 0.72, 6), m.wood, -0.44, 0.31, z);
+      part(g, cyl(0.012, 0.012, 1.02, 5), m.cloth, 0, 0.6, z, 0, 0, Math.PI / 2);
+    }
+  }
+  return g;
+}
+
+/**
+ * A collapse filling a corridor: a mound of fallen blocks up to the ceiling's height, with
+ * a broken beam through it. `seed` shapes the pile.
+ */
+export function rubbleModel(m: ModelMaterials, seed: number): Parts {
+  const g = new THREE.Group();
+  let s = seed * 9301 + 49297;
+  const r = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
+  // A steep heap, wide at the foot, nearly to the ceiling.
+  const layers = [9, 7, 5, 3];
+  layers.forEach((count, layer) => {
+    for (let i = 0; i < count; i++) {
+      const size = 0.2 + r() * 0.14 - layer * 0.025;
+      const spread = 0.4 - layer * 0.08;
+      part(g, new THREE.IcosahedronGeometry(size, 0), m.stone, (r() - 0.5) * 2 * spread, 0.15 + layer * 0.36 + r() * 0.08, (r() - 0.5) * 2 * spread, r() * 3, r() * 3, r() * 3);
+    }
+  });
+  part(g, box(1.1, 0.09, 0.11), m.wood, 0.05, 0.75, 0.08, 0.3, 0.5, 0.55);
+  // Grit spilling out on both sides.
+  for (let i = 0; i < 10; i++) part(g, new THREE.IcosahedronGeometry(0.04 + r() * 0.04, 0), m.stone, (r() - 0.5) * 1.1, 0.03, (r() - 0.5) * 1.1);
+  return g;
+}
+
 /** Height of a standing torch's flame. */
 export const TORCH_FLAME = 1.08;
 

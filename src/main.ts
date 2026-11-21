@@ -270,6 +270,7 @@ class Session implements SceneHost {
       } else if (e.type === 'channel') {
         this.hud.toast(e.kind === 'waterskin' ? 'toast_drinking' : e.kind === 'oil' ? 'toast_filling' : 'toast_eating');
       } else if (e.type === 'interrupted') this.hud.toast('toast_interrupted');
+      else if (e.type === 'digging') this.hud.toastText(t('toast_digging'), true);
       else if (e.type === 'cantUse') {
         this.hud.toast(e.reason === 'danger' ? 'toast_danger' : e.reason === 'camp' ? 'toast_onlyCamp' : 'toast_empty');
       } else if (e.type === 'nightfall') this.hud.toastText(t('toast_nightfall'), true);
@@ -285,7 +286,7 @@ class Session implements SceneHost {
         this.dynasty.chronicle.push({ type: 'campLost', generation: this.dynasty.generation, depth: e.camp.depth, reason: 'night' });
         this.hud.toastText(t('toast_campLost', { depth: e.camp.depth }), true);
       } else if (e.type === 'workBuilt') {
-        const keys = { torch: 'toast_torchSet', barricade: 'toast_barricade', chalk: 'toast_chalk', rope: 'toast_rope' } as const;
+        const keys = { torch: 'toast_torchSet', barricade: 'toast_barricade', chalk: 'toast_chalk', rope: 'toast_rope', bridge: 'toast_bridge', cleared: 'toast_cleared' } as const;
         this.hud.toast(keys[e.work.kind]);
       } else if (e.type === 'bashing') this.hud.toast(e.barricade ? 'toast_bashingBarricade' : 'toast_bashingDoor');
       else if (e.type === 'shutBroken') {

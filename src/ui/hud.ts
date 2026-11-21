@@ -239,6 +239,7 @@ export class Hud {
       fountain: 'action_fountain',
       drip: 'action_drip',
       search: 'action_search',
+      clear: 'action_clear',
     };
     const key = this.interaction ? keys[this.interaction] : 'descend';
     this.descendButton.textContent = t(key);

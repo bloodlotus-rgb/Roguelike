@@ -8,7 +8,7 @@
  * real bonded masonry. Pure layout: it returns where each brick goes, the renderer builds
  * the meshes.
  */
-import { isFloor, isVoid, type Level } from '../core/dungeon';
+import { isChasm, isFloor, isVoid, type Level } from '../core/dungeon';
 import { Rng } from '../core/rng';
 
 /** How far bricks stand out from the mortar, which is set back by this much. */
@@ -66,7 +66,7 @@ type Corner = 'convex' | 'concave' | 'none';
 function runs(level: Level): Run[] {
   const list: Run[] = [];
   // Open air (a gallery's void) is neither floor nor wall: no bricks face it.
-  const wall = (x: number, y: number) => !isFloor(level, x, y) && !isVoid(level, x, y);
+  const wall = (x: number, y: number) => !isFloor(level, x, y) && !isVoid(level, x, y) && !isChasm(level, x, y);
   // Faces along z, looking +x (wall at x-1, floor at x) or -x (wall at x, floor at x-1).
   for (let x = 1; x < level.width; x++) {
     for (const normal of [1, -1] as const) {

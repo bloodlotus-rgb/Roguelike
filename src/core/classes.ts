@@ -96,6 +96,8 @@ export interface ClassDef {
   costs: BodyCosts;
   /** Damage multiplier when hitting an unaware horror or one from behind. */
   backstabMultiplier: number;
+  /** A dodge carries over a chasm one tile wide. */
+  leapsChasms?: boolean;
 }
 
 const deg = (d: number) => (d * Math.PI) / 180;
@@ -149,6 +151,7 @@ export const CLASSES: Record<ClassId, ClassDef> = {
     // The plunderer goes thirsty: always moving, always out of breath.
     costs: { walk: [0.04, 0.06], attack: [0.4, 0.5], dodge: [0.2, 0.6], run: [0.2, 0.8], special: [0, 5], heal: [0.5, 0.5] },
     backstabMultiplier: 3,
+    leapsChasms: true,
   },
   candlebearer: {
     id: 'candlebearer',

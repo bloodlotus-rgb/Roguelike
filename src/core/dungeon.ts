@@ -7,6 +7,8 @@ export const Tile = {
   Floor: 1,
   /** Open air over the level below: you see and light across it, but nobody walks on it. */
   Void: 2,
+  /** A chasm: a crack with no bottom in sight. Seen and lit across; crossed only by a bridge. */
+  Chasm: 3,
 } as const;
 export type Tile = (typeof Tile)[keyof typeof Tile];
 
@@ -86,6 +88,44 @@ export function onSteps(sw: Stairwell, p: Point): boolean {
 /** Height between two floors: what the three steps go down. */
 export const LEVEL_HEIGHT = 2.4;
 
+/** Ground within a level: the floor, a ramp, or a raised terrace. */
+export const Ground = { Low: 0, Ramp: 1, High: 2 } as const;
+/** How high a terrace stands: too high to step up, low enough to jump down. */
+export const TERRACE_HEIGHT = 0.7;
+
+export function groundAt(level: Level, x: number, y: number): number {
+  if (!level.ground || x < 0 || y < 0 || x >= level.width || y >= level.height) return Ground.Low;
+  return level.ground[y * level.width + x];
+}
+
+const NEIGHBOURS: ReadonlyArray<readonly [number, number]> = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];
+
+/** Height of the ground at a point: on a ramp it rises evenly from its low side. */
+export function groundHeight(level: Level, p: Point): number {
+  const tx = Math.floor(p.x);
+  const ty = Math.floor(p.y);
+  const g = groundAt(level, tx, ty);
+  if (g === Ground.High) return TERRACE_HEIGHT;
+  if (g === Ground.Low) return 0;
+  const low = NEIGHBOURS.find(([dx, dy]) => groundAt(level, tx + dx, ty + dy) === Ground.Low && isFloor(level, tx + dx, ty + dy));
+  if (!low) return TERRACE_HEIGHT / 2;
+  const fx = p.x - tx;
+  const fy = p.y - ty;
+  // Zero at the edge shared with the low floor, full height at the opposite edge.
+  const t = low[0] === 1 ? 1 - fx : low[0] === -1 ? fx : low[1] === 1 ? 1 - fy : fy;
+  return TERRACE_HEIGHT * Math.min(1, Math.max(0, t));
+}
+
+/** Whether one can go from one tile to the next: up onto a terrace only by a ramp. */
+export function canStep(level: Level, fx: number, fy: number, tx: number, ty: number): boolean {
+  return !(groundAt(level, fx, fy) === Ground.Low && groundAt(level, tx, ty) === Ground.High);
+}
+
 export interface Level {
   seed: string;
   depth: number;
@@ -114,6 +154,12 @@ export interface Level {
   gallery: Room | null;
   /** Where a rope from the level above comes down. */
   landing: Point;
+  /** Collapses blocking a corridor: floor under the stones, shut until someone clears them. */
+  rubble: Point[];
+  /** Tiles of chasm spanned by a bridge (floor now, drawn as planks). */
+  bridges: number[];
+  /** Ground of each tile (see `Ground`); absent means all low. */
+  ground?: Uint8Array;
   /** Tiles shut right now (closed doors, barricades): floor, but nothing gets through. */
   closed?: Set<number>;
 }
@@ -135,7 +181,16 @@ export function isPassable(level: Level, x: number, y: number): boolean {
 /** Whether sight and light get across a tile: floor or open air, not shut. */
 export function isSeeThrough(level: Level, x: number, y: number): boolean {
   const t = tileAt(level, x, y);
-  return (t === Tile.Floor || t === Tile.Void) && !level.closed?.has(y * level.width + x);
+  return (t === Tile.Floor || t === Tile.Void || t === Tile.Chasm) && !level.closed?.has(y * level.width + x);
+}
+
+export function isChasm(level: Level, x: number, y: number): boolean {
+  return tileAt(level, x, y) === Tile.Chasm;
+}
+
+/** A tile with a bridge over a chasm. */
+export function isBridge(level: Level, x: number, y: number): boolean {
+  return level.bridges.includes(y * level.width + x);
 }
 
 /** Open air over the level below (a gallery's void). */
@@ -186,6 +241,33 @@ function removeUnreachable(level: Level, origin: Point): void {
   }
 }
 
+/**
+ * A natural tunnel: it heads for its goal but drifts from side to side, and here and
+ * there opens a little wider, as water or old digging would leave it.
+ */
+function carveTunnel(tiles: Uint8Array, width: number, height: number, from: Point, to: Point, rng: Rng): void {
+  let { x, y } = from;
+  const carve = (cx: number, cy: number) => {
+    if (cx >= 2 && cy >= 2 && cx < width - 2 && cy < height - 2) tiles[cy * width + cx] = Tile.Floor;
+  };
+  for (let steps = 0; steps < 400 && (x !== to.x || y !== to.y); steps++) {
+    carve(x, y);
+    if (rng.chance(0.18)) carve(x + rng.int(-1, 1), y + rng.int(-1, 1));
+    const dx = Math.sign(to.x - x);
+    const dy = Math.sign(to.y - y);
+    // Mostly toward the goal, now and then sideways.
+    if (rng.chance(0.25)) {
+      if (dx !== 0 && rng.chance(0.5)) y += rng.chance(0.5) ? 1 : -1;
+      else if (dy !== 0) x += rng.chance(0.5) ? 1 : -1;
+      else x += dx || (rng.chance(0.5) ? 1 : -1);
+    } else if (dx !== 0 && (dy === 0 || rng.chance(Math.abs(to.x - x) / (Math.abs(to.x - x) + Math.abs(to.y - y))))) x += dx;
+    else y += dy;
+    x = Math.max(2, Math.min(width - 3, x));
+    y = Math.max(2, Math.min(height - 3, y));
+  }
+  carve(x, y);
+}
+
 function carveCorridor(tiles: Uint8Array, width: number, from: Point, to: Point, horizontalFirst: boolean): void {
   const carve = (x: number, y: number) => {
     tiles[y * width + x] = Tile.Floor;
@@ -232,6 +314,8 @@ export function floorDistances(level: Level, origin: Point): Int32Array {
       const nx = x + dx;
       const ny = y + dy;
       if (!isPassable(level, nx, ny)) continue;
+      // Distances are walked back toward the origin: from the neighbour into this tile.
+      if (!canStep(level, nx, ny, x, y)) continue;
       const next = ny * width + nx;
       if (dist[next] !== -1) continue;
       dist[next] = dist[index] + 1;
@@ -293,6 +377,101 @@ const DIRS: Point[] = [
 ];
 const inside = (r: Room, p: Point) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
+/**
+ * Chasms: a crack one or two tiles wide that cuts a plain room from wall to wall. If it
+ * would split the level, a bridge spans it; otherwise there may be one, or the way is
+ * around. No passage ever runs straight into the crack.
+ */
+function cutChasms(level: Level, rng: Rng, keepClear: Point[], forced: number): void {
+  const { width, tiles } = level;
+  level.rooms.forEach((room, index) => {
+    if (index < forced || room.shape !== 'rect' || !rng.chance(CONFIG.level.chasmChance)) return;
+    if (level.gallery && overlaps(room, level.gallery, 0)) return;
+    if (keepClear.some((p) => p.x >= room.x - 2 && p.x <= room.x + room.w + 1 && p.y >= room.y - 2 && p.y <= room.y + room.h + 1)) return;
+    // The crack runs across the room's long side, leaving at least two tiles on each bank.
+    const acrossX = room.w >= room.h;
+    const long = acrossX ? room.w : room.h;
+    const wide = rng.int(1, 2);
+    if (long < wide + 4) return;
+    const at = rng.int(2, long - 2 - wide);
+    const crack: Point[] = [];
+    for (let k = 0; k < wide; k++) {
+      for (let j = 0; j < (acrossX ? room.h : room.w); j++) {
+        crack.push(acrossX ? { x: room.x + at + k, y: room.y + j } : { x: room.x + j, y: room.y + at + k });
+      }
+    }
+    if (crack.some((p) => !isFloor(level, p.x, p.y))) return;
+    // Both ends of the crack meet wall, not a passage.
+    const ends = crack.flatMap((p) => NEIGHBOURS.map(([dx, dy]) => ({ x: p.x + dx, y: p.y + dy }))).filter((q) => !inside(room, q));
+    if (ends.some((q) => isFloor(level, q.x, q.y))) return;
+    const before = floorDistances(level, level.start);
+    for (const p of crack) tiles[p.y * width + p.x] = Tile.Chasm;
+    const after = floorDistances(level, level.start);
+    const split = before.some((d, i) => d !== -1 && after[i] === -1 && tiles[i] === Tile.Floor);
+    if (!split && !rng.chance(CONFIG.level.bridgeChance)) return;
+    // A bridge across, somewhere along the crack (not against a wall).
+    const span = (acrossX ? room.h : room.w) - 2;
+    if (span < 1) return;
+    const j = rng.int(1, span);
+    for (let k = 0; k < wide; k++) {
+      const p = acrossX ? { x: room.x + at + k, y: room.y + j } : { x: room.x + j, y: room.y + at + k };
+      tiles[p.y * width + p.x] = Tile.Floor;
+      level.bridges.push(p.y * width + p.x);
+    }
+  });
+}
+
+/**
+ * Terraces: in some plain rooms, a raised band along one wall. One ramp climbs to it
+ * from the room's floor, and wherever a passage runs into the band there is a ramp too,
+ * so no way in is lost.
+ */
+function raiseTerraces(level: Level, rng: Rng, keepClear: Point[], forced: number): void {
+  const { width } = level;
+  const ground = level.ground!;
+  level.rooms.forEach((room, index) => {
+    if (index < forced || room.shape !== 'rect' || room.w < 6 || room.h < 6 || !rng.chance(CONFIG.level.terraceChance)) return;
+    if (level.gallery && overlaps(room, level.gallery, 0)) return;
+    if (keepClear.some((p) => p.x >= room.x - 1 && p.x <= room.x + room.w && p.y >= room.y - 1 && p.y <= room.y + room.h)) return;
+    for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) if (isChasm(level, x, y) || isBridge(level, x, y)) return;
+    const depth = rng.int(2, 3);
+    const inside = (p: Point) => p.x >= room.x && p.x < room.x + room.w && p.y >= room.y && p.y < room.y + room.h;
+    const bandFor = (side: number) => {
+      const out: Point[] = [];
+      for (let y = room.y; y < room.y + room.h; y++) {
+        for (let x = room.x; x < room.x + room.w; x++) {
+          const inBand =
+            side === 0 ? x < room.x + depth : side === 1 ? x >= room.x + room.w - depth : side === 2 ? y < room.y + depth : y >= room.y + room.h - depth;
+          if (inBand && isFloor(level, x, y)) out.push({ x, y });
+        }
+      }
+      return out;
+    };
+    // A side where at most a couple of passages come in (not one running along the wall).
+    const openings = (band: Point[]) =>
+      band.filter((p) => NEIGHBOURS.some(([dx, dy]) => !inside({ x: p.x + dx, y: p.y + dy }) && isFloor(level, p.x + dx, p.y + dy))).length;
+    const first = rng.int(0, 3);
+    let band: Point[] = [];
+    for (let k = 0; k < 4 && band.length === 0; k++) {
+      const candidate = bandFor((first + k) % 4);
+      if (openings(candidate) <= 2) band = candidate;
+    }
+    if (band.length === 0) return;
+    for (const p of band) ground[p.y * width + p.x] = Ground.High;
+    // The main ramp: a band tile facing the room's floor.
+    const edge = band.filter((p) => NEIGHBOURS.some(([dx, dy]) => isFloor(level, p.x + dx, p.y + dy) && ground[(p.y + dy) * width + p.x + dx] === Ground.Low));
+    const facingRoom = edge.filter((p) => NEIGHBOURS.some(([dx, dy]) => inside({ x: p.x + dx, y: p.y + dy }) && isFloor(level, p.x + dx, p.y + dy) && ground[(p.y + dy) * width + p.x + dx] === Ground.Low));
+    if (facingRoom.length > 0) {
+      const ramp = rng.pick(facingRoom);
+      ground[ramp.y * width + ramp.x] = Ground.Ramp;
+    }
+    // Passages that run into the band arrive by a ramp.
+    for (const p of edge) {
+      if (NEIGHBOURS.some(([dx, dy]) => !inside({ x: p.x + dx, y: p.y + dy }) && isFloor(level, p.x + dx, p.y + dy))) ground[p.y * width + p.x] = Ground.Ramp;
+    }
+  });
+}
+
 /** Where the stairs down from the mansion reach depth 1. */
 function mansionStairs(seed: string, width: number, height: number): Stairwell {
   const rng = Rng.derive(seed, 'mansion-stairs');
@@ -339,7 +518,7 @@ function generateLayout(seed: string, depth: number): Level {
     const w = rng.int(cfg.roomMinSize, cfg.roomMaxSize);
     const h = rng.int(cfg.roomMinSize, Math.min(cfg.roomMaxSize, 8));
     const shapeRoll = rng.next();
-    const shape: RoomShape = w >= 7 && h >= 6 && shapeRoll < 0.35 ? 'hall' : shapeRoll > 0.72 ? 'cave' : 'rect';
+    const shape: RoomShape = w >= 7 && h >= 6 && shapeRoll < 0.3 ? 'hall' : shapeRoll > 0.62 ? 'cave' : 'rect';
     const room: Room = { x: rng.int(2, width - w - 2), y: rng.int(2, height - h - 2), w, h, shape };
     if (rooms.some((other) => overlaps(room, other, 2)) || touchesStairs(room)) continue;
     rooms.push(room);
@@ -416,7 +595,11 @@ function generateLayout(seed: string, depth: number): Level {
     const b = rng.int(0, rooms.length - 1);
     if (a !== b) edges.push([a, b]);
   }
-  for (const [a, b] of edges) carveCorridor(tiles, width, centers[a], centers[b], rng.chance(0.5));
+  // Some passages are natural tunnels that wander and widen; the rest are cut straight.
+  for (const [a, b] of edges) {
+    if (rng.chance(CONFIG.level.tunnelChance)) carveTunnel(tiles, width, height, centers[a], centers[b], rng);
+    else carveCorridor(tiles, width, centers[a], centers[b], rng.chance(0.5));
+  }
 
   const level: Level = {
     seed,
@@ -436,6 +619,8 @@ function generateLayout(seed: string, depth: number): Level {
     pit: { x: 0, y: 0 },
     landing: landing ?? { ...up.bottom },
     gallery: null,
+    bridges: [],
+    rubble: [],
   };
 
   // Stairwells are cut last, so no corridor breaks them; any room a stairwell cut off is
@@ -498,6 +683,10 @@ function generateLayout(seed: string, depth: number): Level {
     }
   }
 
+  level.ground = new Uint8Array(width * height);
+  cutChasms(level, Rng.derive(seed, 'chasms', depth), [...upBlock, ...downBlock, level.pit, level.landing], 1 + (landing ? 1 : 0) + (above?.gallery ? 1 : 0));
+  raiseTerraces(level, Rng.derive(seed, 'terraces', depth), [...upBlock, ...downBlock, level.pit, level.landing], 1 + (landing ? 1 : 0) + (above?.gallery ? 1 : 0));
+
   // Fountains and drips are geography: the same in every life.
   const taken = new Set<string>();
   for (const p of [...upBlock, ...downBlock, level.pit, level.landing]) {
@@ -511,6 +700,7 @@ function generateLayout(seed: string, depth: number): Level {
   level.doorways = findDoorways(level);
   const doorRng = Rng.derive(seed, 'doors', depth);
   level.doors = level.doorways.filter(() => doorRng.chance(CONFIG.features.doorChance));
+  level.rubble = collapse(level, Rng.derive(seed, 'rubble', depth), [...upBlock, ...downBlock, level.pit, level.landing]);
   layouts.set(key, level);
   return level;
 }
@@ -524,6 +714,9 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
   const level: Level = {
     ...layout,
     tiles: layout.tiles.slice(),
+    ground: layout.ground?.slice(),
+    bridges: layout.bridges.slice(),
+    rubble: layout.rubble.map((p) => ({ ...p })),
     rooms: layout.rooms.map((r) => ({ ...r })),
     features: layout.features.map((f) => ({ ...f })),
     doorways: layout.doorways.map((d) => ({ ...d })),
@@ -543,6 +736,41 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
   level.features.forEach((f, i) => (f.id = i));
   level.items = placeItems(level, lootRng, taken);
   return level;
+}
+
+/**
+ * Collapses: stones fallen into a straight stretch of corridor. Only where there is
+ * another way round, so a collapse is a detour to walk or a shortcut to dig out.
+ */
+function collapse(level: Level, rng: Rng, keepClear: Point[]): Point[] {
+  const { width, height } = level;
+  const inRoom = (x: number, y: number) => level.rooms.some((r) => inside(r, { x, y }));
+  const near = (p: Point, list: Point[], d: number) => list.some((q) => Math.abs(q.x - p.x) <= d && Math.abs(q.y - p.y) <= d);
+  const candidates: Point[] = [];
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      if (!isFloor(level, x, y) || inRoom(x, y)) continue;
+      const p = { x, y };
+      if (near(p, keepClear, 4) || near(p, level.doorways, 1)) continue;
+      // A straight stretch: floor on two opposite sides, rock on the other two.
+      const straightX = isFloor(level, x - 1, y) && isFloor(level, x + 1, y) && !isFloor(level, x, y - 1) && !isFloor(level, x, y + 1);
+      const straightY = isFloor(level, x, y - 1) && isFloor(level, x, y + 1) && !isFloor(level, x - 1, y) && !isFloor(level, x + 1, y);
+      if (straightX || straightY) candidates.push(p);
+    }
+  }
+  const chosen: Point[] = [];
+  const count = rng.chance(CONFIG.level.rubbleChance) ? rng.int(1, 2) : 0;
+  for (let attempt = 0; attempt < 30 && chosen.length < count && candidates.length > 0; attempt++) {
+    const p = candidates.splice(rng.int(0, candidates.length - 1), 1)[0];
+    if (near(p, chosen, 6)) continue;
+    // Everything must still be reachable with the stones in place.
+    const closed = new Set([...chosen, p].map((q) => q.y * width + q.x));
+    const dist = floorDistances({ ...level, closed }, level.start);
+    let cut = false;
+    for (let i = 0; i < dist.length && !cut; i++) if (level.tiles[i] === Tile.Floor && !closed.has(i) && dist[i] === -1) cut = true;
+    if (!cut) chosen.push(p);
+  }
+  return chosen;
 }
 
 /**

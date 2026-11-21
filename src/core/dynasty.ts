@@ -38,12 +38,13 @@ export type ChronicleEntry =
   | { type: 'campBuilt'; generation: number; memberId: number; depth: number }
   | { type: 'campLost'; generation: number; depth: number; reason: 'night' | 'time' };
 
-export type WorkKind = 'torch' | 'chalk' | 'barricade' | 'rope';
+export type WorkKind = 'torch' | 'chalk' | 'barricade' | 'rope' | 'bridge' | 'cleared';
 export type ChalkSign = 'arrow' | 'danger' | 'water' | 'camp' | 'stairs';
 
 /**
  * Something the family left in the dungeon to make the way easier: a torch on the floor,
- * a chalk mark, a barricade in a doorway, a rope down a pit. All of it wears away.
+ * a chalk mark, a barricade in a doorway, a rope down a pit, a bridge over a chasm, a
+ * collapse dug out. Nearly all of it wears away.
  */
 export interface Work {
   id: number;
@@ -60,6 +61,8 @@ export interface Work {
   angle?: number;
   /** Barricade: open or shut. */
   open?: boolean;
+  /** Bridge: the chasm tiles it spans. */
+  span?: Array<{ x: number; y: number }>;
 }
 
 /** A camp pitched by someone of the family: it stays for everyone until it wears away. */
@@ -262,7 +265,7 @@ export function recordDeath(
   });
 
   // Works wear with the years: chalk fades, ropes rot, torches burn down, barricades sag.
-  const yearly: Record<WorkKind, number> = { chalk: 34, rope: 20, torch: 50, barricade: 15 };
+  const yearly: Record<WorkKind, number> = { chalk: 34, rope: 20, torch: 50, barricade: 15, bridge: 12, cleared: 0 };
   dynasty.works = (dynasty.works ?? []).filter((w) => {
     w.condition -= yearly[w.kind];
     return w.condition > 0 || w.kind === 'torch';
