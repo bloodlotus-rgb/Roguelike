@@ -86,6 +86,44 @@ export function onSteps(sw: Stairwell, p: Point): boolean {
 /** Height between two floors: what the three steps go down. */
 export const LEVEL_HEIGHT = 2.4;
 
+/** Ground within a level: the floor, a ramp, or a raised terrace. */
+export const Ground = { Low: 0, Ramp: 1, High: 2 } as const;
+/** How high a terrace stands: too high to step up, low enough to jump down. */
+export const TERRACE_HEIGHT = 0.7;
+
+export function groundAt(level: Level, x: number, y: number): number {
+  if (!level.ground || x < 0 || y < 0 || x >= level.width || y >= level.height) return Ground.Low;
+  return level.ground[y * level.width + x];
+}
+
+const NEIGHBOURS: ReadonlyArray<readonly [number, number]> = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];
+
+/** Height of the ground at a point: on a ramp it rises evenly from its low side. */
+export function groundHeight(level: Level, p: Point): number {
+  const tx = Math.floor(p.x);
+  const ty = Math.floor(p.y);
+  const g = groundAt(level, tx, ty);
+  if (g === Ground.High) return TERRACE_HEIGHT;
+  if (g === Ground.Low) return 0;
+  const low = NEIGHBOURS.find(([dx, dy]) => groundAt(level, tx + dx, ty + dy) === Ground.Low && isFloor(level, tx + dx, ty + dy));
+  if (!low) return TERRACE_HEIGHT / 2;
+  const fx = p.x - tx;
+  const fy = p.y - ty;
+  // Zero at the edge shared with the low floor, full height at the opposite edge.
+  const t = low[0] === 1 ? 1 - fx : low[0] === -1 ? fx : low[1] === 1 ? 1 - fy : fy;
+  return TERRACE_HEIGHT * Math.min(1, Math.max(0, t));
+}
+
+/** Whether one can go from one tile to the next: up onto a terrace only by a ramp. */
+export function canStep(level: Level, fx: number, fy: number, tx: number, ty: number): boolean {
+  return !(groundAt(level, fx, fy) === Ground.Low && groundAt(level, tx, ty) === Ground.High);
+}
+
 export interface Level {
   seed: string;
   depth: number;
@@ -114,6 +152,8 @@ export interface Level {
   gallery: Room | null;
   /** Where a rope from the level above comes down. */
   landing: Point;
+  /** Ground of each tile (see `Ground`); absent means all low. */
+  ground?: Uint8Array;
   /** Tiles shut right now (closed doors, barricades): floor, but nothing gets through. */
   closed?: Set<number>;
 }
@@ -259,6 +299,8 @@ export function floorDistances(level: Level, origin: Point): Int32Array {
       const nx = x + dx;
       const ny = y + dy;
       if (!isPassable(level, nx, ny)) continue;
+      // Distances are walked back toward the origin: from the neighbour into this tile.
+      if (!canStep(level, nx, ny, x, y)) continue;
       const next = ny * width + nx;
       if (dist[next] !== -1) continue;
       dist[next] = dist[index] + 1;
@@ -319,6 +361,56 @@ const DIRS: Point[] = [
   { x: 0, y: -1 },
 ];
 const inside = (r: Room, p: Point) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
+
+/**
+ * Terraces: in some plain rooms, a raised band along one wall. One ramp climbs to it
+ * from the room's floor, and wherever a passage runs into the band there is a ramp too,
+ * so no way in is lost.
+ */
+function raiseTerraces(level: Level, rng: Rng, keepClear: Point[], forced: number): void {
+  const { width } = level;
+  const ground = level.ground!;
+  level.rooms.forEach((room, index) => {
+    if (index < forced || room.shape !== 'rect' || room.w < 6 || room.h < 6 || !rng.chance(CONFIG.level.terraceChance)) return;
+    if (level.gallery && overlaps(room, level.gallery, 0)) return;
+    if (keepClear.some((p) => p.x >= room.x - 1 && p.x <= room.x + room.w && p.y >= room.y - 1 && p.y <= room.y + room.h)) return;
+    const depth = rng.int(2, 3);
+    const inside = (p: Point) => p.x >= room.x && p.x < room.x + room.w && p.y >= room.y && p.y < room.y + room.h;
+    const bandFor = (side: number) => {
+      const out: Point[] = [];
+      for (let y = room.y; y < room.y + room.h; y++) {
+        for (let x = room.x; x < room.x + room.w; x++) {
+          const inBand =
+            side === 0 ? x < room.x + depth : side === 1 ? x >= room.x + room.w - depth : side === 2 ? y < room.y + depth : y >= room.y + room.h - depth;
+          if (inBand && isFloor(level, x, y)) out.push({ x, y });
+        }
+      }
+      return out;
+    };
+    // A side where at most a couple of passages come in (not one running along the wall).
+    const openings = (band: Point[]) =>
+      band.filter((p) => NEIGHBOURS.some(([dx, dy]) => !inside({ x: p.x + dx, y: p.y + dy }) && isFloor(level, p.x + dx, p.y + dy))).length;
+    const first = rng.int(0, 3);
+    let band: Point[] = [];
+    for (let k = 0; k < 4 && band.length === 0; k++) {
+      const candidate = bandFor((first + k) % 4);
+      if (openings(candidate) <= 2) band = candidate;
+    }
+    if (band.length === 0) return;
+    for (const p of band) ground[p.y * width + p.x] = Ground.High;
+    // The main ramp: a band tile facing the room's floor.
+    const edge = band.filter((p) => NEIGHBOURS.some(([dx, dy]) => isFloor(level, p.x + dx, p.y + dy) && ground[(p.y + dy) * width + p.x + dx] === Ground.Low));
+    const facingRoom = edge.filter((p) => NEIGHBOURS.some(([dx, dy]) => inside({ x: p.x + dx, y: p.y + dy }) && isFloor(level, p.x + dx, p.y + dy) && ground[(p.y + dy) * width + p.x + dx] === Ground.Low));
+    if (facingRoom.length > 0) {
+      const ramp = rng.pick(facingRoom);
+      ground[ramp.y * width + ramp.x] = Ground.Ramp;
+    }
+    // Passages that run into the band arrive by a ramp.
+    for (const p of edge) {
+      if (NEIGHBOURS.some(([dx, dy]) => !inside({ x: p.x + dx, y: p.y + dy }) && isFloor(level, p.x + dx, p.y + dy))) ground[p.y * width + p.x] = Ground.Ramp;
+    }
+  });
+}
 
 /** Where the stairs down from the mansion reach depth 1. */
 function mansionStairs(seed: string, width: number, height: number): Stairwell {
@@ -529,6 +621,9 @@ function generateLayout(seed: string, depth: number): Level {
     }
   }
 
+  level.ground = new Uint8Array(width * height);
+  raiseTerraces(level, Rng.derive(seed, 'terraces', depth), [...upBlock, ...downBlock, level.pit, level.landing], 1 + (landing ? 1 : 0) + (above?.gallery ? 1 : 0));
+
   // Fountains and drips are geography: the same in every life.
   const taken = new Set<string>();
   for (const p of [...upBlock, ...downBlock, level.pit, level.landing]) {
@@ -555,6 +650,7 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
   const level: Level = {
     ...layout,
     tiles: layout.tiles.slice(),
+    ground: layout.ground?.slice(),
     rooms: layout.rooms.map((r) => ({ ...r })),
     features: layout.features.map((f) => ({ ...f })),
     doorways: layout.doorways.map((d) => ({ ...d })),

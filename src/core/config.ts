@@ -13,6 +13,8 @@ export const CONFIG = {
     galleryChance: 0.5,
     /** Share of passages that are winding natural tunnels instead of straight corridors. */
     tunnelChance: 0.35,
+    /** Chance a plain room gets a raised terrace along one wall. */
+    terraceChance: 0.35,
   },
   items: {
     ration: { min: 2, max: 3 },

@@ -1,4 +1,4 @@
-import { isPassable, isSeeThrough, type Level, type Point } from './dungeon';
+import { Ground, groundAt, isPassable, isSeeThrough, type Level, type Point } from './dungeon';
 
 /**
  * Moves a circle of `radius` (in tiles) by `dx`, `dy`, sliding along walls.
@@ -10,22 +10,24 @@ export function moveWithCollision(level: Level, pos: Point, dx: number, dy: numb
   let x = pos.x;
   let y = pos.y;
   for (let i = 0; i < steps; i++) {
+    // From the low floor a terrace is a wall; from a ramp or the terrace itself it is not.
+    const low = groundAt(level, Math.floor(x), Math.floor(y)) === Ground.Low;
     const nx = x + dx / steps;
-    if (!collides(level, nx, y, radius)) x = nx;
+    if (!collides(level, nx, y, radius, low)) x = nx;
     const ny = y + dy / steps;
-    if (!collides(level, x, ny, radius)) y = ny;
+    if (!collides(level, x, ny, radius, low)) y = ny;
   }
   return { x, y };
 }
 
-function collides(level: Level, cx: number, cy: number, radius: number): boolean {
+function collides(level: Level, cx: number, cy: number, radius: number, low = false): boolean {
   const minX = Math.floor(cx - radius);
   const maxX = Math.floor(cx + radius);
   const minY = Math.floor(cy - radius);
   const maxY = Math.floor(cy + radius);
   for (let ty = minY; ty <= maxY; ty++) {
     for (let tx = minX; tx <= maxX; tx++) {
-      if (isPassable(level, tx, ty)) continue;
+      if (isPassable(level, tx, ty) && !(low && groundAt(level, tx, ty) === Ground.High)) continue;
       // Closest point of the wall tile to the circle center.
       const px = Math.max(tx, Math.min(cx, tx + 1));
       const py = Math.max(ty, Math.min(cy, ty + 1));

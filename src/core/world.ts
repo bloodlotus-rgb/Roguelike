@@ -1,7 +1,7 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { floorDistances, generateLevel, goldPile, isFloor, isSeeThrough, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { floorDistances, generateLevel, goldPile, groundHeight, isFloor, isSeeThrough, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
 import { addItem, ITEMS, removeItem, starterKit, type Inventory, type ItemKind } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
@@ -562,6 +562,8 @@ export class World {
    */
   heightAt(p: Point): number {
     const { down, up } = this.level;
+    const ground = groundHeight(this.level, p);
+    if (ground > 0) return ground;
     if (onSteps(down, p)) return -LEVEL_HEIGHT * Math.min(1, Math.max(0, (stairProgress(down, p) - 0.5) / 3));
     if (onSteps(up, p)) return LEVEL_HEIGHT * (1 - Math.min(1, Math.max(0, (stairProgress(up, p) - 0.5) / 3)));
     return 0;
