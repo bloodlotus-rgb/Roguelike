@@ -185,4 +185,21 @@ describe('generateLevel', () => {
     expect(deep).toBeGreaterThan(0);
     expect(shallow).toBeGreaterThan(deep);
   });
+
+  it('rivers cross the level with fords, and nothing is cut off', () => {
+    let rivers = 0;
+    for (const seed of seeds) {
+      for (let depth = 1; depth <= 6; depth++) {
+        const level = generateLevel(seed, depth);
+        if (!level.river) continue;
+        rivers++;
+        // Somewhere along it the water is shallow all the way across: a ford.
+        const fords = level.river.filter((p) => !isDeep(level, p.x, p.y));
+        expect(fords.length).toBeGreaterThan(0);
+        const dist = floorDistances(level, level.start);
+        for (let i = 0; i < level.tiles.length; i++) if (level.tiles[i] === 1) expect(dist[i]).not.toBe(-1);
+      }
+    }
+    expect(rivers).toBeGreaterThan(2);
+  });
 });

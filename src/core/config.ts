@@ -20,6 +20,8 @@ export const CONFIG = {
     bridgeChance: 0.4,
     /** Chance a plain room holds a pool. */
     poolChance: 0.18,
+    /** Chance a level has an underground river crossing it. */
+    riverChance: 0.35,
     /** Chance a level has a collapse or two in its corridors. */
     rubbleChance: 0.6,
     /** Widest stretch of chasm a leap carries over, in tiles. */

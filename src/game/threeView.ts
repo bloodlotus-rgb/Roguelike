@@ -80,6 +80,8 @@ const cutaway = {
   reach: { value: 7 },
   /** The look (see `style.ts`): 0 pen on paper, 1 engraving, 2 gothic. */
   style: { value: 0 },
+  /** Seconds, for things that move by themselves (running water). */
+  time: { value: 0 },
 };
 /** Hatch lines per tile at the coarsest level of detail used up close. */
 const HATCH_BASE = 7;
@@ -117,6 +119,8 @@ interface InkOptions {
   outline?: boolean;
   /** Solid ink whatever the light or the side (outline shells). */
   solid?: boolean;
+  /** Running water: streaks of foam drift along the geometry's `flow` attribute. */
+  flow?: boolean;
   /**
    * Multiplies the light this surface gets: for the level below, seen through a hole, so a
    * flame a storey up still shows it (only within the flame's reach).
@@ -125,7 +129,7 @@ interface InkOptions {
 }
 
 function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = {}): THREE.MeshLambertMaterial {
-  const { cut = false, worldUv, grime = false, outline = false, solid = false, boost = 1 } = options;
+  const { cut = false, worldUv, grime = false, outline = false, solid = false, boost = 1, flow = false } = options;
   const uvCode =
     worldUv === 'box'
       ? `bool inkAlongZ = abs(vInkNormal.x) > 0.5;
@@ -157,7 +161,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
     : '';
   // Each set of options compiles its own program: three.js would otherwise reuse the first
   // one built for materials that look alike to it (same type, same maps).
-  const cacheKey = `ink:${cut}:${worldUv ?? ''}:${grime}:${outline}:${solid}:${boost}`;
+  const cacheKey = `ink:${cut}:${worldUv ?? ''}:${grime}:${outline}:${solid}:${boost}:${flow}`;
   material.customProgramCacheKey = () => cacheKey;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uFade = cutaway.fade;
@@ -166,8 +170,13 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
     shader.uniforms.uLineSpacing = cutaway.lineSpacing;
     shader.uniforms.uReach = cutaway.reach;
     shader.uniforms.uStyle = cutaway.style;
+    shader.uniforms.uTime = cutaway.time;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;')
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;' +
+          (flow ? '\nattribute vec2 flow;\nvarying vec2 vFlow;' : ''),
+      )
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
@@ -181,13 +190,14 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
         vInkNormal = normalize(mat3(modelMatrix) * inkBasis * objectNormal);
         vInkLocal = transformed;
         vInkLocalNormal = objectNormal;
+        ${flow ? 'vFlow = flow;' : ''}
         ${uvAssign}`,
       );
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <lights_fragment_begin>', LIGHTS_WITH_INK_SHADOW)
       .replace(
         '#include <common>',
-        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform float uReach;\nuniform float uStyle;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
+        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform float uReach;\nuniform float uStyle;\nuniform float uTime;\nuniform vec3 uPlayer;' + (flow ? '\nvarying vec2 vFlow;' : '') + '\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
       )
       .replace(
         '#include <map_fragment>',
@@ -282,6 +292,23 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           }
           ink = max(ink, edge * step(0.02, lit));
           outgoingLight = mix(paper, vec3(0.0), ink);
+          ${
+            flow
+              ? `{
+            // Running water: short streaks of foam drifting downstream, in and out of sight.
+            float speed = length(vFlow);
+            if (speed > 0.01) {
+              vec2 dir = vFlow / speed;
+              float along = dot(vInkPos.xz, dir);
+              float across = dot(vInkPos.xz, vec2(-dir.y, dir.x));
+              float streak = fract(along * 1.3 - uTime * 0.9 + inkNoise(vec2(across * 2.7, along * 0.6)) * 1.7);
+              float foam = smoothstep(0.0, 0.04, streak) * (1.0 - smoothstep(0.06, 0.2, streak));
+              foam *= smoothstep(0.4, 0.7, inkNoise(vec2(across * 1.9, along * 0.45 - uTime * 0.5)));
+              outgoingLight = mix(outgoingLight, tint * 0.85, foam * 0.85 * smoothstep(0.02, 0.2, lit));
+            }
+          }`
+              : ''
+          }
           if (uStyle > 1.5) {
             // Gothic: no drawing. The surface itself, darkened to old stone with a grain
             // of its own, under the flame's real light and falloff, with deep shadows.
@@ -815,6 +842,7 @@ export class ThreeView {
     this.syncWorks(world, now);
     this.syncDoors(world);
     this.syncProjectiles(world);
+    cutaway.time.value = (now / 1000) % 1000;
     if (this.post) this.post.render(this.renderer, this.scene, this.camera, now);
     else this.renderer.render(this.scene, this.camera);
     this.drawHandsOverlay(world, now, moved > 0.002);
@@ -1299,14 +1327,32 @@ export class ThreeView {
    */
   private waterMesh(level: Level): THREE.Group {
     const g = new THREE.Group();
+    // The river runs downstream along its course; still water does not move.
+    const current = new Map<number, [number, number]>();
+    const course = level.river ?? [];
+    course.forEach((p, i) => {
+      const next = course[Math.min(course.length - 1, i + 1)];
+      const prev = course[Math.max(0, i - 1)];
+      const d = [next.x - prev.x, next.y - prev.y];
+      const l = Math.hypot(d[0], d[1]) || 1;
+      const dir: [number, number] = [d[0] / l, d[1] / l];
+      const axisX = Math.abs(dir[0]) >= Math.abs(dir[1]);
+      for (let k = -3; k <= 3; k++) {
+        const q = axisX ? { x: p.x, y: p.y + k } : { x: p.x + k, y: p.y };
+        current.set(q.y * level.width + q.x, dir);
+      }
+    });
     const sheet = (test: (x: number, y: number) => boolean, height: number) => {
       const positions: number[] = [];
+      const flows: number[] = [];
       const indices: number[] = [];
       let n = 0;
       for (let y = 0; y < level.height; y++) {
         for (let x = 0; x < level.width; x++) {
           if (!test(x, y)) continue;
           positions.push(x, height, y, x + 1, height, y, x + 1, height, y + 1, x, height, y + 1);
+          const f = current.get(y * level.width + x) ?? [0, 0];
+          for (let i = 0; i < 4; i++) flows.push(f[0], f[1]);
           indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
           n += 4;
         }
@@ -1315,6 +1361,7 @@ export class ThreeView {
       geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(positions.length).fill(0).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+      geo.setAttribute('flow', new THREE.Float32BufferAttribute(flows, 2));
       geo.setIndex(indices);
       return { geo, n };
     };
@@ -1322,14 +1369,14 @@ export class ThreeView {
     if (shallow.n > 0) {
       const mesh = new THREE.Mesh(
         shallow.geo,
-        inkMaterial(new THREE.MeshLambertMaterial({ color: 0x8aa0ad, transparent: true, opacity: 0.55, depthWrite: false })),
+        inkMaterial(new THREE.MeshLambertMaterial({ color: 0x8aa0ad, transparent: true, opacity: 0.55, depthWrite: false }), { flow: true }),
       );
       mesh.receiveShadow = true;
       g.add(mesh);
     }
     const deepSheet = sheet((x, y) => isDeep(level, x, y), -0.16);
     if (deepSheet.n === 0) return g;
-    const surface = new THREE.Mesh(deepSheet.geo, inkMaterial(new THREE.MeshLambertMaterial({ color: 0x5d7480 })));
+    const surface = new THREE.Mesh(deepSheet.geo, inkMaterial(new THREE.MeshLambertMaterial({ color: 0x5d7480 }), { flow: true }));
     surface.receiveShadow = true;
     g.add(surface);
     // The basin's lip: stone from the floor down to the water.
