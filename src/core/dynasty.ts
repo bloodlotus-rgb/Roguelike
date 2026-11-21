@@ -39,7 +39,7 @@ export type ChronicleEntry =
   | { type: 'campBuilt'; generation: number; memberId: number; depth: number }
   | { type: 'campLost'; generation: number; depth: number; reason: 'night' | 'time' };
 
-export type WorkKind = 'torch' | 'chalk' | 'barricade' | 'rope' | 'bridge' | 'cleared' | 'dam';
+export type WorkKind = 'torch' | 'chalk' | 'barricade' | 'rope' | 'bridge' | 'cleared' | 'dam' | 'unlocked';
 export type ChalkSign = 'arrow' | 'danger' | 'water' | 'camp' | 'stairs';
 
 /**
@@ -281,7 +281,7 @@ export function recordDeath(
   });
 
   // Works wear with the years: chalk fades, ropes rot, torches burn down, barricades sag.
-  const yearly: Record<WorkKind, number> = { chalk: 34, rope: 20, torch: 50, barricade: 15, bridge: 12, cleared: 0, dam: 15 };
+  const yearly: Record<WorkKind, number> = { chalk: 34, rope: 20, torch: 50, barricade: 15, bridge: 12, cleared: 0, dam: 15, unlocked: 0 };
   dynasty.works = (dynasty.works ?? []).filter((w) => {
     w.condition -= yearly[w.kind];
     return w.condition > 0 || w.kind === 'torch';

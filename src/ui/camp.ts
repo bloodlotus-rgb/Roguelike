@@ -63,6 +63,8 @@ function describe(events: WorldEvent[]): string {
     else if (e.type === 'needFire') lines.push(t('res_needFire'));
     else if (e.type === 'boiled') lines.push(t('res_boiled'));
     else if (e.type === 'cantUse' && e.reason === 'empty') lines.push(t('toast_empty'));
+    else if (e.type === 'noRoom') lines.push(t('toast_noRoom', { item: t(`item_${e.kind}` as StringKey) }));
+    else if (e.type === 'cantBuild' && e.reason === 'danger') lines.push(t('toast_cantBuild_danger'));
   }
   return lines.join(' ');
 }
@@ -112,6 +114,18 @@ export class CampUi {
     if (act === 'leave') {
       this.hide();
       this.handlers.onLeave(false);
+      return;
+    }
+    if (act === 'pack') {
+      const events = world.packCamp();
+      this.handlers.onEvents(events);
+      if (events.some((e) => e.type === 'campPacked')) {
+        this.hide();
+        this.handlers.onLeave(false);
+        return;
+      }
+      this.note = describe(events);
+      this.render();
       return;
     }
     if (act === 'sleep') {
@@ -164,6 +178,7 @@ export class CampUi {
         <p class="camp-note">${escape(this.note)}</p>
         <div class="confirm-buttons">
           <button type="button" class="paper-button" data-act="leave">${escape(t('camp_leave'))}</button>
+          <button type="button" class="paper-button" data-act="pack">${escape(t('camp_pack'))}</button>
           <button type="button" class="paper-button danger" data-act="sleep">${escape(t('camp_sleep'))}</button>
         </div>
       </div>`;

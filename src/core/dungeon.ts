@@ -18,7 +18,8 @@ export const Water = { None: 0, Shallow: 1, Deep: 2 } as const;
 export type Tile = (typeof Tile)[keyof typeof Tile];
 
 /** What can lie on the floor: anything that goes in the backpack, or a pile of gold. */
-export type LootKind = ItemKind | 'gold';
+/** What can lie on the floor: anything that goes in the backpack, gold, or the level's key. */
+export type LootKind = ItemKind | 'gold' | 'key';
 
 /** Fixed things in a level: fountains are part of its geography; remains and crates can be searched. */
 export type FeatureKind = 'fountain' | 'drip' | 'remains' | 'crate';
@@ -161,6 +162,13 @@ export interface Level {
   landing: Point;
   /** Collapses blocking a corridor: floor under the stones, shut until someone clears them. */
   rubble: Point[];
+  /**
+   * Doors that do not simply open: `locked` ones (the way down) open with the level's key
+   * or are forced, slowly and loudly; `stuck` ones are forced. One entry per tile.
+   */
+  locks: Array<Point & { kind: 'locked' | 'stuck' }>;
+  /** Where the key to this level's locked doors lies. */
+  key?: Point;
   /** Tiles of chasm spanned by a bridge (floor now, drawn as planks). */
   bridges: number[];
   /** Ground of each tile (see `Ground`); absent means all low. */
@@ -877,6 +885,7 @@ function generateLayout(seed: string, depth: number): Level {
     gallery: null,
     bridges: [],
     rubble: [],
+    locks: [],
   };
 
   // Stairwells are cut last, so no corridor breaks them; any room a stairwell cut off is
@@ -1011,6 +1020,7 @@ function generateLayout(seed: string, depth: number): Level {
     return door;
   });
   level.rubble = collapse(level, Rng.derive(seed, 'rubble', depth), [...upBlock, ...downBlock, level.pit, level.landing]);
+  sealWays(level, Rng.derive(seed, 'locks', depth));
   layouts.set(key, level);
   return level;
 }
@@ -1029,6 +1039,8 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
     river: layout.river?.map((p) => ({ ...p })),
     bridges: layout.bridges.slice(),
     rubble: layout.rubble.map((p) => ({ ...p })),
+    locks: layout.locks.map((p) => ({ ...p })),
+    key: layout.key && { ...layout.key },
     rooms: layout.rooms.map((r) => ({ ...r })),
     features: layout.features.map((f) => ({ ...f })),
     doorways: layout.doorways.map((d) => ({ ...d })),
@@ -1047,6 +1059,8 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
   }
   level.features.forEach((f, i) => (f.id = i));
   level.items = placeItems(level, lootRng, taken);
+  // The key is always where the level keeps it.
+  if (level.key) level.items.push({ id: level.items.length, kind: 'key', x: level.key.x, y: level.key.y });
   return level;
 }
 
@@ -1118,6 +1132,58 @@ function findDoorways(level: Level): Point[] {
 
 function rngCount(rng: Rng, range: { min: number; max: number }): number {
   return rng.int(range.min, range.max);
+}
+
+/**
+ * The ways down are closed: the room of the stairs down behind locked doors (the key lies
+ * somewhere else in the level, far from the arrival but never behind a lock), and the room
+ * of the pit behind stuck doors. A room is only sealed if its doors are truly the only ways
+ * in, and never the room you arrive in. Locked and stuck doors become doors of the level.
+ */
+function sealWays(level: Level, rng: Rng): void {
+  const { width } = level;
+  const roomOf = (p: Point) => level.rooms.findIndex((r) => inside(r, p));
+  const arrival = roomOf(level.start);
+  const locks: Level['locks'] = [];
+  const closedSet = () => new Set([...level.rubble, ...locks].map((p) => p.y * width + p.x));
+  const seal = (target: Point, kind: 'locked' | 'stuck') => {
+    const room = roomOf(target);
+    if (room < 0 || room === arrival) return;
+    const r = level.rooms[room];
+    const entrances = level.doorways.filter((d) => NEIGHBOURS.some(([dx, dy]) => inside(r, { x: d.x + dx, y: d.y + dy })));
+    if (entrances.length === 0) return;
+    const before = locks.length;
+    for (const d of entrances) if (!locks.some((l) => l.x === d.x && l.y === d.y)) locks.push({ ...d, kind });
+    // Sealed only if the target cannot be reached any other way.
+    const dist = floorDistances({ ...level, closed: closedSet() }, level.start);
+    if (dist[target.y * width + target.x] !== -1) locks.splice(before);
+  };
+  seal({ x: level.down.top.x - level.down.dir.x, y: level.down.top.y - level.down.dir.y }, 'locked');
+  const before = locks.length;
+  seal(level.pit, 'stuck');
+  // Where the pit's room cannot be shut, an iron grate lies stuck over the pit itself.
+  const pitInLockedRoom = locks.some((l) => l.kind === 'locked') && floorDistances({ ...level, closed: closedSet() }, level.start)[level.pit.y * width + level.pit.x] === -1;
+  if (locks.length === before && !pitInLockedRoom) locks.push({ ...level.pit, kind: 'stuck' });
+  level.locks = locks;
+  const isPit = (p: Point) => p.x === level.pit.x && p.y === level.pit.y;
+  for (const l of locks) if (!isPit(l) && !level.doors.some((d) => d.x === l.x && d.y === l.y)) level.doors.push({ x: l.x, y: l.y });
+  // The key: somewhere reachable with every lock shut, far from the arrival, on dry floor.
+  if (!locks.some((l) => l.kind === 'locked')) return;
+  const dist = floorDistances({ ...level, closed: closedSet() }, level.start);
+  let far = 0;
+  for (const d of dist) far = Math.max(far, d);
+  const spots: Point[] = [];
+  for (const r of level.rooms) {
+    for (let y = r.y; y < r.y + r.h; y++) {
+      for (let x = r.x; x < r.x + r.w; x++) {
+        const d = dist[y * width + x];
+        if (d < far * 0.45 || !isFloor(level, x, y) || waterAt(level, x, y) !== Water.None) continue;
+        if (level.features.some((f) => f.x === x && f.y === y)) continue;
+        spots.push({ x, y });
+      }
+    }
+  }
+  if (spots.length > 0) level.key = rng.pick(spots);
 }
 
 /** The other half of a two-tile entrance, if this doorway is one. */

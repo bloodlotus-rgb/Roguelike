@@ -279,7 +279,8 @@ class Session implements SceneHost {
     const world = this.world;
     for (const e of events) {
       if (e.type === 'pickup') {
-        this.hud.toastText(e.kind === 'gold' ? t('toast_gold', { n: e.amount ?? 0 }) : t(`item_${e.kind}` as StringKey));
+        if (e.kind === 'key') this.hud.toastText(t('toast_key'), true);
+        else this.hud.toastText(e.kind === 'gold' ? t('toast_gold', { n: e.amount ?? 0 }) : t(`item_${e.kind}` as StringKey));
       } else if (e.type === 'noRoom') this.hud.toastText(t('toast_noRoom', { item: t(`item_${e.kind}` as StringKey) }));
       else if (e.type === 'refilled') this.hud.toast(e.skins === 0 ? 'toast_noSkin' : e.turbid ? 'toast_turbid' : 'toast_refilled');
       else if (e.type === 'found') {
@@ -291,6 +292,9 @@ class Session implements SceneHost {
         this.hud.toast(e.kind === 'waterskin' ? 'toast_drinking' : e.kind === 'oil' ? 'toast_filling' : 'toast_eating');
       } else if (e.type === 'interrupted') this.hud.toast('toast_interrupted');
       else if (e.type === 'digging') this.hud.toastText(t('toast_digging'), true);
+      else if (e.type === 'forcing') this.hud.toastText(t('toast_forcing'), true);
+      else if (e.type === 'unlocked') this.hud.toast('toast_unlocked');
+      else if (e.type === 'campPacked') this.hud.toastText(t('toast_campPacked'), true);
       else if (e.type === 'floodRose') this.hud.toastText(t('toast_floodRose', { depth: e.depth }), true);
       else if (e.type === 'cantUse') {
         this.hud.toast(e.reason === 'danger' ? 'toast_danger' : e.reason === 'camp' ? 'toast_onlyCamp' : 'toast_empty');
@@ -307,7 +311,7 @@ class Session implements SceneHost {
         this.dynasty.chronicle.push({ type: 'campLost', generation: this.dynasty.generation, depth: e.camp.depth, reason: 'night' });
         this.hud.toastText(t('toast_campLost', { depth: e.camp.depth }), true);
       } else if (e.type === 'workBuilt') {
-        const keys = { torch: 'toast_torchSet', barricade: 'toast_barricade', chalk: 'toast_chalk', rope: 'toast_rope', bridge: 'toast_bridge', cleared: 'toast_cleared', dam: 'toast_dam' } as const;
+        const keys = { torch: 'toast_torchSet', barricade: 'toast_barricade', chalk: 'toast_chalk', rope: 'toast_rope', bridge: 'toast_bridge', cleared: 'toast_cleared', dam: 'toast_dam', unlocked: 'toast_unlocked' } as const;
         this.hud.toast(keys[e.work.kind]);
       } else if (e.type === 'bashing') this.hud.toast(e.barricade ? 'toast_bashingBarricade' : 'toast_bashingDoor');
       else if (e.type === 'shutBroken') {

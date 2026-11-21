@@ -477,6 +477,7 @@ export const LOOT_KINDS: readonly LootKind[] = [
   'chalk',
   'planks',
   'rope',
+  'key',
 ];
 
 export function drawItem(kind: LootKind, tile: number): HTMLCanvasElement {
@@ -511,6 +512,18 @@ export function drawItem(kind: LootKind, tile: number): HTMLCanvasElement {
       ctx.fillRect(3 * s, y * s, 18 * s, 4 * s);
       ctx.strokeRect(3 * s, y * s, 18 * s, 4 * s);
     }
+  } else if (kind === 'key') {
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2.2 * s;
+    ctx.beginPath();
+    ctx.arc(7 * s, 12 * s, 3.5 * s, 0, Math.PI * 2);
+    ctx.moveTo(10.5 * s, 12 * s);
+    ctx.lineTo(21 * s, 12 * s);
+    ctx.moveTo(18 * s, 12 * s);
+    ctx.lineTo(18 * s, 16 * s);
+    ctx.moveTo(21 * s, 12 * s);
+    ctx.lineTo(21 * s, 15 * s);
+    ctx.stroke();
   } else if (kind === 'rope') {
     ctx.fillStyle = 'transparent';
     ctx.lineWidth = 2.4 * s;
