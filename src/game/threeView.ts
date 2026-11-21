@@ -20,6 +20,7 @@ import { drawChalk, drawFloorDecor, drawProjectile } from './art';
 import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
 import { InkPost } from './inkPost';
 import { BRICK_DEPTH, layBricks } from './masonry';
+import { styleIndex } from './style';
 import { bridgeModel, rubbleModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
 import { easeInOut, easeOut, swingPhase } from './swing';
 import { Effects } from './threeEffects';
@@ -77,6 +78,8 @@ const cutaway = {
   lineSpacing: { value: 7 },
   /** How far the flame lights across the floor plan; nothing past it gets light. */
   reach: { value: 7 },
+  /** The look (see `style.ts`): 0 pen on paper, 1 engraving, 2 gothic. */
+  style: { value: 0 },
 };
 /** Hatch lines per tile at the coarsest level of detail used up close. */
 const HATCH_BASE = 7;
@@ -158,6 +161,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
     shader.uniforms.uNight = cutaway.night;
     shader.uniforms.uLineSpacing = cutaway.lineSpacing;
     shader.uniforms.uReach = cutaway.reach;
+    shader.uniforms.uStyle = cutaway.style;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;')
       .replace(
@@ -179,7 +183,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
       .replace('#include <lights_fragment_begin>', LIGHTS_WITH_INK_SHADOW)
       .replace(
         '#include <common>',
-        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform float uReach;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
+        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform float uReach;\nuniform float uStyle;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
       )
       .replace(
         '#include <map_fragment>',
@@ -274,6 +278,24 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           }
           ink = max(ink, edge * step(0.02, lit));
           outgoingLight = mix(paper, vec3(0.0), ink);
+          if (uStyle > 1.5) {
+            // Gothic: no drawing. The surface itself, darkened to old stone with a grain
+            // of its own, under the flame's real light and falloff, with deep shadows.
+            float g = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+            float grain = inkNoise(vInkPos.xz * 4.3 + vInkPos.y * 3.7) * 0.55 + inkNoise(vInkPos.xz * 19.0 + vInkPos.y * 13.0) * 0.45;
+            // The drawn texture only hints at joints and stains; the stone's own grain does the rest.
+            vec3 stone = mix(vec3(0.075, 0.07, 0.068), vec3(0.5, 0.47, 0.43), mix(0.62, g, 0.45)) * (0.6 + 0.8 * grain);
+            float shade = lit * mix(1.0, 0.12, smoothstep(0.25, 0.8, shadowed));
+            vec3 flame = mix(vec3(1.0), tint, 0.55);
+            outgoingLight = stone * flame * pow(clamp(shade, 0.0, 1.6), 1.35) * 1.45;
+            outgoingLight *= 1.0 - edge * 0.5 * step(0.02, lit);
+          } else if (uStyle > 0.5) {
+            // Engraving: the same lines in greys, on cold paper, with no flame tint.
+            // Where no light arrives at all the page is ink, as in the pen style.
+            float any = max(tint.r, max(tint.g, tint.b));
+            float g = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+            outgoingLight = mix(vec3(0.06 + g * 0.9) * vec3(0.97, 0.99, 1.02) * any, vec3(0.0), ink);
+          }
           if (uNight > 0.5) {
             // Sight in the dark: everything black, the drawing's own lines and the
             // shading hatches traced in white, fading out with distance.
@@ -1389,6 +1411,7 @@ export class ThreeView {
   private positionCamera(world: World, fpAngle: number): void {
     const p = world.player;
     cutaway.fade.value = this.mode === 'top' ? 1 : 0;
+    cutaway.style.value = styleIndex();
     // The plunderer's shadow step snuffs the light, but lets them see the world in chalk;
     // so do Dark Dwellers once their oil runs out.
     const shadowStep = world.invisible && world.cls.special.kind === 'shadowStep';

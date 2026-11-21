@@ -12,6 +12,7 @@
  * `?post=0` turns it off.
  */
 import * as THREE from 'three';
+import { styleIndex } from './style';
 
 const vertex = /* glsl */ `
 varying vec2 vUv;
@@ -28,6 +29,7 @@ uniform float uNear;
 uniform float uFar;
 uniform float uFrame;
 uniform float uLine;
+uniform float uStyle;
 varying vec2 vUv;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -82,17 +84,35 @@ void main() {
   // The line wavers a little in weight, like a pen.
   float pressure = 0.75 + 0.5 * noise(vUv * uResolution / 40.0 + uFrame * 3.1);
   float edge = smoothstep(0.03 * pressure, 0.08 * pressure, jump);
+  vec2 p = vUv * uResolution;
+  if (uStyle > 1.5) {
+    // Gothic: no pen, no paper. Only a faint dark edge, a fine film grain, a heavy vignette
+    // and deep blacks.
+    color.rgb *= 1.0 - edge * 0.35;
+    color.rgb *= 0.94 + 0.12 * noise(p / 1.6 + uFrame * 13.0);
+    vec2 c = vUv - 0.5;
+    color.rgb *= 1.0 - smoothstep(0.25, 0.75, dot(c, c) * 2.2) * 0.65;
+    color.rgb = pow(color.rgb, vec3(1.12));
+    gl_FragColor = vec4(color.rgb, 1.0);
+    #include <colorspace_fragment>
+    return;
+  }
   color.rgb *= 1.0 - edge * 0.92;
 
   // Paper: grain and long fibres, only where there is light to see them.
-  vec2 p = vUv * uResolution;
   float grain = noise(p / 2.2) * 0.6 + noise(p / 7.0) * 0.4;
   float fibre = smoothstep(0.62, 0.9, noise(vec2(p.x / 60.0, p.y / 3.0) + noise(p / 25.0) * 2.0));
   float paper = 0.93 + 0.11 * grain - 0.08 * fibre;
   color.rgb *= paper;
 
-  // Warm, a touch faded, like old paper under a flame.
-  color.rgb = pow(color.rgb, vec3(0.98, 1.0, 1.06));
+  if (uStyle > 0.5) {
+    // Engraving: every colour gone (the flame, the blood, the figures), a cold grey paper.
+    float g = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+    color.rgb = vec3(g) * vec3(0.96, 0.98, 1.02);
+  } else {
+    // Warm, a touch faded, like old paper under a flame.
+    color.rgb = pow(color.rgb, vec3(0.98, 1.0, 1.06));
+  }
 
   gl_FragColor = vec4(color.rgb, 1.0);
   #include <colorspace_fragment>
@@ -123,6 +143,7 @@ export class InkPost {
         uFar: { value: 80 },
         uFrame: { value: 0 },
         uLine: { value: 1 },
+        uStyle: { value: 0 },
       },
       depthTest: false,
       depthWrite: false,
@@ -139,6 +160,7 @@ export class InkPost {
       // Lines about one and a half CSS pixels wide, whatever the screen.
       this.material.uniforms.uLine.value = Math.max(1, renderer.getPixelRatio() * 1.5);
     }
+    this.material.uniforms.uStyle.value = styleIndex();
     this.material.uniforms.uNear.value = camera.near;
     this.material.uniforms.uFar.value = camera.far;
     // Redrawn eight times a second.

@@ -4,6 +4,7 @@ import type { Survival } from '../core/survival';
 import type { World } from '../core/world';
 import type { Interaction } from '../core/world';
 import { BackpackUi } from './backpack';
+import { setVisualStyle, visualStyle, VISUAL_STYLES, type VisualStyle } from '../game/style';
 import { drawMap, drawMark, MAP_ZOOM, type MapExtras, type MapMark, type MapView } from './map';
 import { getLang, onLangChange, setLang, t, type StringKey } from '../i18n/i18n';
 
@@ -112,6 +113,12 @@ export class Hud {
         <h2 data-i18n="paused"></h2>
         <div class="hero-info"></div>
         <div class="backpack-slot"></div>
+        <div class="style-picker">
+          <span data-i18n="styleLabel"></span>
+          <div class="style-options">
+            ${VISUAL_STYLES.map((s) => `<button type="button" class="style-option" data-style="${s}" data-i18n="style_${s}"></button>`).join('')}
+          </div>
+        </div>
         <button class="paper-button resume" type="button" data-i18n="resume"></button>
         <button class="link-button abandon" type="button" data-i18n="abandon"></button>
       </section>
@@ -183,6 +190,15 @@ export class Hud {
     this.descendButton.addEventListener('click', handlers.onDescend);
     root.querySelector('.resume')!.addEventListener('click', handlers.onResume);
     root.querySelector('.abandon')!.addEventListener('click', handlers.onAbandon);
+    const styleButtons = root.querySelectorAll<HTMLButtonElement>('.style-option');
+    const markStyle = () => styleButtons.forEach((b) => b.classList.toggle('chosen', b.dataset.style === visualStyle()));
+    styleButtons.forEach((b) =>
+      b.addEventListener('click', () => {
+        setVisualStyle(b.dataset.style as VisualStyle);
+        markStyle();
+      }),
+    );
+    markStyle();
     root.querySelector('.class-back')!.addEventListener('click', handlers.onClassBack);
     root.querySelectorAll<HTMLButtonElement>('.class-card').forEach((card) => {
       card.addEventListener('click', () => handlers.onChooseClass(card.dataset.class as ClassId));
