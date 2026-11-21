@@ -576,3 +576,10 @@ void session.boot();
 if (new URL(window.location.href).searchParams.has('debug')) {
   (window as unknown as { estirpe: Session }).estirpe = session;
 }
+
+// Installable and playable offline: the service worker keeps the game's files.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}

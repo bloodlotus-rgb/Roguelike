@@ -460,9 +460,9 @@ body.three-engine #fp {
 
 .map-sheet {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr auto auto;
   width: min(100%, 720px);
-  height: min(100%, 720px);
+  height: min(100%, 820px);
   padding: 12px 14px;
   color: var(--ink);
   background: var(--paper);
@@ -480,10 +480,89 @@ body.three-engine #fp {
   text-align: center;
 }
 
+.map-head {
+  position: relative;
+}
+
+.map-close {
+  position: absolute;
+  top: -4px;
+  right: -2px;
+  width: 34px;
+  height: 34px;
+  font: inherit;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.map-frame {
+  position: relative;
+  min-height: 0;
+  border: 1.5px solid var(--ink);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
 .map-canvas {
+  display: block;
   width: 100%;
   height: 100%;
   min-height: 0;
+  cursor: grab;
+}
+
+.map-tools {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.map-tools button {
+  min-width: 40px;
+  height: 40px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 20px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+.map-tools .map-center {
+  font-size: 13px;
+}
+
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  justify-content: center;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.map-legend li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.map-legend canvas {
+  width: 22px;
+  height: 22px;
 }
 
 .map-hint {
