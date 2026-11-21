@@ -36,6 +36,10 @@ function intoRoom(world: World): World {
 function arena(classId: ClassId = 'headsman'): World {
   const world = intoRoom(new World('estirpe', classId));
   world.enemies = [];
+  // A clearing of open floor around the hero, so tests do not depend on the level's shape.
+  const cx = Math.floor(world.player.x);
+  const cy = Math.floor(world.player.y);
+  for (let y = cy - 5; y <= cy + 5; y++) for (let x = cx - 5; x <= cx + 5; x++) world.level.tiles[y * world.level.width + x] = 1;
   world.update(0.016, NO_INPUT);
   return world;
 }

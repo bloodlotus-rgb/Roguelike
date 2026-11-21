@@ -11,6 +11,8 @@ export const CONFIG = {
     extraConnections: 3,
     /** Chance a level has a gallery (a double-height room over a hall below). */
     galleryChance: 0.5,
+    /** Share of passages that are winding natural tunnels instead of straight corridors. */
+    tunnelChance: 0.35,
   },
   items: {
     ration: { min: 2, max: 3 },

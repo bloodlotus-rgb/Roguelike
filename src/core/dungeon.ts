@@ -186,6 +186,33 @@ function removeUnreachable(level: Level, origin: Point): void {
   }
 }
 
+/**
+ * A natural tunnel: it heads for its goal but drifts from side to side, and here and
+ * there opens a little wider, as water or old digging would leave it.
+ */
+function carveTunnel(tiles: Uint8Array, width: number, height: number, from: Point, to: Point, rng: Rng): void {
+  let { x, y } = from;
+  const carve = (cx: number, cy: number) => {
+    if (cx >= 2 && cy >= 2 && cx < width - 2 && cy < height - 2) tiles[cy * width + cx] = Tile.Floor;
+  };
+  for (let steps = 0; steps < 400 && (x !== to.x || y !== to.y); steps++) {
+    carve(x, y);
+    if (rng.chance(0.18)) carve(x + rng.int(-1, 1), y + rng.int(-1, 1));
+    const dx = Math.sign(to.x - x);
+    const dy = Math.sign(to.y - y);
+    // Mostly toward the goal, now and then sideways.
+    if (rng.chance(0.25)) {
+      if (dx !== 0 && rng.chance(0.5)) y += rng.chance(0.5) ? 1 : -1;
+      else if (dy !== 0) x += rng.chance(0.5) ? 1 : -1;
+      else x += dx || (rng.chance(0.5) ? 1 : -1);
+    } else if (dx !== 0 && (dy === 0 || rng.chance(Math.abs(to.x - x) / (Math.abs(to.x - x) + Math.abs(to.y - y))))) x += dx;
+    else y += dy;
+    x = Math.max(2, Math.min(width - 3, x));
+    y = Math.max(2, Math.min(height - 3, y));
+  }
+  carve(x, y);
+}
+
 function carveCorridor(tiles: Uint8Array, width: number, from: Point, to: Point, horizontalFirst: boolean): void {
   const carve = (x: number, y: number) => {
     tiles[y * width + x] = Tile.Floor;
@@ -339,7 +366,7 @@ function generateLayout(seed: string, depth: number): Level {
     const w = rng.int(cfg.roomMinSize, cfg.roomMaxSize);
     const h = rng.int(cfg.roomMinSize, Math.min(cfg.roomMaxSize, 8));
     const shapeRoll = rng.next();
-    const shape: RoomShape = w >= 7 && h >= 6 && shapeRoll < 0.35 ? 'hall' : shapeRoll > 0.72 ? 'cave' : 'rect';
+    const shape: RoomShape = w >= 7 && h >= 6 && shapeRoll < 0.3 ? 'hall' : shapeRoll > 0.62 ? 'cave' : 'rect';
     const room: Room = { x: rng.int(2, width - w - 2), y: rng.int(2, height - h - 2), w, h, shape };
     if (rooms.some((other) => overlaps(room, other, 2)) || touchesStairs(room)) continue;
     rooms.push(room);
@@ -416,7 +443,11 @@ function generateLayout(seed: string, depth: number): Level {
     const b = rng.int(0, rooms.length - 1);
     if (a !== b) edges.push([a, b]);
   }
-  for (const [a, b] of edges) carveCorridor(tiles, width, centers[a], centers[b], rng.chance(0.5));
+  // Some passages are natural tunnels that wander and widen; the rest are cut straight.
+  for (const [a, b] of edges) {
+    if (rng.chance(CONFIG.level.tunnelChance)) carveTunnel(tiles, width, height, centers[a], centers[b], rng);
+    else carveCorridor(tiles, width, centers[a], centers[b], rng.chance(0.5));
+  }
 
   const level: Level = {
     seed,
