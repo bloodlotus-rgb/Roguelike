@@ -1,13 +1,13 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { flood, floorDistances, generateLevel, goldPile, groundHeight, isChasm, isFloor, isSeeThrough, isShallow, waterAt, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { doorwayPartner, flood, floorDistances, generateLevel, goldPile, groundHeight, isChasm, isFloor, isSeeThrough, isShallow, waterAt, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
 import { addItem, enlarged, ITEMS, removeItem, removeStack, starterKit, type Inventory, type ItemKind } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
 import { blocked, hasLineOfSight, moveWithCollision, visibleTiles } from './geometry';
 import { Rng } from './rng';
-import { packTiles, unpackTiles, type CampSite, type ChalkSign, type DeathCause, type Work } from './dynasty';
+import { covers, packTiles, unpackTiles, type CampSite, type ChalkSign, type DeathCause, type Work } from './dynasty';
 import { freshSurvival, isDead, lightRadius, tickSurvival, type Survival } from './survival';
 import { combineEffects, compatible, TRAIT_CAP, traitDef, type TraitEffects } from './traits';
 
@@ -804,6 +804,13 @@ export class World {
     this.doorStates = new Map(
       this.level.doors.map((d) => [d.y * this.level.width + d.x, { state: doorRng.chance(0.5) ? 'open' : 'shut', hp: CONFIG.works.doorHp } as DoorState]),
     );
+    // Double doors: both leaves found the same way.
+    for (const d of this.level.doors) {
+      const partner = doorwayPartner(this.level, d);
+      const a = this.doorStates.get(d.y * this.level.width + d.x)!;
+      const b = partner && this.doorStates.get(partner.y * this.level.width + partner.x);
+      if (b && partner && (partner.y * this.level.width + partner.x) > d.y * this.level.width + d.x) b.state = a.state;
+    }
     this.refreshShut();
     // A level already walked in this life is found as it was left.
     const mem = this.memory?.get(depth);
@@ -1528,7 +1535,7 @@ export class World {
   doorStates = new Map<number, DoorState>();
 
   private barricadeAt(x: number, y: number): Work | undefined {
-    return this.works.find((w) => w.kind === 'barricade' && w.depth === this.depth && w.x === x && w.y === y);
+    return this.works.find((w) => w.kind === 'barricade' && w.depth === this.depth && covers(w, x, y));
   }
 
   /** Marks shut doors and barricades in the level, so nothing passes or sees through. */
@@ -1541,9 +1548,11 @@ export class World {
     for (const p of this.rubble) shut.add(p.y * this.level.width + p.x);
     for (const w of this.works) {
       if (w.kind !== 'barricade' || w.depth !== this.depth) continue;
-      const tile = w.y * this.level.width + w.x;
-      if (w.open) shut.delete(tile);
-      else shut.add(tile);
+      for (const p of [{ x: w.x, y: w.y }, ...(w.span ?? [])]) {
+        const tile = p.y * this.level.width + p.x;
+        if (w.open) shut.delete(tile);
+        else shut.add(tile);
+      }
     }
     this.level.closed = shut;
     // Paths and sight have changed.
@@ -1579,7 +1588,14 @@ export class World {
     // Nothing can be shut on top of a horror.
     if (d.shut === false && this.enemies.some((e) => e.state !== 'dead' && Math.floor(e.pos.x) === d.x && Math.floor(e.pos.y) === d.y)) return;
     if (d.barricade) d.barricade.open = d.shut;
-    else this.doorStates.get(tile)!.state = d.shut ? 'open' : 'shut';
+    else {
+      // Both leaves of a double door move together.
+      const partner = doorwayPartner(this.level, d);
+      for (const t of [tile, ...(partner ? [partner.y * this.level.width + partner.x] : [])]) {
+        const door = this.doorStates.get(t);
+        if (door && door.state !== 'broken') door.state = d.shut ? 'open' : 'shut';
+      }
+    }
     this.refreshShut();
     for (const e of this.enemies) {
       if (e.state === 'dead' || e.alerted || dist(e.pos, { x: d.x + 0.5, y: d.y + 0.5 }) > 4) continue;
@@ -1605,10 +1621,14 @@ export class World {
     }
     if (!target) return void events.push({ type: 'cantBuild', reason: 'corridor' });
     removeItem(this.inventory, uid);
-    // A door there is reinforced: the barricade takes its place.
-    const door = this.doorStates.get(target.y * this.level.width + target.x);
-    if (door) door.state = 'broken';
-    const work = this.newWork('barricade', { x: target.x, y: target.y, open: false });
+    // A door there is reinforced: the barricade takes its place. A wide entrance takes
+    // planks across both tiles.
+    const partner = doorwayPartner(this.level, target);
+    for (const p of [target, ...(partner ? [partner] : [])]) {
+      const door = this.doorStates.get(p.y * this.level.width + p.x);
+      if (door) door.state = 'broken';
+    }
+    const work = this.newWork('barricade', { x: target.x, y: target.y, open: false, ...(partner ? { span: [{ ...partner }] } : {}) });
     this.refreshShut();
     events.push({ type: 'workBuilt', work });
   }
@@ -1729,9 +1749,18 @@ export class World {
     dig.timer -= dt;
     if (dig.timer > 0) return;
     this.digging = null;
-    const work = this.newWork('cleared', { x: dig.x, y: dig.y });
+    // The whole fall of stones goes, from wall to wall.
+    const heap = [{ x: dig.x, y: dig.y }];
+    for (let i = 0; i < heap.length; i++) {
+      for (const p of this.rubble) {
+        if (heap.some((q) => q.x === p.x && q.y === p.y)) continue;
+        if (Math.abs(p.x - heap[i].x) + Math.abs(p.y - heap[i].y) === 1) heap.push({ ...p });
+      }
+    }
+    let work: Work | null = null;
+    for (const p of heap) work = this.newWork('cleared', { x: p.x, y: p.y });
     this.refreshShut();
-    events.push({ type: 'workBuilt', work });
+    events.push({ type: 'workBuilt', work: work! });
   }
 
   /** Hunting horrors at a shut door or barricade batter it until it gives. */
@@ -1775,6 +1804,10 @@ export class World {
         door.hp -= CONFIG.works.bashDoor * bashers * dt;
         if (door.hp <= 0) {
           door.state = 'broken';
+          // A double door gives way as one.
+          const partner = doorwayPartner(this.level, { x, y });
+          const other = partner && this.doorStates.get(partner.y * this.level.width + partner.x);
+          if (other) other.state = 'broken';
           events.push({ type: 'shutBroken', barricade: false, depth: this.depth });
           this.refreshShut();
         }

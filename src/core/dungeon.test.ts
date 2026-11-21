@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canStep, flood, floorDistances, generateLevel, Ground, isChasm, isDeep, isFloor, isVoid, Water, waterAt } from './dungeon';
+import { canStep, doorwayPartner, flood, floorDistances, generateLevel, Ground, isChasm, isDeep, isFloor, isVoid, Water, waterAt } from './dungeon';
 
 const seeds = ['estirpe', 'tainted', 'abc', '12345', 'mansion'];
 
@@ -246,5 +246,25 @@ describe('generateLevel', () => {
       }
     }
     expect(checked).toBeGreaterThan(0);
+  });
+
+  it('passages are two tiles wide: most entrances are pairs, and a pair has a double door or none', () => {
+    let pairs = 0;
+    let singles = 0;
+    for (const seed of seeds) {
+      const level = generateLevel(seed, 2);
+      for (const d of level.doorways) {
+        const partner = doorwayPartner(level, d);
+        if (partner) pairs++;
+        else singles++;
+        if (!partner) continue;
+        const door = level.doors.some((o) => o.x === d.x && o.y === d.y);
+        const other = level.doors.some((o) => o.x === partner.x && o.y === partner.y);
+        expect(door).toBe(other);
+      }
+      // Collapses fill a passage from wall to wall: two stones side by side.
+      expect(level.rubble.length % 2).toBe(0);
+    }
+    expect(pairs).toBeGreaterThan(singles);
   });
 });
