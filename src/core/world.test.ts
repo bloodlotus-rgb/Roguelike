@@ -1047,6 +1047,18 @@ describe('water', () => {
     expect(crawler.pos.x).toBeLessThan(cx + 1);
   });
 
+  it('under a waterfall the water runs clean', () => {
+    const world = arena('headsman');
+    world.level.fall = { x: Math.floor(world.player.x) + 1, y: Math.floor(world.player.y) };
+    const heard = run(world, 1.5);
+    expect(heard.some((e) => e.type === 'roar')).toBe(true);
+    expect(world.interaction).toBe('falls');
+    world.interact();
+    const events = run(world, 0.05);
+    const refill = events.find((e) => e.type === 'refilled');
+    expect(refill && refill.type === 'refilled' && !refill.turbid).toBe(true);
+  });
+
   it('standing water fills the waterskins, turbid', () => {
     const world = arena('headsman');
     const cx = ford(world);

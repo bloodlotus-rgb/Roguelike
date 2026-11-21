@@ -22,6 +22,8 @@ export const CONFIG = {
     poolChance: 0.18,
     /** Chance a level has an underground river crossing it. */
     riverChance: 0.35,
+    /** Chance a river drains down a sinkhole and falls to the level below. */
+    waterfallChance: 0.5,
     /** Chance a level has a collapse or two in its corridors. */
     rubbleChance: 0.6,
     /** Widest stretch of chasm a leap carries over, in tiles. */
@@ -107,6 +109,8 @@ export const CONFIG = {
     wade: 0.6,
     /** How far a splash is heard, in tiles. */
     splashNoise: 4.5,
+    /** How far the roar of a waterfall is heard, in tiles. */
+    roarReach: 10,
   },
   works: {
     /** Tiles a torch lights; inside it the lamp rests and horrors hesitate. */

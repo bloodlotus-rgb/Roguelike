@@ -279,6 +279,7 @@ export class Hud {
       search: 'action_search',
       clear: 'action_clear',
       pool: 'action_pool',
+      falls: 'action_falls',
     };
     const key = this.interaction ? keys[this.interaction] : 'descend';
     this.descendButton.textContent = t(key);
@@ -430,7 +431,7 @@ export class Hud {
 
   /** The legend: every mark the map uses, drawn the same way, with its name. */
   private renderLegend(): void {
-    const marks: MapMark[] = ['hero', 'down', 'up', 'camp', 'fountain', 'shallow', 'deep', 'pit', 'chasm', 'bridge', 'rubble'];
+    const marks: MapMark[] = ['hero', 'down', 'up', 'camp', 'fountain', 'shallow', 'deep', 'waterfall', 'pit', 'chasm', 'bridge', 'rubble'];
     const list = this.mapScreen.querySelector('.map-legend')!;
     list.innerHTML = '';
     const dpr = Math.min(window.devicePixelRatio || 1, 2);

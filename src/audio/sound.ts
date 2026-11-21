@@ -144,6 +144,10 @@ export class Sound {
       case 'dodge':
         this.playNoise({ filter: 'bandpass', freq: 400, freqEnd: 1200, q: 0.7, duration: 0.22, gain: 0.18 });
         break;
+      case 'roar':
+        // Falling water: a long low rush, as loud as you are close.
+        this.playNoise({ filter: 'lowpass', freq: 700, freqEnd: 500, duration: 1.6, gain: 0.05 + 0.3 * event.near * event.near });
+        break;
       case 'splash':
         this.playNoise({ filter: 'bandpass', freq: 1400, freqEnd: 500, q: 1.2, duration: 0.25, gain: 0.16 });
         break;

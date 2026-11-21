@@ -130,6 +130,7 @@ export type WorldEvent =
   | { type: 'digging'; seconds: number }
   | { type: 'dig' }
   | { type: 'splash' }
+  | { type: 'roar'; near: number }
   | { type: 'campLost'; camp: CampSite }
   | { type: 'workBuilt'; work: Work }
   | { type: 'torchFilled' }
@@ -189,6 +190,7 @@ export type Interaction =
   | 'search'
   | 'clear'
   | 'pool'
+  | 'falls'
   | null;
 
 /** Counters behind the acquired traits. */
@@ -844,6 +846,7 @@ export class World {
     this.rally *= Math.exp(-dt / COMBAT.rallyFade);
     if (fx.mapPath) this.path.add(Math.floor(this.player.y) * this.level.width + Math.floor(this.player.x));
     this.wade(events);
+    this.roar(dt, events);
 
     this.pickUp(events);
     const revealed = this.reveal();
@@ -2062,11 +2065,24 @@ export class World {
     return best;
   }
 
-  /** Standing water underfoot or right beside the hero: turbid, but water. */
-  private waterInReach(): boolean {
+  /** Water underfoot or right beside the hero: under a waterfall it runs clean, elsewhere turbid. */
+  private waterInReach(): 'clean' | 'turbid' | null {
+    const { fall } = this.level;
+    if (fall && dist(this.player, { x: fall.x + 0.5, y: fall.y + 0.5 }) <= 1.7) return 'clean';
     const x = Math.floor(this.player.x);
     const y = Math.floor(this.player.y);
-    return [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => waterAt(this.level, x + dx, y + dy) !== 0);
+    return [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => waterAt(this.level, x + dx, y + dy) !== 0) ? 'turbid' : null;
+  }
+
+  /** The roar of falling water, louder the closer (0 far, 1 at its foot). */
+  private roarTimer = 0;
+  private roar(dt: number, events: WorldEvent[]): void {
+    this.roarTimer -= dt;
+    if (this.roarTimer > 0) return;
+    this.roarTimer = 1.4;
+    const spots = [this.level.sink, this.level.fall].filter((p): p is Point => !!p);
+    const d = Math.min(...spots.map((p) => dist(this.player, { x: p.x + 0.5, y: p.y + 0.5 })));
+    if (d < CONFIG.water.roarReach) events.push({ type: 'roar', near: 1 - d / CONFIG.water.roarReach });
   }
 
   /** Each step into shallow water splashes, and horrors close by hear it. */
@@ -2096,7 +2112,10 @@ export class World {
     if (door) return door.shut ? 'openDoor' : 'closeDoor';
     if (this.rubbleInReach()) return 'clear';
     const f = this.featureInReach();
-    if (!f) return this.waterInReach() ? 'pool' : null;
+    if (!f) {
+      const water = this.waterInReach();
+      return water === 'clean' ? 'falls' : water ? 'pool' : null;
+    }
     return f.kind === 'fountain' || f.kind === 'drip' ? f.kind : 'search';
   }
 
@@ -2133,8 +2152,9 @@ export class World {
     const f = this.featureInReach();
     if (!f && !this.waterInReach()) return;
     if (!f || f.kind === 'fountain' || f.kind === 'drip') {
-      // Drip and standing water are turbid, and mixed with clean water it all turns turbid.
-      const turbid = f?.kind !== 'fountain';
+      // Drip and standing water are turbid, and mixed with clean water it all turns turbid;
+      // a fountain and a waterfall run clean.
+      const turbid = f ? f.kind === 'drip' : this.waterInReach() !== 'clean';
       let skins = 0;
       for (const it of this.inventory.items) {
         if (it.kind !== 'waterskin') continue;

@@ -193,13 +193,34 @@ describe('generateLevel', () => {
         const level = generateLevel(seed, depth);
         if (!level.river) continue;
         rivers++;
-        // Somewhere along it the water is shallow all the way across: a ford.
+        // A river that crosses the whole level has a ford somewhere: shallow all the way across.
         const fords = level.river.filter((p) => !isDeep(level, p.x, p.y));
-        expect(fords.length).toBeGreaterThan(0);
+        if (!level.sink) expect(fords.length).toBeGreaterThan(0);
         const dist = floorDistances(level, level.start);
         for (let i = 0; i < level.tiles.length; i++) if (level.tiles[i] === 1) expect(dist[i]).not.toBe(-1);
       }
     }
     expect(rivers).toBeGreaterThan(2);
+  });
+
+  it('waterfalls: a river drains down a sinkhole onto a plunge pool below', () => {
+    let falls = 0;
+    for (const seed of [...seeds, 'falls', 'cascade', 'river-deep']) {
+      for (let depth = 1; depth <= 6; depth++) {
+        const level = generateLevel(seed, depth);
+        if (!level.sink) continue;
+        falls++;
+        const below = generateLevel(seed, depth + 1);
+        expect(below.fall).toEqual(level.sink);
+        expect(isDeep(level, level.sink.x, level.sink.y)).toBe(true);
+        expect(isDeep(below, level.sink.x, level.sink.y)).toBe(true);
+        // Shallow water around where it lands, and the pool can be reached.
+        const dist = floorDistances(below, below.start);
+        const around = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => waterAt(below, level.sink!.x + dx, level.sink!.y + dy) === Water.Shallow);
+        expect(around.length).toBeGreaterThan(0);
+        expect(around.some(([dx, dy]) => dist[(level.sink!.y + dy) * below.width + level.sink!.x + dx] !== -1)).toBe(true);
+      }
+    }
+    expect(falls).toBeGreaterThan(0);
   });
 });
