@@ -1,6 +1,6 @@
 import { CONFIG } from './config';
 import type { Level, Point } from './dungeon';
-import { isFloor } from './dungeon';
+import { isPassable } from './dungeon';
 import type { Rng } from './rng';
 
 export type EnemyKind = 'crawler' | 'husk' | 'mourner' | 'snuffer';
@@ -159,7 +159,7 @@ export function spawnEnemies(level: Level, rng: Rng): EnemySpawn[] {
         const x = rng.int(room.x, room.x + room.w - 1);
         const y = rng.int(room.y, room.y + room.h - 1);
         const key = `${x},${y}`;
-        if (taken.has(key) || !isFloor(level, x, y)) continue;
+        if (taken.has(key) || !isPassable(level, x, y)) continue;
         taken.add(key);
         spawns.push({ kind, pos: { x: x + 0.5, y: y + 0.5 }, room: roomIndex, roamer, pack });
         break;

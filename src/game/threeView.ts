@@ -24,7 +24,7 @@ import { BRICK_DEPTH, FLAG_TOP, layBricks, layFlagstones, type Brick } from './m
 import { styleIndex } from './style';
 import { BounceLight, type LightSource } from './bounce';
 import { onSettings, qualityProfile, settings } from '../settings/settings';
-import { bridgeModel, rubbleModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
+import { bridgeModel, pieceModel, rubbleModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
 import { easeInOut, easeOut, swingPhase } from './swing';
 import { Effects } from './threeEffects';
 import { drawHands, inkTexture } from './firstPerson';
@@ -1100,6 +1100,7 @@ export class ThreeView {
     floorMesh.castShadow = true;
     this.levelGroup.add(floorMesh);
     this.layPaving(level);
+    this.buildPieces(level);
     // Camps of old, cold until someone of the family lights them.
     for (const p of level.outposts) {
       const obj = outlined(campModel(this.mats), this.mats);
@@ -1288,6 +1289,79 @@ export class ThreeView {
     return groundHeight(level, { x: x + 0.5, y: y + 0.5 });
   }
 
+  /** Burning braziers of the dungeon: lit like torches, nearest first. */
+  private brazierSpots: Array<{ x: number; y: number; h: number; flame: THREE.Sprite }> = [];
+  /** Things that reach up toward the ceiling (arches, chains): only drawn in first person. */
+  private tallPieces: THREE.Object3D[] = [];
+
+  /** The level's furniture, its braziers lit, and an arch over every entrance. */
+  private buildPieces(level: Level): void {
+    this.brazierSpots = [];
+    this.tallPieces = [];
+    for (const piece of level.pieces) {
+      const h = this.groundAtLevel(level, piece.x, piece.y);
+      if (piece.kind === 'arch') {
+        const arch = this.archAt(level, piece.x, piece.y);
+        if (arch) {
+          this.levelGroup.add(arch);
+          this.tallPieces.push(arch);
+        }
+        continue;
+      }
+      const obj = outlined(pieceModel(piece.kind, this.mats, piece.x * 31 + piece.y * 7), this.mats);
+      obj.position.set(piece.x + 0.5, h, piece.y + 0.5);
+      if (piece.face) obj.rotation.y = Math.atan2(piece.face.x, piece.face.y);
+      this.levelGroup.add(obj);
+      if (piece.kind === 'chains') this.tallPieces.push(obj);
+      if (piece.kind === 'brazier') {
+        const flame = new THREE.Sprite(this.flameMaterial);
+        flame.add(this.halo(3.6));
+        flame.position.set(piece.x + 0.5, h + 1.08, piece.y + 0.5);
+        flame.scale.set(0.34, 0.46, 1);
+        this.levelGroup.add(flame);
+        this.brazierSpots.push({ x: piece.x + 0.5, y: piece.y + 0.5, h, flame });
+      }
+    }
+  }
+
+  /**
+   * A stone arch over an entrance: two jambs and a half ring spanning the opening, on the
+   * room's side of it, reaching up to the passage's ceiling.
+   */
+  private archAt(level: Level, x: number, y: number): THREE.Object3D | null {
+    const inRoom = (tx: number, ty: number) => level.rooms.some((r) => tx >= r.x && tx < r.x + r.w && ty >= r.y && ty < r.y + r.h);
+    const into = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dy]) => isFloor(level, x + dx, y + dy) && inRoom(x + dx, y + dy));
+    if (!into) return null;
+    const partner = doorwayPartner(level, { x, y });
+    const span = partner ? 2 : 1;
+    // Centre of the opening, on the edge between the passage and the room.
+    const cx = (partner ? (x + partner.x) / 2 : x) + 0.5 + into[0] * 0.5;
+    const cz = (partner ? (y + partner.y) / 2 : y) + 0.5 + into[1] * 0.5;
+    const H = this.ceilings[y * level.width + x] || CEILING.passage;
+    const radius = span / 2;
+    const spring = H - radius;
+    const g = new THREE.Group();
+    const stone = this.mats.stone;
+    const add = (geo: THREE.BufferGeometry, px: number, py: number, pz: number, rz = 0) => {
+      const mesh = new THREE.Mesh(geo, stone);
+      mesh.position.set(px, py, pz);
+      mesh.rotation.z = rz;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      g.add(mesh);
+    };
+    // Jambs at both sides, up to where the arch springs.
+    for (const side of [-1, 1]) add(new THREE.BoxGeometry(0.18, spring, 0.34), side * (radius - 0.02), spring / 2, 0);
+    // The ring of voussoirs, and a keystone at the crown.
+    const ring = new THREE.TorusGeometry(radius - 0.08, 0.1, 6, 14, Math.PI);
+    add(ring, 0, spring, 0);
+    add(new THREE.BoxGeometry(0.16, 0.24, 0.36), 0, H - 0.1, 0);
+    g.position.set(cx, 0, cz);
+    // The arch spans across the passage: along x when the room lies along z.
+    g.rotation.y = into[0] !== 0 ? Math.PI / 2 : 0;
+    return outlined(g, this.mats);
+  }
+
   /** Ceiling height over each tile in first person (see `ceilingHeights`). */
   private ceilings: Float32Array = new Float32Array(1);
 
@@ -1325,6 +1399,7 @@ export class ThreeView {
       this.columns.computeBoundingSphere();
     }
     if (this.ceiling) this.ceiling.visible = this.mode === 'first';
+    for (const o of this.tallPieces) o.visible = this.mode === 'first';
     if (this.fallColumn && level.fall) {
       // Built one unit tall, from 0.9 down to -0.1: stretched up to the ceiling.
       const h = this.mode === 'first' ? this.ceilings[level.fall.y * level.width + level.fall.x] || CEILING.room : WALL_TOP;
@@ -2358,6 +2433,14 @@ export class ThreeView {
       this.scene.remove(entry.obj);
       if (entry.flame) this.scene.remove(entry.flame);
       this.works.delete(id);
+    }
+    // Braziers burn like torches (and flicker).
+    for (const b of this.brazierSpots) {
+      const d = Math.hypot(b.x - world.player.x, b.y - world.player.y);
+      if (d > 30) continue;
+      const flicker = 1 + Math.sin(now / 85 + b.x * 3.1) * 0.08;
+      b.flame.scale.set(0.34 * flicker, 0.46 * flicker, 1);
+      lit.push({ x: b.x, y: b.y, d, h: b.h - 0.05 });
     }
     // The nearest burning torches get a real light.
     lit.sort((a, b) => a.d - b.d);

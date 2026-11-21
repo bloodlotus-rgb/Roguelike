@@ -10,6 +10,9 @@
  *   F  fountain (clean)     d  drip (a puddle)
  *   k  crate                r  remains (searched like any)
  *   O  outpost: a camp of old that can be lit again without a kit
+ *   x  brazier (a light)    c  chains hanging (walkable)
+ *   a  altar   s  sarcophagus   h  shelves   b  barrels   u  rubble   p  broken column
+ *   (the pieces of pieces.ts; all but the chains are solid)
  *
  * Pure data and checks: the generator (dungeon.ts) does the placing.
  */
@@ -26,7 +29,9 @@ export interface LocationDef {
   plan: string[];
 }
 
-export const LOCATION_CHARS = '#.+~WFdkrO';
+export const LOCATION_CHARS = '#.+~WFdkrOxcashbup';
+/** Characters of a plan that cannot be walked: rock, deep water and solid pieces. */
+const SOLID_CHARS = '#Wxashbup';
 
 export const LOCATIONS: LocationDef[] = [
   {
@@ -37,11 +42,11 @@ export const LOCATIONS: LocationDef[] = [
     // A fire long cold, a bedroll, someone's remains: light it again and it is yours.
     plan: [
       '####++###',
-      '#r......#',
+      '#r.....b#',
       '#...O...#',
       '#.......#',
-      '#..k....#',
-      '#.......#',
+      '#..k...u#',
+      '#b.....u#',
       '#########',
     ],
   },
@@ -53,13 +58,13 @@ export const LOCATIONS: LocationDef[] = [
     // The old hearth still draws; the well still gives. Stone counters, forgotten stores.
     plan: [
       '#####++#####',
-      '#k........k#',
+      '#k.hh..bb.k#',
       '#..........#',
       '#.##....##.#',
       '#..........#',
-      '#...F..O...#',
+      '#x..F..O...#',
       '+..........#',
-      '+..........#',
+      '+........bx#',
       '############',
     ],
   },
@@ -71,7 +76,7 @@ export const LOCATIONS: LocationDef[] = [
     // A round tank of deep, still water, and a spout of clean water at its brim.
     plan: [
       '#####++####',
-      '#.........#',
+      '#x.......x#',
       '#..~~~~~..#',
       '#.~~WWW~~.#',
       '#.~WWWWW~.#',
@@ -91,7 +96,7 @@ export const LOCATIONS: LocationDef[] = [
     // A flooded hall: a forest of columns standing in the water, a walkway all round.
     plan: [
       '#######++########',
-      '#...............#',
+      '#x.............x#',
       '#.~~~~~~~~~~~~~.#',
       '#.~#~~~#~~~#~~~.#',
       '#.~~~~~~~~~~~~~.#',
@@ -101,7 +106,7 @@ export const LOCATIONS: LocationDef[] = [
       '#.~~~~~~~~~~~~~.#',
       '#.~#~~~#~~~#~~~.#',
       '#.~~~~~~~~~~~~~.#',
-      '#.....d.........#',
+      '#x....d........x#',
       '#################',
     ],
   },
@@ -113,10 +118,10 @@ export const LOCATIONS: LocationDef[] = [
     // A long passage lined with burial niches; some are not empty.
     plan: [
       '########################',
-      '#.#r#.#.#r#.#.#.#r#.#.##',
+      '#s#r#.#s#r#.#.#s#r#.#.##',
+      '+..c......x.......c....+',
       '+......................+',
-      '+......................+',
-      '#.#.#r#.#.#.#r#.#.#.#.##',
+      '#.#s#r#.#.#.#r#s#.#.#.##',
       '########################',
     ],
   },
@@ -177,7 +182,7 @@ export function checkLocation(def: LocationDef): string[] {
   const connectors = connectorsOf(plan);
   if (connectors.length === 0) problems.push(`${def.id}: no connector`);
   // Walkable: everything but rock and deep water.
-  const walk = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && plan[y][x] !== '#' && plan[y][x] !== 'W';
+  const walk = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && !SOLID_CHARS.includes(plan[y][x]);
   const seen = new Set<string>();
   const queue = connectors.flatMap((c) => c.cells);
   for (const p of queue) seen.add(`${p.x},${p.y}`);

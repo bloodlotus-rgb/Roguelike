@@ -1,6 +1,7 @@
 import { CONFIG } from './config';
 import type { ItemKind, KeyKind } from './inventory';
 import { connectorsOf, LOCATIONS, type LocationDef } from './locations';
+import { PIECE_CHARS, PIECES, type Piece, type PieceKind } from './pieces';
 import { Rng } from './rng';
 
 export const Tile = {
@@ -172,6 +173,10 @@ export interface Level {
   locks: Array<Point & { kind: 'locked' | 'stuck'; key?: KeyKind }>;
   /** Locations drawn by hand set into this level (their rooms have shape 'place'). */
   places: Array<{ id: string; x: number; y: number; w: number; h: number }>;
+  /** What the level is furnished with (see pieces.ts). */
+  pieces: Piece[];
+  /** Tiles taken by solid pieces: no one walks through, light and sight pass over. */
+  blocked?: Uint8Array;
   /** Camps of old, in some locations, that can be lit again without a kit. */
   outposts: Point[];
   /** Crates and remains that locations put in fixed spots (searched anew in every life). */
@@ -205,7 +210,7 @@ export function isFloor(level: Level, x: number, y: number): boolean {
 
 /** Floor that can be crossed right now (not behind a shut door, not open air). */
 export function isPassable(level: Level, x: number, y: number): boolean {
-  return isFloor(level, x, y) && !level.closed?.has(y * level.width + x);
+  return isFloor(level, x, y) && !level.closed?.has(y * level.width + x) && !level.blocked?.[y * level.width + x];
 }
 
 /** Whether sight and light get across a tile: floor or open air, not shut. */
@@ -688,7 +693,7 @@ export function flood(level: Level, amount: number): void {
     if (tiles[i] !== Tile.Floor || dist[i] > rise || Math.abs(x - fall.x) > 2 || Math.abs(y - fall.y) > 2) continue;
     tiles[i] = Tile.Deep;
     const reached = floorDistances(level, level.start);
-    if (reached.some((d, k) => d === -1 && tiles[k] === Tile.Floor)) tiles[i] = Tile.Floor;
+    if (reached.some((d, k) => d === -1 && tiles[k] === Tile.Floor && !level.blocked?.[k])) tiles[i] = Tile.Floor;
     else water[i] = Water.Deep;
   }
 }
@@ -956,6 +961,7 @@ function generateLayout(seed: string, depth: number): Level {
     places: rooms.filter((r) => r.shape === 'place').map((r) => ({ id: r.place!, x: r.x, y: r.y, w: r.w, h: r.h })),
     outposts: [],
     fixedLoot: [],
+    pieces: [],
   };
 
   // Stairwells are cut last, so no corridor breaks them; any room a stairwell cut off is
@@ -1076,6 +1082,7 @@ function generateLayout(seed: string, depth: number): Level {
         } else if (c === 'k') level.fixedLoot.push({ id: 0, kind: 'crate', ...p });
         else if (c === 'r') level.fixedLoot.push({ id: 0, kind: 'remains', ...p });
         else if (c === 'O') level.outposts.push(p);
+        else if (PIECE_CHARS[c]) level.pieces.push({ kind: PIECE_CHARS[c], ...p });
       }
     }
   }
@@ -1120,6 +1127,7 @@ function generateLayout(seed: string, depth: number): Level {
     hasDoor.set(`${d.x},${d.y}`, door);
     return door;
   });
+  dressRooms(level, Rng.derive(seed, 'pieces', depth), taken, forced);
   level.rubble = collapse(level, Rng.derive(seed, 'rubble', depth), [...upBlock, ...downBlock, level.pit, level.landing]);
   sealWays(level, Rng.derive(seed, 'locks', depth));
   layouts.set(key, level);
@@ -1144,6 +1152,8 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
     places: layout.places.map((p) => ({ ...p })),
     outposts: layout.outposts.map((p) => ({ ...p })),
     fixedLoot: layout.fixedLoot.map((f) => ({ ...f })),
+    pieces: layout.pieces.map((p) => ({ ...p })),
+    blocked: layout.blocked?.slice(),
     key: layout.key && { ...layout.key },
     rooms: layout.rooms.map((r) => ({ ...r })),
     features: layout.features.map((f) => ({ ...f })),
@@ -1205,7 +1215,7 @@ function collapse(level: Level, rng: Rng, keepClear: Point[]): Point[] {
     const closed = new Set([...chosen, ...pair].map((q) => q.y * width + q.x));
     const dist = floorDistances({ ...level, closed }, level.start);
     let cut = false;
-    for (let i = 0; i < dist.length && !cut; i++) if (level.tiles[i] === Tile.Floor && !closed.has(i) && dist[i] === -1) cut = true;
+    for (let i = 0; i < dist.length && !cut; i++) if (level.tiles[i] === Tile.Floor && !closed.has(i) && !level.blocked?.[i] && dist[i] === -1) cut = true;
     if (!cut) chosen.push(...pair);
   }
   return chosen;
@@ -1297,6 +1307,80 @@ function sealWays(level: Level, rng: Rng): void {
   if (spots.length > 0) level.key = { ...rng.pick(spots), kind: keyKind };
 }
 
+/**
+ * Furnishes the rooms: braziers in the bigger ones (the dungeon's own lights), chains
+ * hanging here and there, and now and then a room with a purpose (a store of shelves and
+ * barrels, a crypt with sarcophagi and an altar, a ruin of rubble and broken columns).
+ * Arches over every entrance. Solid pieces never stand in a doorway or beside one, and a
+ * room's furniture is taken back if it would cut any way off. The pieces locations draw
+ * are already in place.
+ */
+function dressRooms(level: Level, rng: Rng, taken: Set<string>, forced: number): void {
+  const { width } = level;
+  const blocked = new Uint8Array(width * level.height);
+  const mark = (p: Piece) => {
+    if (PIECES[p.kind].solid) blocked[p.y * width + p.x] = 1;
+  };
+  for (const p of level.pieces) mark(p);
+  level.blocked = blocked;
+  const nearDoor = (x: number, y: number) => level.doorways.some((d) => Math.abs(d.x - x) <= 1 && Math.abs(d.y - y) <= 1);
+  const free = (x: number, y: number) =>
+    isFloor(level, x, y) && !blocked[y * width + x] && waterAt(level, x, y) === Water.None && groundAt(level, x, y) === Ground.Low && !taken.has(`${x},${y}`) && !nearDoor(x, y);
+  // Which way a tile against a wall faces (away from the wall), if it is against one.
+  const wallFace = (x: number, y: number) => {
+    const d = DIRS.find((d) => tileAt(level, x - d.x, y - d.y) === Tile.Wall);
+    return d ? { x: d.x, y: d.y } : null;
+  };
+  const before = floorDistances(level, level.start);
+  level.rooms.forEach((room, index) => {
+    if (room.shape === 'place' || index < forced) return;
+    const placed: Piece[] = [];
+    const tiles: Point[] = [];
+    for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) if (free(x, y)) tiles.push({ x, y });
+    const edge = tiles.filter((p) => wallFace(p.x, p.y));
+    const inner = tiles.filter((p) => !wallFace(p.x, p.y) && DIRS.every((d) => isFloor(level, p.x + d.x, p.y + d.y)));
+    const put = (kind: PieceKind, from: Point[], n: number) => {
+      for (let i = 0; i < n && from.length > 0; i++) {
+        const p = from.splice(rng.int(0, from.length - 1), 1)[0];
+        if (placed.some((q) => Math.abs(q.x - p.x) <= 1 && Math.abs(q.y - p.y) <= 1 && PIECES[kind].solid)) continue;
+        const piece: Piece = { kind, x: p.x, y: p.y, ...(PIECES[kind].againstWall ? { face: wallFace(p.x, p.y)! } : {}) };
+        placed.push(piece);
+        mark(piece);
+      }
+    };
+    const area = room.w * room.h;
+    // Light: halls and big rooms have braziers; others now and then one.
+    const braziers = room.shape === 'hall' ? 4 : area >= 120 ? 3 : area >= 60 ? 2 : rng.chance(0.3) ? 1 : 0;
+    put('brazier', edge, braziers);
+    if (rng.chance(0.3)) put('chains', [...inner], rng.int(1, 3));
+    const purpose = rng.next();
+    if (purpose < 0.16) {
+      put('shelf', edge, rng.int(2, 4));
+      put('barrel', edge, rng.int(2, 5));
+    } else if (purpose < 0.26 && level.depth >= 2) {
+      put('altar', edge, 1);
+      put('sarcophagus', inner, rng.int(1, 3));
+    } else if (purpose < 0.4) {
+      put('rubblePile', inner, rng.int(1, 3));
+      put('brokenColumn', inner, rng.int(0, 2));
+      put('rubblePile', edge, rng.int(0, 2));
+    }
+    // Take it all back if it cut any way off.
+    const after = floorDistances(level, level.start);
+    if (before.some((d, i) => d !== -1 && after[i] === -1 && !blocked[i])) {
+      for (const p of placed) blocked[p.y * width + p.x] = 0;
+      return;
+    }
+    level.pieces.push(...placed);
+  });
+  // An arch over every entrance (one per entrance, on its first tile).
+  for (const d of level.doorways) {
+    const partner = doorwayPartner(level, d);
+    if (partner && (partner.y * width + partner.x) < d.y * width + d.x) continue;
+    level.pieces.push({ kind: 'arch', x: d.x, y: d.y });
+  }
+}
+
 /** The other half of a two-tile entrance, if this doorway is one. */
 export function doorwayPartner(level: Level, d: Point): Point | null {
   return level.doorways.find((o) => Math.abs(o.x - d.x) + Math.abs(o.y - d.y) === 1) ?? null;
@@ -1311,7 +1395,7 @@ function placeSpots(level: Level, rng: Rng, taken: Set<string>, count: number, o
       const x = rng.int(room.x, room.x + room.w - 1);
       const y = rng.int(room.y, room.y + room.h - 1);
       const key = `${x},${y}`;
-      if (taken.has(key) || !isFloor(level, x, y) || waterAt(level, x, y) !== Water.None || !ok(x, y)) continue;
+      if (taken.has(key) || !isPassable(level, x, y) || waterAt(level, x, y) !== Water.None || !ok(x, y)) continue;
       taken.add(key);
       spots.push([x, y]);
       break;
