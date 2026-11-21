@@ -82,3 +82,25 @@
   - La **grilla 3D en capas**: plantas con varias alturas, balcones y locaciones de varios niveles (⇅). Por ahora el plano es de una sola capa y las alturas salen del tamaño del espacio.
   - Arreglar la distancia entre niveles apilados.
   - Las **piezas** (A4), para que las locaciones tengan arcos, altares, cadenas, braseros…
+
+## A4 implementada: piezas, primera tanda
+
+- **Biblioteca** (`src/core/pieces.ts`):
+  - **brasero**: luz de la mazmorra, con fuego que titila y luz real como las antorchas;
+  - **cadenas** colgantes, **altar**, **sarcófago** (a veces con la tapa corrida), **estantes** con frascos y libros, **barriles**, **montón de escombros** y **columna rota**;
+  - **arco** de piedra sobre cada entrada.
+- **Muebles sólidos**: ocupan la casilla. Nadie los atraviesa (ni el héroe ni los horrores, que no aparecen adentro), pero la luz y la vista pasan por encima. Lo que se tira al piso nunca cae sobre ellos.
+- **El generador viste las salas**:
+  - **braseros** según el tamaño (4 en los salones, 3 en las salas grandes, 2 en las medianas, a veces 1);
+  - **cadenas** acá y allá;
+  - a veces una sala **con propósito**: **depósito** (estantes y barriles), **cripta** (altar y sarcófagos, desde la profundidad 2) o **ruina** (escombros y columnas rotas).
+  - Ningún mueble sólido va en una entrada ni pegado a ella, y si una sala quedaría cortada, se le saca todo.
+- **Las locaciones usan las piezas** con letras nuevas en su plano:
+  - `x` brasero, `c` cadenas, `a` altar, `s` sarcófago, `h` estantes, `b` barriles, `u` escombros, `p` columna rota.
+  - Las 5 primeras ya están vestidas.
+- **Dibujo**:
+  - los muebles contra la pared miran hacia la sala;
+  - los arcos llegan hasta el techo del pasillo, con jambas y clave;
+  - arcos y cadenas solo se ven en primera persona, porque desde arriba taparían el nivel.
+- **Mapa**: los muebles van como bloques oscuros y los braseros como un fuego chico.
+- **Pendiente**: las arcadas y bóvedas, más tipos de puerta (reja levadiza), y las piezas de agua, fuego y estructura de la biblioteca (gárgolas, canaletas, pozos con brocal, vigas, entrepisos, escaleras de caracol). Van en la próxima tanda y con las obras.
