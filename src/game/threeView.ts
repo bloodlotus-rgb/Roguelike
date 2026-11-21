@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import type { Level, Point } from '../core/dungeon';
 import { CONFIG } from '../core/config';
-import { generateLevel, Ground, groundAt, groundHeight, isBridge, isChasm, isFloor, isVoid, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
+import { generateLevel, Ground, groundAt, groundHeight, isBridge, isChasm, isDeep, isFloor, isShallow, isVoid, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
 import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
@@ -155,6 +155,10 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           vBumpMapUv = inkUv;
         #endif`
     : '';
+  // Each set of options compiles its own program: three.js would otherwise reuse the first
+  // one built for materials that look alike to it (same type, same maps).
+  const cacheKey = `ink:${cut}:${worldUv ?? ''}:${grime}:${outline}:${solid}:${boost}`;
+  material.customProgramCacheKey = () => cacheKey;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uFade = cutaway.fade;
     shader.uniforms.uPlayer = cutaway.player;
@@ -348,7 +352,7 @@ function wallGeometry(level: Level, tiles: Array<[number, number]>, inset = 0): 
     const xm = x + e;
     const zp = y + 1 - e;
     const zm = y + e;
-    const open = (tx: number, ty: number) => isFloor(level, tx, ty) || isChasm(level, tx, ty);
+    const open = (tx: number, ty: number) => isFloor(level, tx, ty) || isChasm(level, tx, ty) || isDeep(level, tx, ty);
     if (open(x + 1, y)) quad([[xp, 0, y + 1], [xp, 0, y], [xp, 1, y], [xp, 1, y + 1]], [1, 0, 0]);
     if (open(x - 1, y)) quad([[xm, 0, y], [xm, 0, y + 1], [xm, 1, y + 1], [xm, 1, y]], [-1, 0, 0]);
     if (open(x, y + 1)) quad([[x, 0, zp], [x + 1, 0, zp], [x + 1, 1, zp], [x, 1, zp]], [0, 0, 1]);
@@ -865,6 +869,7 @@ export class ThreeView {
     this.levelGroup.add(this.stairsMesh(level.up, 'up'));
     this.levelGroup.add(this.belowMesh(level));
     this.levelGroup.add(this.chasmMesh(level));
+    this.levelGroup.add(this.waterMesh(level));
     if (level.gallery) this.levelGroup.add(this.railingMesh(level));
     this.ceiling = new THREE.Mesh(
       this.tileQuads(level, WALL_FIRST, false),
@@ -877,9 +882,9 @@ export class ThreeView {
     this.columnTiles = [];
     for (let y = 0; y < level.height; y++) {
       for (let x = 0; x < level.width; x++) {
-        if (isFloor(level, x, y) || isVoid(level, x, y) || isChasm(level, x, y)) continue;
+        if (isFloor(level, x, y) || isVoid(level, x, y) || isChasm(level, x, y) || isDeep(level, x, y)) continue;
         let touches = false;
-        for (let dy = -1; dy <= 1 && !touches; dy++) for (let dx = -1; dx <= 1; dx++) if (isFloor(level, x + dx, y + dy) || isChasm(level, x + dx, y + dy)) touches = true;
+        for (let dy = -1; dy <= 1 && !touches; dy++) for (let dx = -1; dx <= 1; dx++) if (isFloor(level, x + dx, y + dy) || isChasm(level, x + dx, y + dy) || isDeep(level, x + dx, y + dy)) touches = true;
         if (!touches) continue;
         const column = isFloor(level, x - 1, y) && isFloor(level, x + 1, y) && isFloor(level, x, y - 1) && isFloor(level, x, y + 1);
         (column ? this.columnTiles : this.wallTiles).push([x, y]);
@@ -1288,6 +1293,78 @@ export class ThreeView {
     return g;
   }
 
+  /**
+   * Water: a still sheet over the floor where it is shallow, and where it is deep a dark
+   * surface sunk in a stone basin.
+   */
+  private waterMesh(level: Level): THREE.Group {
+    const g = new THREE.Group();
+    const sheet = (test: (x: number, y: number) => boolean, height: number) => {
+      const positions: number[] = [];
+      const indices: number[] = [];
+      let n = 0;
+      for (let y = 0; y < level.height; y++) {
+        for (let x = 0; x < level.width; x++) {
+          if (!test(x, y)) continue;
+          positions.push(x, height, y, x + 1, height, y, x + 1, height, y + 1, x, height, y + 1);
+          indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
+          n += 4;
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(positions.length).fill(0).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+      geo.setIndex(indices);
+      return { geo, n };
+    };
+    const shallow = sheet((x, y) => isShallow(level, x, y) && !isBridge(level, x, y), 0.035);
+    if (shallow.n > 0) {
+      const mesh = new THREE.Mesh(
+        shallow.geo,
+        inkMaterial(new THREE.MeshLambertMaterial({ color: 0x8aa0ad, transparent: true, opacity: 0.55, depthWrite: false })),
+      );
+      mesh.receiveShadow = true;
+      g.add(mesh);
+    }
+    const deepSheet = sheet((x, y) => isDeep(level, x, y), -0.16);
+    if (deepSheet.n === 0) return g;
+    const surface = new THREE.Mesh(deepSheet.geo, inkMaterial(new THREE.MeshLambertMaterial({ color: 0x5d7480 })));
+    surface.receiveShadow = true;
+    g.add(surface);
+    // The basin's lip: stone from the floor down to the water.
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const indices: number[] = [];
+    let n = 0;
+    for (let y = 0; y < level.height; y++) {
+      for (let x = 0; x < level.width; x++) {
+        if (!isDeep(level, x, y)) continue;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          if (isDeep(level, x + dx, y + dy)) continue;
+          const ex = dx === 1 ? x + 1 : dx === -1 ? x : null;
+          const ez = dy === 1 ? y + 1 : dy === -1 ? y : null;
+          const a = ex !== null ? { x: ex, z: y } : { x, z: ez! };
+          const b = ex !== null ? { x: ex, z: y + 1 } : { x: x + 1, z: ez! };
+          positions.push(a.x, 0, a.z, b.x, 0, b.z, b.x, -0.16, b.z, a.x, -0.16, a.z);
+          for (let i = 0; i < 4; i++) normals.push(-dx, 0, -dy);
+          if (dx === 1 || dy === -1) indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
+          else indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
+          n += 4;
+        }
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+    geo.setIndex(indices);
+    const lip = new THREE.Mesh(geo, inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling, side: THREE.DoubleSide }), { worldUv: 'box' }));
+    lip.receiveShadow = true;
+    g.add(lip);
+    return g;
+  }
+
   /** A tile of bridge, turned to run between its two banks. */
   private bridgeAt(level: Level, x: number, y: number, old: boolean): THREE.Group {
     const obj = outlined(bridgeModel(this.mats, old, x * 31 + y), this.mats);
@@ -1307,8 +1384,8 @@ export class ThreeView {
     let n = 0;
     for (let ty = 0; ty < level.height; ty++) {
       for (let tx = 0; tx < level.width; tx++) {
-        // The ceiling runs on over chasms; the floor stops at their edge.
-        if (!isFloor(level, tx, ty) && (up || !isChasm(level, tx, ty))) continue;
+        // The ceiling runs on over chasms and deep water; the floor stops at their edge.
+        if (!isFloor(level, tx, ty) && (up || !(isChasm(level, tx, ty) || isDeep(level, tx, ty)))) continue;
         // The stairs down and the pit open holes in the floor; the stairs up rise through
         // the ceiling.
         const hole = (sw: Stairwell) => sw.steps.some((p) => p.x === tx && p.y === ty);

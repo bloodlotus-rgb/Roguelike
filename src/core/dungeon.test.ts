@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canStep, floorDistances, generateLevel, Ground, isChasm, isFloor, isVoid } from './dungeon';
+import { canStep, floorDistances, generateLevel, Ground, isChasm, isDeep, isFloor, isVoid, Water, waterAt } from './dungeon';
 
 const seeds = ['estirpe', 'tainted', 'abc', '12345', 'mansion'];
 
@@ -159,5 +159,30 @@ describe('generateLevel', () => {
     expect(chasms).toBeGreaterThan(2);
     expect(bridges).toBeGreaterThan(0);
   });
-});
 
+  it('pools: shallow rims around deep middles, puddles under drips, nothing left lying in water', () => {
+    let deep = 0;
+    let shallow = 0;
+    for (const seed of seeds) {
+      for (let depth = 1; depth <= 6; depth++) {
+        const level = generateLevel(seed, depth);
+        for (let y = 0; y < level.height; y++) {
+          for (let x = 0; x < level.width; x++) {
+            const w = waterAt(level, x, y);
+            if (isDeep(level, x, y)) {
+              deep++;
+              expect(w).toBe(Water.Deep);
+            } else if (w === Water.Shallow) {
+              shallow++;
+              expect(isFloor(level, x, y)).toBe(true);
+            }
+          }
+        }
+        for (const f of level.features) if (f.kind === 'drip') expect(waterAt(level, f.x, f.y)).toBe(Water.Shallow);
+        for (const f of level.features) if (f.kind !== 'drip') expect(waterAt(level, f.x, f.y)).toBe(Water.None);
+      }
+    }
+    expect(deep).toBeGreaterThan(0);
+    expect(shallow).toBeGreaterThan(deep);
+  });
+});

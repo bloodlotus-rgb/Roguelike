@@ -1004,6 +1004,62 @@ describe('chasms', () => {
   });
 });
 
+describe('water', () => {
+  /** Shallow water across the clearing, just ahead of the hero. */
+  function ford(world: World): number {
+    const cx = Math.floor(world.player.x);
+    const cy = Math.floor(world.player.y);
+    world.level.water = world.level.water ?? new Uint8Array(world.level.tiles.length);
+    for (let y = cy - 5; y <= cy + 5; y++) for (let x = cx + 1; x <= cx + 3; x++) world.level.water[y * world.level.width + x] = 1;
+    world.player = { x: cx + 0.5, y: cy + 0.5 };
+    return cx;
+  }
+
+  it('shallow water slows the hero and every step splashes', () => {
+    const dry = arena('headsman');
+    const x0 = dry.player.x;
+    run(dry, 0.5, move(-1, 0));
+    const dryDistance = x0 - dry.player.x;
+
+    const world = arena('headsman');
+    const cx = ford(world);
+    world.player = { x: cx + 1.5, y: world.player.y };
+    const events = run(world, 0.5, move(1, 0));
+    expect(world.player.x - (cx + 1.5)).toBeLessThan(dryDistance * 0.75);
+    expect(events.some((e) => e.type === 'splash')).toBe(true);
+  });
+
+  it('a splash wakes horrors close by', () => {
+    const world = arena('headsman');
+    ford(world);
+    const sleeper = place(world, 'husk', -3, 0, 'idle');
+    sleeper.alerted = false;
+    run(world, 0.6, move(1, 0));
+    expect(sleeper.alerted).toBe(true);
+  });
+
+  it('crawlers will not step into water', () => {
+    const world = arena('headsman');
+    const cx = ford(world);
+    world.player = { x: cx + 2.5, y: world.player.y };
+    const crawler = place(world, 'crawler', -2.2, 0);
+    run(world, 2);
+    expect(crawler.pos.x).toBeLessThan(cx + 1);
+  });
+
+  it('standing water fills the waterskins, turbid', () => {
+    const world = arena('headsman');
+    const cx = ford(world);
+    world.player = { x: cx + 1.5, y: world.player.y };
+    world.update(0.02, NO_INPUT);
+    expect(world.interaction).toBe('pool');
+    world.interact();
+    const events = run(world, 0.05);
+    const refill = events.find((e) => e.type === 'refilled');
+    expect(refill && refill.type === 'refilled' && refill.turbid).toBe(true);
+  });
+});
+
 describe('collapses', () => {
   it('some corridors are blocked by stones that can be dug out, loudly, for the whole family', () => {
     let world: World | null = null;

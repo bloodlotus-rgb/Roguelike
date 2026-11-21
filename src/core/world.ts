@@ -1,7 +1,7 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { floorDistances, generateLevel, goldPile, groundHeight, isChasm, isFloor, isSeeThrough, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { floorDistances, generateLevel, goldPile, groundHeight, isChasm, isFloor, isSeeThrough, isShallow, waterAt, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
 import { addItem, ITEMS, removeItem, starterKit, type Inventory, type ItemKind } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
@@ -129,6 +129,7 @@ export type WorldEvent =
   | { type: 'leap' }
   | { type: 'digging'; seconds: number }
   | { type: 'dig' }
+  | { type: 'splash' }
   | { type: 'campLost'; camp: CampSite }
   | { type: 'workBuilt'; work: Work }
   | { type: 'torchFilled' }
@@ -187,6 +188,7 @@ export type Interaction =
   | 'drip'
   | 'search'
   | 'clear'
+  | 'pool'
   | null;
 
 /** Counters behind the acquired traits. */
@@ -841,6 +843,7 @@ export class World {
     this.tickClock(dt, events);
     this.rally *= Math.exp(-dt / COMBAT.rallyFade);
     if (fx.mapPath) this.path.add(Math.floor(this.player.y) * this.level.width + Math.floor(this.player.x));
+    this.wade(events);
 
     this.pickUp(events);
     const revealed = this.reveal();
@@ -966,6 +969,7 @@ export class World {
     if (this.fx.coward && this.hpFraction < 0.3) speed *= 1.2;
     if (this.action.type === 'attack') speed *= 0.35;
     if (this.action.type === 'special') speed *= 0.2;
+    if (isShallow(this.level, Math.floor(this.player.x), Math.floor(this.player.y))) speed *= CONFIG.water.wade;
     const scale = (Math.min(1, l) / l) * speed * dt;
     this.player = moveWithCollision(this.level, this.player, input.move.x * scale, input.move.y * scale, CONFIG.player.radius);
   }
@@ -2058,6 +2062,30 @@ export class World {
     return best;
   }
 
+  /** Standing water underfoot or right beside the hero: turbid, but water. */
+  private waterInReach(): boolean {
+    const x = Math.floor(this.player.x);
+    const y = Math.floor(this.player.y);
+    return [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => waterAt(this.level, x + dx, y + dy) !== 0);
+  }
+
+  /** Each step into shallow water splashes, and horrors close by hear it. */
+  private wetTile = -1;
+  private wade(events: WorldEvent[]): void {
+    const x = Math.floor(this.player.x);
+    const y = Math.floor(this.player.y);
+    const tile = y * this.level.width + x;
+    if (tile === this.wetTile) return;
+    this.wetTile = tile;
+    if (!isShallow(this.level, x, y)) return;
+    events.push({ type: 'splash' });
+    for (const e of this.enemies) {
+      if (e.state === 'dead' || dist(e.pos, this.player) > CONFIG.water.splashNoise) continue;
+      e.alerted = true;
+      e.forgetTimer = 0;
+    }
+  }
+
   /** What the action button does here. */
   get interaction(): Interaction {
     if (this.ropeHere('down')) return 'ropeDown';
@@ -2068,7 +2096,7 @@ export class World {
     if (door) return door.shut ? 'openDoor' : 'closeDoor';
     if (this.rubbleInReach()) return 'clear';
     const f = this.featureInReach();
-    if (!f) return null;
+    if (!f) return this.waterInReach() ? 'pool' : null;
     return f.kind === 'fountain' || f.kind === 'drip' ? f.kind : 'search';
   }
 
@@ -2103,10 +2131,10 @@ export class World {
     const rubble = this.rubbleInReach();
     if (rubble) return this.startDigging(rubble, events);
     const f = this.featureInReach();
-    if (!f) return;
-    if (f.kind === 'fountain' || f.kind === 'drip') {
-      // Drip water is turbid, and mixed with clean water it all turns turbid.
-      const turbid = f.kind === 'drip';
+    if (!f && !this.waterInReach()) return;
+    if (!f || f.kind === 'fountain' || f.kind === 'drip') {
+      // Drip and standing water are turbid, and mixed with clean water it all turns turbid.
+      const turbid = f?.kind !== 'fountain';
       let skins = 0;
       for (const it of this.inventory.items) {
         if (it.kind !== 'waterskin') continue;
@@ -2537,7 +2565,13 @@ export class World {
   }
 
   private step(enemy: Enemy, dir: Point, distance: number): void {
-    enemy.pos = moveWithCollision(this.level, enemy.pos, dir.x * distance, dir.y * distance, enemy.def.radius);
+    const wet = (p: Point) => isShallow(this.level, Math.floor(p.x), Math.floor(p.y));
+    const inWater = wet(enemy.pos);
+    if (inWater) distance *= CONFIG.water.wade;
+    const next = moveWithCollision(this.level, enemy.pos, dir.x * distance, dir.y * distance, enemy.def.radius);
+    // Crawlers will not set foot in water: they wait at its edge.
+    if (enemy.kind === 'crawler' && !inWater && wet(next)) return;
+    enemy.pos = next;
   }
 
   /** Distances to the player over the floor, recomputed when the player changes tile. */

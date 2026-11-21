@@ -9,7 +9,12 @@ export const Tile = {
   Void: 2,
   /** A chasm: a crack with no bottom in sight. Seen and lit across; crossed only by a bridge. */
   Chasm: 3,
+  /** Deep water: seen and lit across, never walked (it is walked around). */
+  Deep: 4,
 } as const;
+
+/** Water on a tile: none, shallow (floor you wade through) or deep (see `Tile.Deep`). */
+export const Water = { None: 0, Shallow: 1, Deep: 2 } as const;
 export type Tile = (typeof Tile)[keyof typeof Tile];
 
 /** What can lie on the floor: anything that goes in the backpack, or a pile of gold. */
@@ -160,6 +165,8 @@ export interface Level {
   bridges: number[];
   /** Ground of each tile (see `Ground`); absent means all low. */
   ground?: Uint8Array;
+  /** Water of each tile (see `Water`); absent means dry. */
+  water?: Uint8Array;
   /** Tiles shut right now (closed doors, barricades): floor, but nothing gets through. */
   closed?: Set<number>;
 }
@@ -181,7 +188,20 @@ export function isPassable(level: Level, x: number, y: number): boolean {
 /** Whether sight and light get across a tile: floor or open air, not shut. */
 export function isSeeThrough(level: Level, x: number, y: number): boolean {
   const t = tileAt(level, x, y);
-  return (t === Tile.Floor || t === Tile.Void || t === Tile.Chasm) && !level.closed?.has(y * level.width + x);
+  return (t === Tile.Floor || t === Tile.Void || t === Tile.Chasm || t === Tile.Deep) && !level.closed?.has(y * level.width + x);
+}
+
+export function waterAt(level: Level, x: number, y: number): number {
+  if (x < 0 || y < 0 || x >= level.width || y >= level.height) return Water.None;
+  return level.water?.[y * level.width + x] ?? Water.None;
+}
+
+export function isShallow(level: Level, x: number, y: number): boolean {
+  return waterAt(level, x, y) === Water.Shallow;
+}
+
+export function isDeep(level: Level, x: number, y: number): boolean {
+  return tileAt(level, x, y) === Tile.Deep;
 }
 
 export function isChasm(level: Level, x: number, y: number): boolean {
@@ -472,6 +492,47 @@ function raiseTerraces(level: Level, rng: Rng, keepClear: Point[], forced: numbe
   });
 }
 
+/**
+ * Pools: in some plain rooms, standing water: a shallow rim you wade through around a deep
+ * middle you walk around. If the deep part would cut the way, it stays shallow.
+ */
+function fillPools(level: Level, rng: Rng, keepClear: Point[], forced: number): void {
+  const { width, tiles } = level;
+  const water = level.water!;
+  level.rooms.forEach((room, index) => {
+    if (index < forced || room.w < 5 || room.h < 5 || !rng.chance(CONFIG.level.poolChance)) return;
+    if (level.gallery && overlaps(room, level.gallery, 0)) return;
+    if (keepClear.some((p) => p.x >= room.x - 1 && p.x <= room.x + room.w && p.y >= room.y - 1 && p.y <= room.y + room.h)) return;
+    for (let y = room.y; y < room.y + room.h; y++) {
+      for (let x = room.x; x < room.x + room.w; x++) {
+        if (isChasm(level, x, y) || isBridge(level, x, y) || groundAt(level, x, y) !== Ground.Low && isFloor(level, x, y)) return;
+      }
+    }
+    // An oval somewhere in the room, rippled at the edge.
+    const rx = rng.range(1.6, Math.max(1.8, room.w / 2 - 0.6));
+    const ry = rng.range(1.6, Math.max(1.8, room.h / 2 - 0.6));
+    const cx = rng.range(room.x + rx * 0.7, room.x + room.w - rx * 0.7);
+    const cy = rng.range(room.y + ry * 0.7, room.y + room.h - ry * 0.7);
+    const deep: number[] = [];
+    for (let y = room.y; y < room.y + room.h; y++) {
+      for (let x = room.x; x < room.x + room.w; x++) {
+        if (!isFloor(level, x, y)) continue;
+        const d = Math.hypot((x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry) + (rng.next() - 0.5) * 0.25;
+        if (d > 1.05) continue;
+        water[y * width + x] = Water.Shallow;
+        if (d < 0.6) deep.push(y * width + x);
+      }
+    }
+    if (deep.length === 0) return;
+    const before = floorDistances(level, level.start);
+    for (const i of deep) tiles[i] = Tile.Deep;
+    const after = floorDistances(level, level.start);
+    const cut = before.some((d, i) => d !== -1 && after[i] === -1 && tiles[i] === Tile.Floor);
+    if (cut) for (const i of deep) tiles[i] = Tile.Floor;
+    else for (const i of deep) water[i] = Water.Deep;
+  });
+}
+
 /** Where the stairs down from the mansion reach depth 1. */
 function mansionStairs(seed: string, width: number, height: number): Stairwell {
   const rng = Rng.derive(seed, 'mansion-stairs');
@@ -684,8 +745,10 @@ function generateLayout(seed: string, depth: number): Level {
   }
 
   level.ground = new Uint8Array(width * height);
+  level.water = new Uint8Array(width * height);
   cutChasms(level, Rng.derive(seed, 'chasms', depth), [...upBlock, ...downBlock, level.pit, level.landing], 1 + (landing ? 1 : 0) + (above?.gallery ? 1 : 0));
   raiseTerraces(level, Rng.derive(seed, 'terraces', depth), [...upBlock, ...downBlock, level.pit, level.landing], 1 + (landing ? 1 : 0) + (above?.gallery ? 1 : 0));
+  fillPools(level, Rng.derive(seed, 'pools', depth), [...upBlock, ...downBlock, level.pit, level.landing], 1 + (landing ? 1 : 0) + (above?.gallery ? 1 : 0));
 
   // Fountains and drips are geography: the same in every life.
   const taken = new Set<string>();
@@ -695,7 +758,15 @@ function generateLayout(seed: string, depth: number): Level {
   const fountains = placeSpots(level, Rng.derive(seed, 'fountains', depth), taken, rngCount(Rng.derive(seed, 'fountains-n', depth), CONFIG.features.fountain));
   const features: Feature[] = fountains.map(([x, y]) => ({ id: 0, kind: 'fountain' as const, x, y }));
   const dripRng = Rng.derive(seed, 'drips', depth);
-  for (const [x, y] of placeSpots(level, dripRng, taken, rngCount(dripRng, CONFIG.features.drip))) features.push({ id: 0, kind: 'drip', x, y });
+  for (const [x, y] of placeSpots(level, dripRng, taken, rngCount(dripRng, CONFIG.features.drip))) {
+    features.push({ id: 0, kind: 'drip', x, y });
+    // Where it drips, a puddle gathers.
+    for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (isFloor(level, x + dx, y + dy) && groundAt(level, x + dx, y + dy) === Ground.Low && (dx === 0 || dripRng.chance(0.6))) {
+        level.water[(y + dy) * width + x + dx] = Water.Shallow;
+      }
+    }
+  }
   level.features = features;
   level.doorways = findDoorways(level);
   const doorRng = Rng.derive(seed, 'doors', depth);
@@ -715,6 +786,7 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
     ...layout,
     tiles: layout.tiles.slice(),
     ground: layout.ground?.slice(),
+    water: layout.water?.slice(),
     bridges: layout.bridges.slice(),
     rubble: layout.rubble.map((p) => ({ ...p })),
     rooms: layout.rooms.map((r) => ({ ...r })),
@@ -806,7 +878,7 @@ function placeSpots(level: Level, rng: Rng, taken: Set<string>, count: number): 
       const x = rng.int(room.x, room.x + room.w - 1);
       const y = rng.int(room.y, room.y + room.h - 1);
       const key = `${x},${y}`;
-      if (taken.has(key) || !isFloor(level, x, y)) continue;
+      if (taken.has(key) || !isFloor(level, x, y) || waterAt(level, x, y) !== Water.None) continue;
       taken.add(key);
       spots.push([x, y]);
       break;
