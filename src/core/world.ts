@@ -24,7 +24,7 @@ export interface ControlInput {
 export const NO_INPUT: ControlInput = { move: { x: 0, y: 0 }, attack: false, dodge: false, special: false };
 
 export const COMBAT = {
-  dodge: { distance: 2.2, duration: 0.28, invulnerable: 0.24, cooldown: 0.7 },
+  dodge: { distance: 2.2, duration: 0.28, invulnerable: 0.24, cooldown: 1.0 },
   run: {
     speedMultiplier: 1.6,
     /** Running is loud: detection range multiplier and hearing distance from any side. */
@@ -43,6 +43,8 @@ export const COMBAT = {
   aimReach: 1.4,
   /** Horrors forget the player after this long without seeing them. */
   forgetAfter: 3,
+  /** How far a pack hears one of its own find you, in tiles. */
+  packRadius: 16,
   /** Unaware horrors see within this half-angle of where they face, and hear within this distance. */
   viewCone: (65 * Math.PI) / 180,
   hearing: 0.9,
@@ -65,6 +67,8 @@ export type EnemyState = 'idle' | 'chase' | 'windup' | 'recover' | 'stunned' | '
 
 export interface Enemy {
   id: number;
+  /** The pack it came with (see `EnemySpawn.pack`). */
+  pack?: number;
   kind: EnemyKind;
   def: EnemyDef;
   pos: Point;
@@ -785,7 +789,7 @@ export class World {
     this.rng = Rng.derive(this.seed, 'combat', this.life, depth);
     const spawnRng = Rng.derive(this.seed, 'enemies', this.life, depth);
     this.nextId = Math.max(this.nextId, ...this.level.items.map((i) => i.id + 1));
-    this.enemies = spawnEnemies(this.level, spawnRng).map((spawn) => this.makeEnemy(spawn.kind, spawn.pos, spawn.room, spawn.roamer, spawnRng));
+    this.enemies = spawnEnemies(this.level, spawnRng).map((spawn) => ({ ...this.makeEnemy(spawn.kind, spawn.pos, spawn.room, spawn.roamer, spawnRng), pack: spawn.pack }));
     // Tunnel Rat: one more item on every level.
     if (this.fx.extraItem) {
       const extraRng = Rng.derive(this.seed, 'extra', this.life, depth);
@@ -838,7 +842,7 @@ export class World {
       starvingMultiplier: Math.max(0.2, 1 + (fx.starvingDrain ?? 0)),
     });
     if (this.survival.health < before.health) this.lastCause = before.hunger <= 0 || this.survival.hunger <= 0 ? { type: 'hunger' } : { type: 'thirst' };
-    if (this.running) this.spend(this.cls.costs.run, dt * Math.max(0.2, 1 + (fx.runCost ?? 0)));
+    if (this.running) this.spend(this.cls.costs.run, dt * CONFIG.player.runCost * Math.max(0.2, 1 + (fx.runCost ?? 0)));
     this.healWhenCalm(dt);
     // Healing traits: well fed (Hot Blood), or at death's door (Last Breath).
     let regen = 0;
@@ -2496,6 +2500,12 @@ export class World {
   private alertNearby(source: Enemy): void {
     for (const other of this.enemies) {
       if (other === source || other.state === 'dead' || other.alerted) continue;
+      // The whole pack comes, wherever it is in the dark nearby.
+      if (source.pack !== undefined && other.pack === source.pack && dist(other.pos, source.pos) <= COMBAT.packRadius) {
+        other.alerted = true;
+        other.forgetTimer = 0;
+        continue;
+      }
       if (dist(other.pos, source.pos) > COMBAT.alertRadius * Math.max(0.2, 1 + (this.fx.alertRadius ?? 0))) continue;
       if (!hasLineOfSight(this.level, other.pos, source.pos)) continue;
       other.alerted = true;

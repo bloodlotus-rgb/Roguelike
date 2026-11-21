@@ -1,14 +1,17 @@
 /** Tuning values for the prototype. Times are in seconds, meters go from 0 to 100. */
 export const CONFIG = {
   level: {
-    width: 64,
-    height: 48,
-    roomAttempts: 140,
-    minRooms: 7,
-    maxRooms: 13,
+    // Extensive floor plans: about two and a half times the area of the first levels.
+    width: 100,
+    height: 76,
+    roomAttempts: 420,
+    minRooms: 16,
+    maxRooms: 30,
     roomMinSize: 4,
-    roomMaxSize: 10,
-    extraConnections: 3,
+    roomMaxSize: 12,
+    extraConnections: 7,
+    /** Horrors per level, as a multiple of the base budget (hordes in the bigger levels). */
+    hordeScale: 2.4,
     /** Chance a level has a gallery (a double-height room over a hall below). */
     galleryChance: 0.5,
     /** Share of passages that are winding natural tunnels instead of straight corridors. */
@@ -30,24 +33,27 @@ export const CONFIG = {
     leapSpan: 1.5,
   },
   items: {
-    ration: { min: 1, max: 2 },
-    oil: { min: 1, max: 2 },
-    gold: { min: 2, max: 4 },
-    marchRationChance: 0.25,
-    mushroom: { min: 1, max: 3 },
+    // Scaled to the bigger levels: about as much per room as before.
+    ration: { min: 2, max: 4 },
+    oil: { min: 2, max: 4 },
+    gold: { min: 5, max: 9 },
+    marchRationChance: 0.5,
+    mushroom: { min: 2, max: 5 },
     mushroomPoison: 0.35,
   },
   features: {
-    fountain: { min: 1, max: 2 },
-    drip: { min: 1, max: 3 },
+    fountain: { min: 2, max: 4 },
+    drip: { min: 2, max: 6 },
     /** Share of room entrances that have a door. */
     doorChance: 0.4,
-    remains: { min: 2, max: 4 },
-    crate: { min: 3, max: 5 },
+    remains: { min: 4, max: 8 },
+    crate: { min: 6, max: 10 },
   },
   player: {
-    /** Tiles per second. */
-    speed: 3.6,
+    /** Tiles per second: a slow, careful advance. */
+    speed: 3.0,
+    /** Running tires more than it used to: a burst, not a way of moving. */
+    runCost: 1.6,
     /** Collision radius in tiles. */
     radius: 0.3,
     /** Distance in tiles to pick up an item. */

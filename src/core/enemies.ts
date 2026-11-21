@@ -1,3 +1,4 @@
+import { CONFIG } from './config';
 import type { Level, Point } from './dungeon';
 import { isFloor } from './dungeon';
 import type { Rng } from './rng';
@@ -107,6 +108,8 @@ export interface EnemySpawn {
   room: number;
   /** Roamers wander from room to room instead of staying in theirs. */
   roamer: boolean;
+  /** Horrors of one pack come together: when one finds you, the rest know. */
+  pack: number;
 }
 
 /** Spawn weights by depth: deeper levels bring more ranged and stealthy horrors. */
@@ -135,7 +138,8 @@ function pickKind(rng: Rng, depth: number): EnemyKind {
 export function spawnEnemies(level: Level, rng: Rng): EnemySpawn[] {
   const spawns: EnemySpawn[] = [];
   const taken = new Set<string>([`${level.stairs.x},${level.stairs.y}`]);
-  let budget = 12 + level.depth * 4;
+  let budget = (12 + level.depth * 4) * CONFIG.level.hordeScale;
+  let pack = 0;
   const rooms = level.rooms.map((_, i) => i).filter((i) => i !== 0);
   if (rooms.length === 0) return spawns;
   let guard = 0;
@@ -146,8 +150,10 @@ export function spawnEnemies(level: Level, rng: Rng): EnemySpawn[] {
     budget -= def.cost;
     const roomIndex = rng.pick(rooms);
     const room = level.rooms[roomIndex];
-    const count = rng.int(def.group[0], def.group[1]);
+    // Hordes: crawlers come in swarms, and the others now and then in twos and threes.
+    const count = rng.int(def.group[0], def.group[1]) + (def.group[1] > 1 ? rng.int(0, 2) : rng.chance(0.35) ? rng.int(1, 2) : 0);
     const roamer = def.kind !== 'mourner' && rng.chance(0.3);
+    pack++;
     for (let i = 0; i < count; i++) {
       for (let attempt = 0; attempt < 20; attempt++) {
         const x = rng.int(room.x, room.x + room.w - 1);
@@ -155,7 +161,7 @@ export function spawnEnemies(level: Level, rng: Rng): EnemySpawn[] {
         const key = `${x},${y}`;
         if (taken.has(key) || !isFloor(level, x, y)) continue;
         taken.add(key);
-        spawns.push({ kind, pos: { x: x + 0.5, y: y + 0.5 }, room: roomIndex, roamer });
+        spawns.push({ kind, pos: { x: x + 0.5, y: y + 0.5 }, room: roomIndex, roamer, pack });
         break;
       }
     }
