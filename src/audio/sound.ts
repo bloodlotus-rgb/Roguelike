@@ -174,6 +174,11 @@ export class Sound {
         // Falling water: a long low rush, as loud as you are close.
         this.playNoise({ filter: 'lowpass', freq: 700, freqEnd: 500, duration: 1.6, gain: 0.05 + 0.3 * event.near * event.near });
         break;
+      case 'doorHit':
+        // A blow on a heavy door: a deep thud, and splinters when it gives.
+        this.playTone({ freq: 95, freqEnd: 50, type: 'sine', duration: 0.25, gain: 0.5 });
+        this.playNoise({ filter: 'lowpass', freq: event.broke ? 2500 : 900, duration: event.broke ? 0.6 : 0.15, gain: event.broke ? 0.4 : 0.2 });
+        break;
       case 'splash':
         this.playNoise({ filter: 'bandpass', freq: 1400, freqEnd: 500, q: 1.2, duration: 0.25, gain: 0.16 });
         break;

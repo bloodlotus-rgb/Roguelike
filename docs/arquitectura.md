@@ -39,3 +39,14 @@
 - **Pendiente**:
   - Los **puestos de la mazmorra** (lugares para acampar sin kit) van con las locaciones (A3 en adelante).
   - **Los sectores**: el nivel queda partido por estas salas cerradas y por los derrumbes, pero todavía no hay sectores de verdad, con varias puertas entre zonas. Llegan con la grilla 3D y las locaciones.
+
+## A2b implementada: tres llaves, ganzúas y golpes
+
+- **Tres tipos de llave**: de **hierro** (los primeros niveles), de **bronce** (más abajo) y de **hueso** (lo más hondo).
+  - Cada cerrojo pide un tipo, y la llave **queda en la cerradura** (se gasta).
+  - Las llaves van en la mochila y **se apilan** (hasta 5).
+  - Se encuentran en restos y cofres; las de hierro y bronce también se compran en la mansión.
+  - En cada nivel con cerrojos siempre queda una llave del tipo justo, lejos de la llegada.
+- **Solo el Saqueador abre cerraduras con ganzúas**: unos 10 segundos, con poco ruido (se oye a 3 casillas).
+- **Las otras clases rompen la puerta a golpes**: cada golpe que la alcanza le saca vida y hace mucho ruido, hasta que cede. El Verdugo tarda unos 9 golpes.
+- Las **puertas trabadas** y la **reja del pozo** se siguen forzando, con cualquier clase.

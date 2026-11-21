@@ -279,8 +279,7 @@ class Session implements SceneHost {
     const world = this.world;
     for (const e of events) {
       if (e.type === 'pickup') {
-        if (e.kind === 'key') this.hud.toastText(t('toast_key'), true);
-        else this.hud.toastText(e.kind === 'gold' ? t('toast_gold', { n: e.amount ?? 0 }) : t(`item_${e.kind}` as StringKey));
+        this.hud.toastText(e.kind === 'gold' ? t('toast_gold', { n: e.amount ?? 0 }) : t(`item_${e.kind}` as StringKey));
       } else if (e.type === 'noRoom') this.hud.toastText(t('toast_noRoom', { item: t(`item_${e.kind}` as StringKey) }));
       else if (e.type === 'refilled') this.hud.toast(e.skins === 0 ? 'toast_noSkin' : e.turbid ? 'toast_turbid' : 'toast_refilled');
       else if (e.type === 'found') {
@@ -293,11 +292,13 @@ class Session implements SceneHost {
       } else if (e.type === 'interrupted') this.hud.toast('toast_interrupted');
       else if (e.type === 'digging') this.hud.toastText(t('toast_digging'), true);
       else if (e.type === 'forcing') this.hud.toastText(t('toast_forcing'), true);
+      else if (e.type === 'picking') this.hud.toastText(t('toast_picking'), true);
       else if (e.type === 'unlocked') this.hud.toast('toast_unlocked');
       else if (e.type === 'campPacked') this.hud.toastText(t('toast_campPacked'), true);
       else if (e.type === 'floodRose') this.hud.toastText(t('toast_floodRose', { depth: e.depth }), true);
       else if (e.type === 'cantUse') {
-        this.hud.toast(e.reason === 'danger' ? 'toast_danger' : e.reason === 'camp' ? 'toast_onlyCamp' : 'toast_empty');
+        if (e.reason === 'locked') this.hud.toastText(t('toast_locked'), true);
+        else this.hud.toast(e.reason === 'danger' ? 'toast_danger' : e.reason === 'camp' ? 'toast_onlyCamp' : 'toast_empty');
       } else if (e.type === 'nightfall') this.hud.toastText(t('toast_nightfall'), true);
       else if (e.type === 'levelChanged') this.levelChanged();
       else if (e.type === 'toMansion') this.enterMansion();

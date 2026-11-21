@@ -273,6 +273,8 @@ export class Hud {
       falls: 'action_falls',
       unlock: 'action_unlock',
       force: 'action_force',
+      pick: 'action_pick',
+      bash: 'action_bash',
     };
     const key = this.interaction ? keys[this.interaction] : 'descend';
     this.descendButton.textContent = t(key);

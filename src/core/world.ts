@@ -2,7 +2,7 @@ import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, qui
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
 import { doorwayPartner, flood, floorDistances, generateLevel, goldPile, groundHeight, isChasm, isFloor, isSeeThrough, isShallow, waterAt, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
-import { addItem, enlarged, ITEMS, removeItem, removeStack, starterKit, type Inventory, type ItemKind } from './inventory';
+import { addItem, enlarged, ITEMS, removeItem, removeStack, starterKit, type Inventory, type ItemKind, type Packed } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
 import { blocked, hasLineOfSight, moveWithCollision, visibleTiles } from './geometry';
@@ -121,7 +121,7 @@ export type WorldEvent =
   | { type: 'refilled'; skins: number; turbid: boolean }
   | { type: 'found'; kinds: LootKind[]; gold: number; dropped: number }
   | { type: 'used'; kind: ItemKind }
-  | { type: 'cantUse'; reason: 'danger' | 'empty' | 'camp' }
+  | { type: 'cantUse'; reason: 'danger' | 'empty' | 'camp' | 'locked' }
   | { type: 'channel'; kind: ItemKind; seconds: number }
   | { type: 'interrupted' }
   | { type: 'nightfall' }
@@ -133,6 +133,8 @@ export type WorldEvent =
   | { type: 'leap' }
   | { type: 'digging'; seconds: number }
   | { type: 'forcing'; seconds: number }
+  | { type: 'picking'; seconds: number }
+  | { type: 'doorHit'; pos: Point; broke: boolean }
   | { type: 'unlocked'; depth: number }
   | { type: 'campPacked' }
   | { type: 'dig' }
@@ -203,6 +205,8 @@ export type Interaction =
   | 'falls'
   | 'unlock'
   | 'force'
+  | 'pick'
+  | 'bash'
   | null;
 
 /** Counters behind the acquired traits. */
@@ -273,8 +277,7 @@ export interface WorldSnapshot {
   rng: [number, number, number, number];
   inventory?: Inventory;
   gold?: number;
-  /** Depths whose key the hero carries. */
-  keys?: number[];
+
   /** Containers already searched on this level. */
   searched?: number[];
   calm?: number;
@@ -354,9 +357,10 @@ export class World {
   /** Eating, drinking or filling the lamp: standing still for a moment. */
   channel: { uid: number; timer: number } | null = null;
   /** Digging out a collapse: which, and how long is left. */
-  digging: { x: number; y: number; timer: number; pulse: number; kind: 'dig' | 'force' } | null = null;
-  /** Depths whose key this hero carries. */
-  keys = new Set<number>();
+  digging: { x: number; y: number; timer: number; pulse: number; kind: 'dig' | 'force' | 'pick' } | null = null;
+  /** What is left of locked doors being battered down this life, by tile. */
+  private lockHp = new Map<number, number>();
+
   private commands: Command[] = [];
   /** A floor item that did not fit, so the toast is not repeated every frame. */
   private refused = -1;
@@ -440,7 +444,7 @@ export class World {
     world.time = snapshot.time;
     if (snapshot.inventory) world.inventory = JSON.parse(JSON.stringify(snapshot.inventory));
     world.gold = snapshot.gold ?? 0;
-    world.keys = new Set(snapshot.keys ?? []);
+
 
     world.calm = snapshot.calm ?? 0;
     world.clock = snapshot.clock ?? 0;
@@ -495,7 +499,7 @@ export class World {
       time: this.time,
       inventory: JSON.parse(JSON.stringify(this.inventory)),
       gold: this.gold,
-      keys: [...this.keys],
+
       searched: here.searched,
       calm: this.calm,
       clock: this.clock,
@@ -792,6 +796,7 @@ export class World {
     this.searched.clear();
     this.channel = null;
     this.digging = null;
+    this.lockHp.clear();
     this.projectiles = [];
     this.action = { type: 'none' };
     this.running = false;
@@ -1102,6 +1107,7 @@ export class World {
 
   private resolveAttack(step: ComboStep, events: WorldEvent[]): void {
     const { weapon } = this.cls;
+    this.batterDoors(step, events);
     for (const enemy of this.enemies) {
       if (enemy.state === 'dead') continue;
       const to = { x: enemy.pos.x - this.player.x, y: enemy.pos.y - this.player.y };
@@ -1391,9 +1397,6 @@ export class World {
       }
       if (item.kind === 'gold') {
         this.gold += item.amount ?? 0;
-      } else if (item.kind === 'key') {
-        // A key weighs nothing in the pack: it is kept on a string around the neck.
-        this.keys.add(this.depth);
       } else if (!addItem(this.inventory, item.kind, item.charges ?? ITEMS[item.kind].charges, { turbid: item.turbid, poison: item.poison })) {
         // No room: it stays on the floor until something is dropped.
         if (this.refused !== item.id) events.push({ type: 'noRoom', kind: item.kind });
@@ -1783,6 +1786,46 @@ export class World {
     events.push({ type: 'unlocked', depth: this.depth });
   }
 
+  /** A key in the backpack that fits the lock of this door, if any. */
+  private keyFor(d: Point): Packed | undefined {
+    const kind = this.level.locks.find((l) => l.x === d.x && l.y === d.y)?.key;
+    return kind ? this.inventory.items.find((it) => it.kind === kind) : undefined;
+  }
+
+  /** Picking a lock (the plunderer's trade): slow, but quiet next to forcing it. */
+  private startPicking(p: Point, events: WorldEvent[]): void {
+    if (this.inDanger) return void events.push({ type: 'cantUse', reason: 'danger' });
+    if (this.digging) return;
+    this.digging = { x: p.x, y: p.y, timer: CONFIG.works.pickLock, pulse: 0, kind: 'pick' };
+    events.push({ type: 'picking', seconds: CONFIG.works.pickLock });
+  }
+
+  /**
+   * A locked door battered with blows: every swing that reaches it takes some of it, loud
+   * enough to carry far; when it gives, the lock is broken for good.
+   */
+  private batterDoors(step: ComboStep, events: WorldEvent[]): void {
+    const { weapon } = this.cls;
+    for (const l of this.level.locks) {
+      if (l.kind !== 'locked' || !this.lockAt(l.x, l.y)) continue;
+      const to = { x: l.x + 0.5 - this.player.x, y: l.y + 0.5 - this.player.y };
+      if (length(to) > step.range + 0.6 || angleBetween(this.facing, to) > step.arc / 2) continue;
+      const tile = l.y * this.level.width + l.x;
+      const partner = doorwayPartner(this.level, l);
+      const pairTile = partner ? Math.min(tile, partner.y * this.level.width + partner.x) : tile;
+      const hp = (this.lockHp.get(pairTile) ?? CONFIG.works.lockedHp) - weapon.damage * step.damage * damageMultiplier(this.attrs) * this.hungerPenalty;
+      this.lockHp.set(pairTile, hp);
+      events.push({ type: 'doorHit', pos: { x: l.x + 0.5, y: l.y + 0.5 }, broke: hp <= 0 });
+      for (const e of this.enemies) {
+        if (e.state === 'dead' || dist(e.pos, this.player) > CONFIG.works.digNoise) continue;
+        e.alerted = true;
+        e.forgetTimer = 0;
+      }
+      if (hp <= 0) this.openLock(l.x, l.y, events);
+      return;
+    }
+  }
+
   /** Forcing a door: like digging, slow and loud, longer for a lock than for a stuck door. */
   private startForcing(p: Point, kind: 'locked' | 'stuck', events: WorldEvent[]): void {
     if (this.inDanger) return void events.push({ type: 'cantUse', reason: 'danger' });
@@ -1812,7 +1855,7 @@ export class World {
       dig.pulse = 0.8;
       events.push({ type: 'dig' });
       for (const e of this.enemies) {
-        if (e.state === 'dead' || dist(e.pos, this.player) > CONFIG.works.digNoise) continue;
+        if (e.state === 'dead' || dist(e.pos, this.player) > (dig.kind === 'pick' ? CONFIG.works.pickNoise : CONFIG.works.digNoise)) continue;
         e.alerted = true;
         e.forgetTimer = 0;
       }
@@ -1820,7 +1863,7 @@ export class World {
     dig.timer -= dt;
     if (dig.timer > 0) return;
     this.digging = null;
-    if (dig.kind === 'force') return void this.openLock(dig.x, dig.y, events);
+    if (dig.kind === 'force' || dig.kind === 'pick') return void this.openLock(dig.x, dig.y, events);
     // The whole fall of stones goes, from wall to wall.
     const heap = [{ x: dig.x, y: dig.y }];
     for (let i = 0; i < heap.length; i++) {
@@ -2320,7 +2363,8 @@ export class World {
     const door = this.doorInReach();
     if (door) {
       const lock = door.barricade ? null : this.lockAt(door.x, door.y);
-      if (lock) return lock === 'locked' && this.keys.has(this.depth) ? 'unlock' : 'force';
+      if (lock === 'stuck') return 'force';
+      if (lock === 'locked') return this.keyFor(door) ? 'unlock' : this.cls.picksLocks ? 'pick' : 'bash';
       return door.shut ? 'openDoor' : 'closeDoor';
     }
     if (this.rubbleInReach()) return 'clear';
@@ -2363,8 +2407,14 @@ export class World {
     const door = this.doorInReach();
     const lock = door && !door.barricade ? this.lockAt(door.x, door.y) : null;
     if (door && lock) {
-      if (lock === 'locked' && this.keys.has(this.depth)) return this.openLock(door.x, door.y, events);
-      return this.startForcing(door, lock, events);
+      if (lock === 'stuck') return this.startForcing(door, 'stuck', events);
+      const key = this.keyFor(door);
+      if (key) {
+        removeItem(this.inventory, key.uid);
+        return this.openLock(door.x, door.y, events);
+      }
+      if (this.cls.picksLocks) return this.startPicking(door, events);
+      return void events.push({ type: 'cantUse', reason: 'locked' });
     }
     if (door) return this.toggleDoor(events);
     if (this.grateInReach()) return this.startForcing(this.level.pit, 'stuck', events);
@@ -2399,7 +2449,6 @@ export class World {
       const kind = weights.find(([, w]) => (roll -= w) < 0)?.[0] ?? weights[0][0];
       kinds.push(kind);
       if (kind === 'gold') gold += goldPile(rng, this.depth);
-      else if (kind === 'key') this.keys.add(this.depth);
       else if (!addItem(this.inventory, kind)) {
         this.dropAt(kind, f.x, f.y);
         dropped++;
