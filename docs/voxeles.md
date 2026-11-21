@@ -97,5 +97,7 @@ casilla bajo un balcón: roca [-∞, 0] · aire [0, 2.6] · losa [2.6, 2.9] · a
 - **Se dibujan aparte** (como antes): los escalones y el pozo de la escalera, las columnas redondas, el sumidero, el nivel de abajo visto por los huecos, los puentes, el agua, los ladrillos y las baldosas.
 - Con las vistas: desde arriba las paredes se cortan bajas, con tapa; en primera persona llegan al techo de cada espacio, y sobre la escalera de subida el hueco sube hasta perderse.
 - **Se ve igual que hoy**: comparado en capturas con la versión anterior (abismos, terrazas, escaleras, galerías, pozas, ríos y los tres estilos).
-- Arreglo de la V1: el techo bajo de la escalera de subida abría una casilla de pared en el extremo de la escalera.
+- Arreglos:
+  - los costados de las rampas tenían agujeros que dejaban ver el negro: ahora son de piedra;
+  - el techo bajo de la escalera de subida abría una casilla de pared en el extremo de la escalera (V1).
 - **Pendiente para la V3**: héroe y horrores siguen moviéndose sobre la grilla de siempre; la V3 los pasa a los vóxeles.
