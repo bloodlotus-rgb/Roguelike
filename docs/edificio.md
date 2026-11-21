@@ -1,123 +1,152 @@
-# El edificio (propuesta v1)
+# El edificio (propuesta v2)
 
-> Estado: **rumbo aprobado**; el detalle sigue siendo **[Propuesta]**. Reemplaza a la V5 de `docs/voxeles.md`.
+> Estado: **rumbo aprobado**; las medidas, el catálogo de piezas y las etapas son **[Propuesta]** para revisar. Reemplaza a la V5 de `docs/voxeles.md`.
 
 ## Decisiones
 
-- **Finito y enorme, con fondo**: ~1000 × 1000 casillas y ~600 m de hondo, con la raíz de la maldición como meta. Inexplorable en la práctica. Cambia el "la profundidad no tiene techo" del concepto.
+- **Finito y enorme, con fondo**: unos 600 m de hondo, con la raíz de la maldición como meta. Inexplorable en la práctica. Cambia el "la profundidad no tiene techo" del concepto.
 - **Plan de un tirón, detalle derivado**: el plan entero se decide al empezar; los vóxeles de cada sector salen de él cuando hacen falta, siempre iguales.
-- **Zonas por historia (estratos)**: épocas que se cavan unas a otras.
-- **Orden**: V3 y V4, después Ed1 a Ed5.
+- **Por historia (estratos)**: lo más hondo es lo más viejo; cada época cava a través de las anteriores.
+- **Sin niveles**:
+  - el espacio es uno solo, armado con **piezas de jenga** (prismas en distintas orientaciones), algunas de ellas **conectores verticales**;
+  - las **zonas** separan el edificio en capas con una losa que ninguna pieza atraviesa, salvo los pasos de zona (con llave);
+  - las zonas se agrupan en **áreas**, donde cambia la geografía.
+- **Los huecos son de verdad**: se cae por el pozo o la galería, con daño. La soga sigue siendo la forma segura de bajar.
+- **Orden**: V3 y V4 (hechas), después las etapas Ed.
 
-## Tu idea, en pocas palabras
+## El tamaño, y cómo entra en el celular
 
-- El mapa entero se genera **al empezar, de un tirón**, en vóxeles. Es tan grande que **no se termina de explorar**.
-- **Sectores tridimensionales** en lugar de niveles.
-- Los sectores se agrupan en **zonas únicas**, cada una con sus vóxeles y su arquitectura.
-- Se arma **como un jenga**: **bloques prearmados** (hechos a mano) y **bloques procedurales** que los conectan, todo en un gran procedimiento inicial.
+Un edificio así no entra en memoria ni se genera entero en un tiempo razonable. Por eso:
+- al empezar se genera el **plan completo** (áreas, zonas, piezas, conexiones, catástrofes), que es poco dato;
+- los **vóxeles de cada sector** se deducen del plan cuando el héroe se acerca, y se descartan cuando se aleja;
+- el resultado es siempre el mismo, así que da igual que si se hubiera generado todo junto;
+- se guardan **solo los cambios** de la familia.
 
-Me encanta. Le da a la mazmorra lo que hoy le falta: es un solo lugar, con geografía propia y memoria, y no una pila de niveles sueltos. Abajo, cómo lo haría y qué cambia.
+## Escalas (de chico a grande)
 
-## El problema del tamaño, y cómo resolverlo sin perder la idea
-
-Un nivel de hoy (170 × 130) tiene unas 22 mil columnas. Un edificio "inexplorable" tiene cientos de veces eso, con muchos pisos encima de cada casilla. **No entra en la memoria de un celular**, ni se genera en un tiempo razonable.
-
-La salida: **el plan se decide entero de un tirón, el detalle se deduce de él.**
-- Al empezar se genera el **plan completo**: zonas, sectores, bloques, conexiones y catástrofes. Es poco dato y tarda un segundo.
-- Los **vóxeles de cada sector** salen después, de una fórmula fija: el plan y la semilla. Se generan cuando el héroe se acerca y se descartan cuando se aleja.
-- Como el resultado es siempre el mismo, **da igual que si se hubiera generado todo junto**. El mapa queda "codificado" en el plan.
-- Se guardan **solo los cambios** de la familia: puertas forzadas, obras, derrumbes despejados.
-
-La clave para que los sectores se puedan generar por separado: el plan fija sus **bordes**. Fija por dónde entra cada pasillo, cada escalera y cada río, y a qué altura. Cada sector cumple su contrato con los vecinos sin necesitar verlos.
-
-## Escalas
-
-| Escala | Qué es | Tamaño **[Supuesto]** |
+| Escala | Qué es | Medida **[Propuesta]** |
 |---|---|---|
-| **Edificio** | todo, debajo de la mansión | ~1000 × 1000 casillas, ~600 m de hondo |
-| **Zona** | una época del edificio, con su arquitectura | varias decenas de sectores |
-| **Sector** | un cubo del mapa, la unidad de generación y de dibujo | 48 × 48 casillas × ~12 m (3 o 4 pisos) |
-| **Bloque** | una pieza del jenga: una sala, una locación, una escalera, un pozo | de 1 a varios sectores |
-| **Vóxel** | la columna de tramos de la V1 | 1 casilla |
+| **Vóxel** | la columna de tramos de la V1 (1 casilla = 1 m) | 1 × 1 m, alturas libres |
+| **Celda** | la grilla del jenga: las piezas encajan en ella | 6 × 6 m × 6 m de alto (un piso) |
+| **Pieza** | un prisma de celdas, girable, con aberturas en sus caras | de 1 × 1 × 1 a unas 4 × 4 × 6 celdas |
+| **Sector** | la unidad que se genera, se dibuja y se descarta | 8 × 8 celdas × 4 pisos = 48 × 48 × 24 m |
+| **Zona** | una capa del edificio, entre dos losas selladas | 4 pisos (24 m) + 1 m de losa |
+| **Área** | 5 zonas de la misma época, con su geografía | unos 125 m de alto |
+| **Edificio** | 5 áreas, de la mansión al fondo | ~625 m |
+
+- **Por qué estas medidas**:
+  - Con celdas de 6 m entra todo lo de hoy: pasillos de 2, salas de 6 a 18 (1 a 3 celdas), locaciones (de 2 × 2 a 4 × 1 celdas).
+  - Un piso de 6 m deja techos de hasta 5,5 con su losa, y los salones altos ocupan 2 o 3 pisos.
+- **La silueta se ensancha hacia abajo**, como raíces:
+
+  | Área | Ancho por zona | Una zona equivale a… |
+  |---|---|---|
+  | 1 | 144 × 144 m (3 × 3 sectores) | unos 4 niveles de hoy |
+  | 2 | 240 × 240 m | unos 10 |
+  | 3 | 336 × 336 m | unos 20 |
+  | 4 | 480 × 480 m | unos 40 |
+  | 5 | 672 × 672 m | unos 80 |
+
+  En total son 25 zonas y unos 770 niveles de hoy. Inexplorable, pero la primera área se recorre en pocas vidas.
+
+## Zonas: capas selladas con pasos
+
+- Una **losa de roca de 1 m** separa cada zona de la siguiente; ninguna pieza la atraviesa.
+- Se cruza solo por los **pasos de zona** (de 2 a 4 por zona), que son conectores verticales:
+  - **uno está siempre en el recorrido principal**, cerrado con llave. La llave está en la zona de arriba, lejos del paso, como hoy;
+  - los otros son atajos: un pozo para caer, una catarata, un paso escondido, uno trabado que se fuerza.
+- **Llaves**: hierro en las áreas 1 y 2, bronce en la 3, hueso en la 4 y la 5 (como hoy, según la profundidad).
+- **Por zona**: cada zona tiene sus horrores, su loot y su caído (un jefe por zona). La dificultad sube con la profundidad en metros.
+
+## Áreas: la geografía
+
+Cada área es una época, con su paleta de vóxeles, su biblioteca de piezas, su luz, su agua y sus horrores. Cada edificio sortea 5 entre estas épocas, en orden de antigüedad:
+
+1. **Bodegas** de la mansión: ladrillo y madera, barriles.
+2. **Cripta de la familia**: nichos, osarios, capillas.
+3. **Cisternas**: bóvedas sobre columnas, agua quieta, canales.
+4. **Fundición**: hierro, chimeneas de varios pisos, cadenas.
+5. **Biblioteca hundida**: galerías con balcones, escaleras de caracol.
+6. **Minas** de los que cavaron antes: puntales, rieles, malacates.
+7. **Ciudad enterrada**: calles y casas bajo un techo de roca.
+8. **Catedral invertida**: una nave que cuelga hacia abajo, con puentes.
+9. **Cuevas vivas**: roca natural, ríos, abismos.
+10. **La raíz de la maldición**: siempre la última.
+
+- **El paso entre áreas** es un **umbral**: una pieza enorme y única, por ejemplo un pozo con una espiral de 3 zonas o una catarata gigante, que se ve de lejos y sirve para orientarse.
+- **Una época vieja asoma en una nueva**: piezas de un área se cuelan en las zonas de la de arriba (ruinas, galerías de saqueadores).
+
+## Las piezas
+
+Cada pieza es un prisma de celdas. Gira en 4 orientaciones, y algunas se pueden acostar. En sus caras tiene **aberturas**:
+- **puertas**: de 2 de ancho, al nivel del piso de una celda;
+- **escotillas**: en el techo o el piso;
+- **ciegas**: donde no hay abertura.
+
+Dos piezas vecinas encajan si sus aberturas coinciden.
+
+**Conectores verticales** (lo nuevo):
+- **Escalera de caracol** (1 × 1 celda, de 1 a 4 pisos): gira alrededor de una columna. Tiene puertas en los pisos que quiera.
+- **Escalera larga** (acostada, 2 × 1 celdas por piso que baja): un tramo recto, con descanso.
+- **Pozo con espiral** (2 × 2 o 3 × 3 celdas, de 2 a 8 pisos):
+  - una rampa baja pegada a la pared, con el centro abierto;
+  - en cada piso hay un balcón con puerta;
+  - caerse es posible.
+- **Catarata** (1 × 2 celdas, de 2 a 4 pisos):
+  - un río cae por un tiro hasta una poza honda;
+  - **saltar es un atajo**: el agua amortigua la caída;
+  - subir no se puede, salvo por una escalerilla lateral rota que la familia puede reparar.
+- **Tobogán o desagüe** (acostado, de 2 a 4 celdas): un caño en pendiente fuerte que **solo se baja**. Arma atajos de ida y obliga a buscar la vuelta.
+- **Pozo de malacate** (1 × 1, muchos pisos): una jaula con cadena y manivela. Viene rota; repararla es una obra.
+- **Escalerillas** en tiros angostos: introducen un modo de trepar (lento, sin pelear).
+- **Atrio** (2 × 2 × 2 a 4 × 4 × 4): un salón de varios pisos con galerías alrededor y escaleras entre ellas.
+
+**Piezas de un solo piso**: pasillos (recto, codo, T, cruce, con 2 de ancho), salas, salones de 2 pisos de alto, puentes sobre un abismo y **locaciones** hechas a mano (las de hoy, con su caja redondeada a celdas).
+
+**Relleno procedural**:
+- lo que queda entre piezas es roca;
+- los túneles y cuevas que unen aberturas sueltas se cavan por la roca;
+- las catástrofes cortan a través de todo, menos de las losas de zona.
 
 ## El gran procedimiento (en orden)
 
-1. **La silueta**: la forma del edificio entero. Por ejemplo, angosto arriba, debajo de la mansión, y cada vez más ancho y desordenado hacia abajo, como raíces.
-
-2. **La historia (estratos)**. El edificio no se construyó de una vez: es la **suma de épocas**, cada una encima o adentro de la anterior. Lo más hondo es lo más viejo y lo más raro.
-   - Cada época es una **zona**, con su paleta de vóxeles (piedra labrada, ladrillo, madera, hierro, roca viva, hueso), sus bloques, su luz y sus horrores.
-   - Una época **cava a través** de las anteriores y las reusa. Así, una cripta corta una cisterna más vieja, o una mina atraviesa una biblioteca hundida.
-   - Eso hace que **cada edificio sea único**: no cambian solo las piezas, cambia cómo se cruzan las épocas.
-
-3. **La columna vertebral**: el recorrido principal desde la mansión hasta lo más hondo, pasando por todas las zonas.
-   - Es un grafo de **lugares clave**: las puertas entre zonas, los **hitos** (lugares enormes que se ven de lejos) y los puestos.
-   - Garantiza que todo sea alcanzable; lo demás cuelga de ella.
-   - Acá van los **cerrojos y las llaves** (A2), entre zonas.
-
-4. **El jenga**: se colocan los bloques.
-   - Primero los **prearmados** (locaciones 3D hechas a mano, con varios pisos), anclados a la columna vertebral.
-   - Después los **procedurales**, que unen los anteriores:
-     - pasillos y túneles;
-     - escaleras, rampas, pozos con escalerilla, puentes;
-     - salones de relleno.
-   - Los conectores se **enrutan en 3D**: buscan camino por la roca con pendiente máxima, y donde hay que subir ponen escaleras.
-
-5. **Las catástrofes** desarman el jenga:
-   - **Derrumbes**: un bloque que queda **sin apoyo** se cae. Deja un pozo vertical que atraviesa pisos y una montaña de escombros abajo. Son atajos peligrosos.
-   - **El nivel freático**: debajo de cierta altura, todo lo abierto se **inunda**. Hay sectores enteros bajo el agua y ríos que bajan por las escaleras.
-   - **Raíces y cuevas** que se comen la arquitectura, **incendios** que dejan todo negro, **galerías de saqueadores** que cruzan las épocas.
-
-6. **El reparto**: luces de la mazmorra, loot, puestos, horrores y su densidad, según la profundidad y la zona.
-
-## Ideas de zonas (de arriba hacia abajo)
-
-Diez épocas posibles; cada edificio usaría algunas, en un orden distinto y con cruces distintos:
-
-- **Bodegas** de la mansión: ladrillo y madera, barriles, poco peligro.
-- **Cripta de la familia**: nichos, osarios, sarcófagos, capillas.
-- **Cisternas**: bóvedas sobre columnas, agua quieta, canales.
-- **Fundición**: hierro, chimeneas que suben muchos pisos, cadenas, calor.
-- **Biblioteca hundida**: galerías de varios pisos con balcones, estantes, escaleras de caracol.
-- **Minas** de los que cavaron antes: puntales de madera, rieles, pozos con malacate.
-- **Ciudad enterrada**: calles, casas, plazas bajo un techo de roca.
-- **Catedral invertida**: una nave gigante que cuelga hacia abajo, con puentes.
-- **Cuevas vivas**: roca natural, ríos, abismos.
-- **La raíz de la maldición**: lo más hondo, con una arquitectura que no es humana.
+1. **Silueta y áreas**: el tamaño de cada zona y la época de cada área.
+2. **Recorrido principal**: de la mansión al fondo, con el paso con llave de cada zona y los umbrales entre áreas.
+3. **Jenga por zona**:
+   - primero los conectores verticales y las locaciones únicas, anclados al recorrido;
+   - después piezas que encajan por sus aberturas, creciendo desde ellos, hasta llenar la zona con su densidad;
+   - al final, túneles por la roca para unir lo que haya quedado suelto.
+4. **Catástrofes**: derrumbes de piezas sin apoyo (pozos de varios pisos dentro de la zona), el nivel freático (lo de abajo, inundado), raíces e incendios.
+5. **Reparto**: luces, loot, puestos, horrores y llaves.
 
 ## Qué cambia en el juego
 
-- **Nivel → sector y zona**:
-  - la profundidad pasa a medirse en metros, y la dificultad sube con ella;
-  - el nombre de la zona aparece al entrar.
-- **Bajar**: no hay "la escalera del nivel". Se baja por escaleras, rampas, pozos, derrumbes, ríos y caídas (V3).
-- **Cerrojos y llaves**: entre zonas y en los atajos.
-- **Campamentos y puestos**: lugares del mapa 3D, sin cambios de reglas.
-- **Caídos (jefes)**: en el sector donde murieron.
-- **Agua**: un nivel freático y corrientes en vez de inundaciones por nivel.
-- **Mapa**:
-  - cortes por altura (el piso donde estás, con los de arriba y abajo en tenue);
-  - una vista de la zona entera de lado.
-- **Obras**: cobran más sentido. Una escalera de la familia que baja kilómetros es domar el edificio.
-- **Guardado**: versión nueva; las dinastías anteriores se apartan otra vez.
-
-## Riesgos
-
-- **Orientarse en 3D**: perderse es parte de la gracia, pero no frustrar. Se cubre con hitos, el mapa por cortes y las marcas de tiza.
-- **Rendimiento**: generar y dibujar por sectores alrededor del héroe, en el celular. Se mide en cada etapa.
-- **Alcance**: es reescribir el generador. Lo de hoy (salas, pasillos, terrazas, ríos, locaciones, piezas) se reusa adentro de los sectores.
+- **No hay "bajar de nivel"**: se camina, se cae y se trepa por un solo espacio. "Profundidad" pasa a ser metros, y la zona es la unidad de juego (horrores, loot, caído, llave).
+- **Los huecos son de verdad**:
+  - caer por el pozo hace daño;
+  - en una catarata el agua amortigua;
+  - un abismo sigue sin fondo, o llega a la losa de la zona según la pieza.
+- **Mapa**: por pisos, con los de arriba y abajo tenues, y una vista de la zona de costado.
+- **Obras**: escaleras de la familia que atraviesan pisos, reparar malacates y escalerillas.
+- **Guardado**: versión nueva; las dinastías anteriores se apartan.
 
 ## Etapas propuestas
 
-La V3 (cuerpos en 3D) y la V4 (caminos y vista en 3D) hacen falta igual. Después, en lugar de la V5:
-
-- **Ed1 · Sectores**:
-  - el mundo pasa a ser un solo espacio de vóxeles partido en sectores, generados cuando hacen falta, siempre iguales;
-  - dibujo y simulación por sectores alrededor del héroe;
-  - el generador de hoy llena cada franja, para que el juego siga andando.
-- **Ed2 · El plan**: silueta, épocas y zonas, columna vertebral, pasos entre zonas.
-- **Ed3 · Bloques**:
-  - el formato 3D de las locaciones (una planta por altura, con conectores marcados);
-  - la primera tanda de prearmados por zona;
-  - los conectores procedurales en 3D.
-- **Ed4 · Catástrofes**: derrumbes por apoyo, nivel freático, raíces e incendios, hitos.
-- **Ed5 · El juego en el edificio**: mapa por cortes, llaves, campamentos, caídos, guardado.
+- **Ed1 · El espacio y los sectores** (motor):
+  - coordenadas del edificio, celdas y sectores;
+  - sectores que se generan cuando hacen falta y se descartan;
+  - dibujo por sector alrededor del héroe;
+  - cuerpos, caminos y vista que cruzan sectores;
+  - caer de verdad por un hueco.
+  - Mientras tanto, para que el juego siga andando: los niveles de hoy se apoyan como pisos a 6 m de distancia, unidos por **la primera pieza vertical (la escalera de caracol)** en el lugar de la escalera de hoy.
+- **Ed2 · El plan**:
+  - silueta, áreas y zonas con sus losas;
+  - recorrido principal, pasos de zona con llave y umbrales;
+  - la zona pasa a ser la unidad de juego.
+- **Ed3 · El jenga**:
+  - formato de piezas (prismas de celdas con aberturas, una planta por altura);
+  - el armado por zona;
+  - la primera tanda de piezas por área y los conectores verticales;
+  - las locaciones de hoy como piezas.
+- **Ed4 · Catástrofes y agua**: derrumbes por apoyo, nivel freático, cataratas que amortiguan, raíces e incendios, umbrales.
+- **Ed5 · Jugar en el edificio**: mapa por pisos, caídos por zona, campamentos y puestos, trepar escalerillas, guardado.
