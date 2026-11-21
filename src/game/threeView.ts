@@ -22,6 +22,7 @@ import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures
 import { InkPost } from './inkPost';
 import { BRICK_DEPTH, FLAG_TOP, layBricks, layFlagstones, type Brick } from './masonry';
 import { styleIndex } from './style';
+import { CEILING, ceilingHeights } from '../core/voxels';
 import { BounceLight, type LightSource } from './bounce';
 import { onSettings, qualityProfile, settings } from '../settings/settings';
 import { bridgeModel, pieceModel, rubbleModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
@@ -435,24 +436,6 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
  * can catch the light when the cut-away opens it. One unit tall; scaled to the view.
  * Groups: 0 the sides, 1 the caps.
  */
-/**
- * How high the ceiling is over each open tile in first person: passages 3, rooms 4, great
- * halls 5.5; over the stairs up it comes down to meet the flight.
- */
-export const CEILING = { passage: 3, room: 4, hall: 5.5, stairs: LEVEL_HEIGHT + 0.6 };
-function ceilingHeights(level: Level): Float32Array {
-  const { width, height } = level;
-  const heights = new Float32Array(width * height);
-  const open = (x: number, y: number) => isFloor(level, x, y) || isVoid(level, x, y) || isChasm(level, x, y) || isDeep(level, x, y);
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (open(x, y)) heights[y * width + x] = CEILING.passage;
-  for (const r of level.rooms) {
-    const tall = r.shape === 'hall' || r.w * r.h >= 150 ? CEILING.hall : CEILING.room;
-    for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) if (open(x, y)) heights[y * width + x] = tall;
-  }
-  for (const p of [...level.up.steps, level.up.top, level.up.bottom]) heights[p.y * width + p.x] = Math.min(heights[p.y * width + p.x] || CEILING.stairs, CEILING.stairs);
-  return heights;
-}
-
 /** A wall block is as tall as the tallest space it faces. */
 function wallTop(level: Level, ceilings: Float32Array, x: number, y: number): number {
   let top = 0;
