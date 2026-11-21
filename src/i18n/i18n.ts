@@ -368,6 +368,7 @@ const strings = {
   cause_snuffer: { es: 'a manos de un Apagavelas', en: 'at the hands of a Snuffer' },
   cause_hunger: { es: 'de hambre', en: 'of hunger' },
   cause_thirst: { es: 'de sed', en: 'of thirst' },
+  cause_fall: { es: 'en una caída', en: 'in a fall' },
   chr_founded: {
     es: 'La estirpe se asienta sobre la cripta. Tres hermanos esperan su turno para bajar.',
     en: 'The family settles above the crypt. Three siblings wait their turn to go down.',

@@ -1846,7 +1846,7 @@ export class ThreeView {
     cutaway.night.value = shadowStep || (world.fx.darkSight && world.survival.light <= 0) ? 1 : 0;
     cutaway.player.value.set(p.x, 0, p.y);
     if (this.mode === 'first') {
-      const eye = EYE + world.heightAt(p);
+      const eye = EYE + world.playerZ;
       this.camera.position.set(p.x, eye, p.y);
       this.camera.lookAt(p.x + Math.cos(fpAngle), eye, p.y + Math.sin(fpAngle));
       return;
@@ -1856,7 +1856,7 @@ export class ThreeView {
     const across = this.camera.aspect < 1 ? TOP_TILES / this.camera.aspect : TOP_TILES;
     const distance = across / 2 / Math.tan(vfov / 2);
     // Follow smoothly, but never fall more than a couple of tiles behind.
-    const goal = new THREE.Vector3(p.x, 0.5 + world.heightAt(p), p.y);
+    const goal = new THREE.Vector3(p.x, 0.5 + world.playerZ, p.y);
     if (this.cameraTarget.lengthSq() === 0 || this.cameraTarget.distanceTo(goal) > 2) this.cameraTarget.copy(goal);
     else this.cameraTarget.lerp(goal, 0.2);
     const t = this.cameraTarget;
@@ -1888,10 +1888,10 @@ export class ThreeView {
     const back = this.mode === 'first' ? 0 : 0.35;
     this.light.position.set(
       p.x - Math.cos(this.lightAngle) * back + swayX,
-      height + world.heightAt(p) + Math.sin(t * 5.1) * 0.03,
+      height + world.playerZ + Math.sin(t * 5.1) * 0.03,
       p.y - Math.sin(this.lightAngle) * back + swayZ,
     );
-    this.light.target.position.set(p.x + Math.cos(this.lightAngle) * 3, 0.2 + world.heightAt(p) * 0.7, p.y + Math.sin(this.lightAngle) * 3);
+    this.light.target.position.set(p.x + Math.cos(this.lightAngle) * 3, 0.2 + world.playerZ * 0.7, p.y + Math.sin(this.lightAngle) * 3);
     this.light.distance = radius + back + LEVEL_HEIGHT * 1.6;
     cutaway.reach.value = radius + back;
     this.light.angle = world.visionCone;
@@ -1941,7 +1941,7 @@ export class ThreeView {
       lunge = 0.22 * (1 - easeInOut(back));
     } else if (moved > 0.002) frame = `walk${Math.floor(this.walked / 0.32) % 4}`;
     else frame = `idle${Math.floor(now / 600) % 2}`;
-    hero.place({ x: world.player.x + world.facing.x * lunge, y: world.player.y + world.facing.y * lunge }, this.camera, flip, this.mode, world.heightAt(world.player));
+    hero.place({ x: world.player.x + world.facing.x * lunge, y: world.player.y + world.facing.y * lunge }, this.camera, flip, this.mode, world.playerZ);
     hero.setFrame(Math.max(0, this.heroSheetFrames().indexOf(frame)));
     const heroMaterial = hero.mesh.material as THREE.MeshBasicMaterial;
     const night = cutaway.night.value > 0.5;
@@ -1958,7 +1958,7 @@ export class ThreeView {
     const side = flip ? -1 : 1;
     const offset = right.clone().multiplyScalar((anchor.x / 32) * side);
     const up = new THREE.Vector3(0, (-anchor.y / 32) / Math.cos(TOP_TILT), 0);
-    this.flame.position.set(world.player.x, world.heightAt(world.player), world.player.y).add(offset).add(up);
+    this.flame.position.set(world.player.x, world.playerZ, world.player.y).add(offset).add(up);
     const s = 0.35 + 0.05 * Math.sin(now / 60);
     this.flame.scale.set(s * 0.66, s, 1);
   }
@@ -1999,7 +1999,7 @@ export class ThreeView {
         this.enemies.set(enemy.id, entry);
       }
       const flip = enemy.facing.x * right.x + enemy.facing.y * right.z < 0;
-      entry.cutout.place(enemy.pos, this.camera, flip, this.mode, world.heightAt(enemy.pos));
+      entry.cutout.place(enemy.pos, this.camera, flip, this.mode, enemy.z);
       entry.cutout.setFrame(ENEMY_FRAMES_INDEX[this.enemyFrame(enemy, now)]);
       // Lit only where the hero sees it; telegraphs and hits turn it red.
       const d = Math.hypot(enemy.pos.x - world.player.x, enemy.pos.y - world.player.y);
@@ -2009,7 +2009,7 @@ export class ThreeView {
       // Eyes in the dark, at the height of the drawn eyes.
       entry.eyes.visible = enemy.watching;
       if (enemy.watching) {
-        entry.eyes.position.set(enemy.pos.x, EYES[enemy.kind].h / 32 + world.heightAt(enemy.pos), enemy.pos.y);
+        entry.eyes.position.set(enemy.pos.x, EYES[enemy.kind].h / 32 + enemy.z, enemy.pos.y);
       }
     }
     for (const [id, entry] of this.enemies) {

@@ -12,7 +12,7 @@ import { compatible, TRAIT_CAP, TRAITS, traitDef, traitWeight, type TraitDef } f
 
 export type MemberStatus = 'alive' | 'fallen' | 'aged';
 
-export type DeathCause = { type: 'horror'; kind: EnemyKind } | { type: 'hunger' } | { type: 'thirst' };
+export type DeathCause = { type: 'horror'; kind: EnemyKind } | { type: 'hunger' } | { type: 'thirst' } | { type: 'fall' };
 
 export interface Member {
   id: number;
