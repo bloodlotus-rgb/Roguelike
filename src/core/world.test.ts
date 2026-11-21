@@ -4,7 +4,7 @@ import { CLASSES, type ClassId } from './classes';
 import { doorwayPartner, generateLevel, isFloor } from './dungeon';
 import { ENEMIES, type EnemyKind } from './enemies';
 import { CONFIG } from './config';
-import { addItem } from './inventory';
+import { addItem, countOf } from './inventory';
 import { COMBAT, NO_INPUT, World, type ControlInput, type Enemy, type WorldEvent } from './world';
 
 const input = (partial: Partial<ControlInput> = {}): ControlInput => ({ ...NO_INPUT, ...partial });
@@ -1165,11 +1165,11 @@ describe('double doors', () => {
 
 describe('closed ways down', () => {
   /** A world at a depth whose stairs room is locked, standing by one of its locked doors. */
-  function atLock(kind: 'locked' | 'stuck'): { w: World; works: import('./dynasty').Work[]; lock: { x: number; y: number } } {
+  function atLock(kind: 'locked' | 'stuck', classId: ClassId = 'headsman'): { w: World; works: import('./dynasty').Work[]; lock: { x: number; y: number } } {
     for (const seed of ['estirpe', 'tainted', 'abc', '12345', 'mansion']) {
       for (let depth = 1; depth <= 4; depth++) {
         const works: import('./dynasty').Work[] = [];
-        const w = new World(seed, 'headsman', 0, depth, { works });
+        const w = new World(seed, classId, 0, depth, { works });
         const lock = w.level.locks.find((l) => l.kind === kind);
         if (!lock) continue;
         w.enemies = [];
@@ -1184,35 +1184,50 @@ describe('closed ways down', () => {
     throw new Error('no lock found');
   }
 
-  it('a locked door does not simply open: without the key it is forced, slowly and loudly', () => {
+  it('without the key, only the plunderer picks a lock; the others break the door down with blows', () => {
     const { w, works, lock } = atLock('locked');
     w.update(0.02, NO_INPUT);
-    expect(w.interaction).toBe('force');
-    expect(w.level.closed?.has(lock.y * w.level.width + lock.x)).toBe(true);
-    w.interact();
-    const events = run(w, CONFIG.works.forceLocked + 0.5);
-    expect(events.some((e) => e.type === 'forcing')).toBe(true);
-    expect(events.some((e) => e.type === 'dig')).toBe(true);
-    expect(events.some((e) => e.type === 'unlocked')).toBe(true);
+    expect(w.interaction).toBe('bash');
+    const told = (() => {
+      w.interact();
+      return run(w, 0.05);
+    })();
+    expect(told.some((e) => e.type === 'cantUse' && e.reason === 'locked')).toBe(true);
+    // Face the door and swing until it gives.
+    w.facing = { x: lock.x + 0.5 - w.player.x, y: lock.y + 0.5 - w.player.y };
+    const events: WorldEvent[] = [];
+    for (let i = 0; i < 40 && w.lockAt(lock.x, lock.y); i++) {
+      events.push(...tap(w, 'attack'));
+      events.push(...run(w, 1));
+      w.facing = { x: lock.x + 0.5 - w.player.x, y: lock.y + 0.5 - w.player.y };
+    }
+    expect(events.some((e) => e.type === 'doorHit')).toBe(true);
+    expect(w.lockAt(lock.x, lock.y)).toBeNull();
     expect(works.some((x) => x.kind === 'unlocked')).toBe(true);
+  });
+
+  it('the plunderer picks a lock, slowly and quietly', () => {
+    const { w, lock } = atLock('locked', 'plunderer');
+    w.update(0.02, NO_INPUT);
+    expect(w.interaction).toBe('pick');
+    w.interact();
+    const events = run(w, CONFIG.works.pickLock + 0.5);
+    expect(events.some((e) => e.type === 'picking')).toBe(true);
     expect(w.lockAt(lock.x, lock.y)).toBeNull();
   });
 
-  it('with the level’s key it opens at once, for the whole family', () => {
+  it('a key of the right kind opens it at once, used up in the lock, for the whole family', () => {
     const { w, works, lock } = atLock('locked');
-    // Pick the key up where it lies.
-    w.player = { x: w.level.key!.x + 0.5, y: w.level.key!.y + 0.5 };
-    w.update(0.02, NO_INPUT);
-    expect(w.keys.has(w.depth)).toBe(true);
-    const out = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(
-      ([dx, dy]) => isFloor(w.level, lock.x + dx, lock.y + dy) && !w.level.rooms.some((r) => lock.x + dx >= r.x && lock.x + dx < r.x + r.w && lock.y + dy >= r.y && lock.y + dy < r.y + r.h) && !w.level.locks.some((l) => l.x === lock.x + dx && l.y === lock.y + dy),
-    )!;
-    w.player = { x: lock.x + out[0] + 0.5, y: lock.y + out[1] + 0.5 };
+    const kind = w.level.locks.find((l) => l.x === lock.x && l.y === lock.y)!.key!;
+    w.inventory.items = w.inventory.items.filter((i) => i.kind !== 'campKit');
+    addItem(w.inventory, kind);
+    addItem(w.inventory, kind);
     w.update(0.02, NO_INPUT);
     expect(w.interaction).toBe('unlock');
     w.interact();
     w.update(0.02, NO_INPUT);
     expect(w.lockAt(lock.x, lock.y)).toBeNull();
+    expect(countOf(w.inventory, kind)).toBe(1);
     // The next life finds it open.
     const next = new World(w.seed, 'headsman', 1, w.depth, { works });
     expect(next.lockAt(lock.x, lock.y)).toBeNull();

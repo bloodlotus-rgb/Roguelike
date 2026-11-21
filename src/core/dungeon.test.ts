@@ -282,7 +282,9 @@ describe('generateLevel', () => {
           expect(at(level.down.top)).toBe(-1);
           expect(level.key).toBeDefined();
           expect(at(level.key!)).toBeGreaterThan(0);
-          expect(level.items.some((i) => i.kind === 'key')).toBe(true);
+          expect(level.items.some((i) => i.kind === level.key!.kind)).toBe(true);
+          // Every locked door takes that kind of key.
+          for (const l of level.locks) if (l.kind === 'locked') expect(l.key).toBe(level.key!.kind);
         }
         // The pit is behind stuck doors, under a stuck grate, or inside the locked room.
         const grate = level.locks.some((l) => l.kind === 'stuck' && l.x === level.pit.x && l.y === level.pit.y);

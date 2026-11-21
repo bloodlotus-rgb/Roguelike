@@ -16,7 +16,14 @@ export type ItemKind =
   | 'torch'
   | 'chalk'
   | 'planks'
-  | 'rope';
+  | 'rope'
+  | 'keyIron'
+  | 'keyBronze'
+  | 'keyBone';
+
+/** The three kinds of key: each lock takes one of them, and it is used up in the lock. */
+export type KeyKind = 'keyIron' | 'keyBronze' | 'keyBone';
+export const KEY_KINDS: readonly KeyKind[] = ['keyIron', 'keyBronze', 'keyBone'];
 
 export interface ItemDef {
   /** Cells across and down, unturned. */
@@ -46,6 +53,9 @@ export const ITEMS: Record<ItemKind, ItemDef> = {
   chalk: { w: 1, h: 1, charges: 5 },
   planks: { w: 1, h: 3 },
   rope: { w: 2, h: 2 },
+  keyIron: { w: 1, h: 1, stack: 5 },
+  keyBronze: { w: 1, h: 1, stack: 5 },
+  keyBone: { w: 1, h: 1, stack: 5 },
 };
 
 export const ITEM_KINDS = Object.keys(ITEMS) as ItemKind[];

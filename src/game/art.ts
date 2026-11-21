@@ -477,7 +477,9 @@ export const LOOT_KINDS: readonly LootKind[] = [
   'chalk',
   'planks',
   'rope',
-  'key',
+  'keyIron',
+  'keyBronze',
+  'keyBone',
 ];
 
 export function drawItem(kind: LootKind, tile: number): HTMLCanvasElement {
@@ -512,8 +514,9 @@ export function drawItem(kind: LootKind, tile: number): HTMLCanvasElement {
       ctx.fillRect(3 * s, y * s, 18 * s, 4 * s);
       ctx.strokeRect(3 * s, y * s, 18 * s, 4 * s);
     }
-  } else if (kind === 'key') {
-    ctx.strokeStyle = INK;
+  } else if (kind === 'keyIron' || kind === 'keyBronze' || kind === 'keyBone') {
+    // A key: iron grey, bronze gold, or bone white.
+    ctx.strokeStyle = kind === 'keyIron' ? '#4a4540' : kind === 'keyBronze' ? '#9a6a2a' : '#b8ad94';
     ctx.lineWidth = 2.2 * s;
     ctx.beginPath();
     ctx.arc(7 * s, 12 * s, 3.5 * s, 0, Math.PI * 2);

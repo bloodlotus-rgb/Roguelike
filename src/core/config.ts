@@ -91,9 +91,9 @@ export const CONFIG = {
     remains: {
       min: 1,
       max: 2,
-      table: { ration: 12, oil: 20, gold: 18, marchRation: 10, waterskin: 6, bandage: 10, campKit: 6, firewood: 4, rope: 5, torch: 9 },
+      table: { ration: 12, oil: 20, gold: 18, marchRation: 10, waterskin: 6, bandage: 10, campKit: 6, firewood: 4, rope: 5, torch: 9, keyIron: 5, keyBronze: 2, keyBone: 1 },
     },
-    crate: { min: 0, max: 2, table: { ration: 14, oil: 18, gold: 12, firewood: 12, bandage: 8, planks: 12, torch: 10, chalk: 5, rope: 4 } },
+    crate: { min: 0, max: 2, table: { ration: 14, oil: 18, gold: 12, firewood: 12, bandage: 8, planks: 12, torch: 10, chalk: 5, rope: 4, keyIron: 5, keyBronze: 3, keyBone: 1 } },
     /** Chance that a slain Crawler or Husk leaves flesh worth eating (if cooked). */
     horrorMeat: 0.2,
     /** Reach of fountains and containers, in tiles. */
@@ -112,6 +112,8 @@ export const CONFIG = {
     chalk: 3,
     planks: 5,
     rope: 15,
+    keyIron: 8,
+    keyBronze: 20,
   },
   water: {
     /** Speed in shallow water, as a share of the usual. */
@@ -141,6 +143,11 @@ export const CONFIG = {
     /** Seconds of work to force a stuck door, and a locked one without its key. */
     forceStuck: 8,
     forceLocked: 20,
+    /** The plunderer picking a lock: seconds, and how far the scraping is heard. */
+    pickLock: 10,
+    pickNoise: 3,
+    /** How much battering a locked door takes before it gives. */
+    lockedHp: 140,
     /** A plain door's strength, and how fast hunting horrors batter doors and barricades. */
     doorHp: 60,
     bashDoor: 20,

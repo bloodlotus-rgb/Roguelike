@@ -1,5 +1,5 @@
 import { CONFIG } from './config';
-import type { ItemKind } from './inventory';
+import type { ItemKind, KeyKind } from './inventory';
 import { Rng } from './rng';
 
 export const Tile = {
@@ -18,8 +18,8 @@ export const Water = { None: 0, Shallow: 1, Deep: 2 } as const;
 export type Tile = (typeof Tile)[keyof typeof Tile];
 
 /** What can lie on the floor: anything that goes in the backpack, or a pile of gold. */
-/** What can lie on the floor: anything that goes in the backpack, gold, or the level's key. */
-export type LootKind = ItemKind | 'gold' | 'key';
+/** What can lie on the floor: anything that goes in the backpack, or a pile of gold. */
+export type LootKind = ItemKind | 'gold';
 
 /** Fixed things in a level: fountains are part of its geography; remains and crates can be searched. */
 export type FeatureKind = 'fountain' | 'drip' | 'remains' | 'crate';
@@ -166,9 +166,9 @@ export interface Level {
    * Doors that do not simply open: `locked` ones (the way down) open with the level's key
    * or are forced, slowly and loudly; `stuck` ones are forced. One entry per tile.
    */
-  locks: Array<Point & { kind: 'locked' | 'stuck' }>;
-  /** Where the key to this level's locked doors lies. */
-  key?: Point;
+  locks: Array<Point & { kind: 'locked' | 'stuck'; key?: KeyKind }>;
+  /** Where a key for this level's locked doors lies (one is always left in the level). */
+  key?: Point & { kind: KeyKind };
   /** Tiles of chasm spanned by a bridge (floor now, drawn as planks). */
   bridges: number[];
   /** Ground of each tile (see `Ground`); absent means all low. */
@@ -1060,7 +1060,7 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
   level.features.forEach((f, i) => (f.id = i));
   level.items = placeItems(level, lootRng, taken);
   // The key is always where the level keeps it.
-  if (level.key) level.items.push({ id: level.items.length, kind: 'key', x: level.key.x, y: level.key.y });
+  if (level.key) level.items.push({ id: level.items.length, kind: level.key.kind, x: level.key.x, y: level.key.y });
   return level;
 }
 
@@ -1159,6 +1159,10 @@ function sealWays(level: Level, rng: Rng): void {
     if (dist[target.y * width + target.x] !== -1) locks.splice(before);
   };
   seal({ x: level.down.top.x - level.down.dir.x, y: level.down.top.y - level.down.dir.y }, 'locked');
+  // Deeper locks take rarer keys.
+  const keyKind: KeyKind =
+    level.depth <= 3 ? 'keyIron' : level.depth <= 6 ? (rng.chance(0.7) ? 'keyBronze' : 'keyIron') : rng.chance(0.6) ? 'keyBone' : 'keyBronze';
+  for (const l of locks) if (l.kind === 'locked') l.key = keyKind;
   const before = locks.length;
   seal(level.pit, 'stuck');
   // Where the pit's room cannot be shut, an iron grate lies stuck over the pit itself.
@@ -1183,7 +1187,7 @@ function sealWays(level: Level, rng: Rng): void {
       }
     }
   }
-  if (spots.length > 0) level.key = rng.pick(spots);
+  if (spots.length > 0) level.key = { ...rng.pick(spots), kind: keyKind };
 }
 
 /** The other half of a two-tile entrance, if this doorway is one. */
