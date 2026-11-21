@@ -1,7 +1,7 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { doorwayPartner, flood, floorDistances, generateLevel, goldPile, groundHeight, isChasm, isFloor, isSeeThrough, isShallow, waterAt, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { doorwayPartner, flood, floorDistances, isPassable, generateLevel, goldPile, groundHeight, isChasm, isFloor, isSeeThrough, isShallow, waterAt, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
 import { addItem, enlarged, ITEMS, removeItem, removeStack, starterKit, type Inventory, type ItemKind, type Packed } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
@@ -1203,7 +1203,7 @@ export class World {
       const kind = this.rng.pick<LootKind>(['ration', 'oil', 'gold', 'gold']);
       const item: LevelItem = { id: this.nextId++, kind, x: Math.floor(enemy.pos.x), y: Math.floor(enemy.pos.y) };
       if (kind === 'gold') item.amount = goldPile(this.rng, this.depth);
-      if (isFloor(this.level, item.x, item.y)) {
+      if (isPassable(this.level, item.x, item.y)) {
         this.level.items.push(item);
         events.push({ type: 'drop', item });
       }
@@ -1211,7 +1211,7 @@ export class World {
     // Crawlers and Husks leave flesh that feeds, cooked, at a price.
     if ((enemy.kind === 'crawler' || enemy.kind === 'husk') && this.rng.chance(CONFIG.loot.horrorMeat)) {
       const meat: LevelItem = { id: this.nextId++, kind: 'horrorMeat', x: Math.floor(enemy.pos.x), y: Math.floor(enemy.pos.y) };
-      if (isFloor(this.level, meat.x, meat.y)) {
+      if (isPassable(this.level, meat.x, meat.y)) {
         this.level.items.push(meat);
         events.push({ type: 'drop', item: meat });
       }

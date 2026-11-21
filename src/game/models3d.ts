@@ -245,3 +245,85 @@ export function lootModel(kind: LootKind, m: ModelMaterials): Parts {
   }
   return g;
 }
+
+/**
+ * Pieces of the dungeon (see core/pieces.ts), one tile each, standing on y = 0 and facing +z
+ * (away from the wall for those against one). Arches are drawn apart (they span an opening).
+ */
+export function pieceModel(kind: import('../core/pieces').PieceKind, m: ModelMaterials, seed: number): Parts {
+  const g = new THREE.Group();
+  const r = (k: number) => {
+    const v = Math.sin(seed * 12.9898 + k * 78.233) * 43758.5453;
+    return v - Math.floor(v);
+  };
+  switch (kind) {
+    case 'brazier':
+      // A bowl of iron on three legs; the fire is drawn apart.
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2;
+        part(g, cyl(0.025, 0.03, 0.8, 5), m.metal, Math.cos(a) * 0.17, 0.4, Math.sin(a) * 0.17, Math.sin(a) * 0.2, 0, -Math.cos(a) * 0.2);
+      }
+      part(g, new THREE.LatheGeometry([new THREE.Vector2(0.05, 0), new THREE.Vector2(0.28, 0.06), new THREE.Vector2(0.32, 0.18), new THREE.Vector2(0.29, 0.2)], 12), m.metal, 0, 0.78);
+      part(g, new THREE.IcosahedronGeometry(0.16, 0), m.ink, 0, 0.92, 0).scale.set(1.3, 0.4, 1.3);
+      break;
+    case 'chains':
+      // Chains hanging from the dark above, a hook at the end of one.
+      for (let k = 0; k < 2; k++) {
+        const x = (k - 0.5) * 0.3 + (r(k) - 0.5) * 0.1;
+        const top = 3.2;
+        const low = 1.1 + r(k + 5) * 0.8;
+        for (let y = low; y < top; y += 0.11) {
+          const link = part(g, new THREE.TorusGeometry(0.035, 0.01, 4, 8), m.metal, x, y, 0, 0, (Math.round(y / 0.11) % 2) * Math.PI / 2, 0);
+          link.castShadow = false;
+        }
+        if (k === 0) part(g, new THREE.TorusGeometry(0.06, 0.012, 4, 10, Math.PI * 1.3), m.metal, x, low - 0.06, 0, 0, 0, Math.PI);
+      }
+      break;
+    case 'altar':
+      part(g, box(0.86, 0.12, 0.6), m.stone, 0, 0.06, 0);
+      part(g, box(0.72, 0.62, 0.48), m.stone, 0, 0.43, 0);
+      part(g, box(0.9, 0.08, 0.62), m.stone, 0, 0.78, 0);
+      part(g, cyl(0.03, 0.03, 0.14, 6), m.paper, -0.25, 0.89, 0.05);
+      part(g, cyl(0.03, 0.03, 0.1, 6), m.paper, 0.27, 0.87, -0.06);
+      break;
+    case 'sarcophagus': {
+      const turn = r(1) < 0.5 ? 0 : Math.PI / 2;
+      part(g, box(0.62, 0.5, 0.95), m.stone, 0, 0.25, 0, 0, turn, 0);
+      // The lid, sometimes pushed aside.
+      const ajar = r(2) < 0.35;
+      part(g, box(0.66, 0.1, 0.98), m.stone, ajar ? 0.12 : 0, 0.55, ajar ? 0.1 : 0, 0, turn + (ajar ? 0.35 : 0), 0);
+      if (!ajar) part(g, box(0.3, 0.08, 0.6), m.stone, 0, 0.64, 0, 0, turn, 0);
+      break;
+    }
+    case 'shelf':
+      // Tall shelves against the wall, with jars and books on them.
+      for (const x of [-0.42, 0.42]) part(g, box(0.06, 1.9, 0.34), m.wood, x, 0.95, -0.3);
+      for (let i = 0; i < 4; i++) {
+        const y = 0.2 + i * 0.5;
+        part(g, box(0.9, 0.05, 0.34), m.wood, 0, y, -0.3);
+        for (let j = 0; j < 3; j++) if (r(i * 3 + j) < 0.7) part(g, box(0.1 + r(j + 9) * 0.12, 0.18 + r(i + j) * 0.12, 0.2), r(i + j * 2) < 0.5 ? m.cloth : m.paper, -0.3 + j * 0.3, y + 0.14, -0.3);
+      }
+      break;
+    case 'barrel':
+      for (let i = 0; i < 1 + Math.floor(r(1) * 2); i++) {
+        const x = i === 0 ? -0.15 : 0.2;
+        part(g, cyl(0.24, 0.24, 0.7, 12), m.wood, x, 0.35, -0.15 + i * 0.1);
+        for (const y of [0.12, 0.58]) part(g, cyl(0.25, 0.25, 0.04, 12), m.metal, x, y, -0.15 + i * 0.1);
+      }
+      break;
+    case 'rubblePile':
+      for (let i = 0; i < 9; i++) {
+        const s = 0.14 + r(i) * 0.16;
+        part(g, new THREE.IcosahedronGeometry(s, 0), m.stone, (r(i + 20) - 0.5) * 0.7, s * 0.6 + (i > 5 ? 0.22 : 0), (r(i + 40) - 0.5) * 0.7, r(i) * 3, r(i + 1) * 3, 0);
+      }
+      break;
+    case 'brokenColumn':
+      // The stump of a column, and its drum lying beside it.
+      part(g, cyl(0.3, 0.33, 0.9 + r(1) * 0.6, 14), m.stone, -0.05, 0.6, 0);
+      part(g, cyl(0.3, 0.3, 0.7, 14), m.stone, 0.15, 0.3, 0.3, Math.PI / 2, r(2) * 3, 0);
+      break;
+    case 'arch':
+      break;
+  }
+  return g;
+}

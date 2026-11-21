@@ -31,7 +31,7 @@ describe('generateLevel', () => {
         expect(level.rooms.length).toBeGreaterThanOrEqual(5);
         const dist = floorDistances(level, level.start);
         for (let i = 0; i < level.tiles.length; i++) {
-          if (level.tiles[i] === 1) expect(dist[i]).toBeGreaterThanOrEqual(0);
+          if (level.tiles[i] === 1 && !level.blocked?.[i]) expect(dist[i]).toBeGreaterThanOrEqual(0);
         }
         expect(dist[level.stairs.y * level.width + level.stairs.x]).toBeGreaterThan(0);
         for (const item of level.items) expect(isFloor(level, item.x, item.y)).toBe(true);
@@ -95,7 +95,7 @@ describe('generateLevel', () => {
         }
         // Every floor tile of the level is still reachable.
         const dist = floorDistances(level, level.start);
-        for (let i = 0; i < level.tiles.length; i++) if (level.tiles[i] === 1) expect(dist[i]).toBeGreaterThanOrEqual(0);
+        for (let i = 0; i < level.tiles.length; i++) if (level.tiles[i] === 1 && !level.blocked?.[i]) expect(dist[i]).toBeGreaterThanOrEqual(0);
       }
     }
     expect(found).toBeGreaterThan(3);
@@ -125,7 +125,7 @@ describe('generateLevel', () => {
             queue.push(i);
           }
         }
-        for (let i = 0; i < level.tiles.length; i++) if (level.tiles[i] === 1) expect(seen[i]).toBe(1);
+        for (let i = 0; i < level.tiles.length; i++) if (level.tiles[i] === 1 && !level.blocked?.[i]) expect(seen[i]).toBe(1);
         for (const item of level.items) expect(seen[item.y * width + item.x]).toBe(1);
       }
     }
@@ -198,7 +198,7 @@ describe('generateLevel', () => {
         const fords = level.river.filter((p) => !isDeep(level, p.x, p.y));
         if (!level.sink) expect(fords.length).toBeGreaterThan(0);
         const dist = floorDistances(level, level.start);
-        for (let i = 0; i < level.tiles.length; i++) if (level.tiles[i] === 1) expect(dist[i]).not.toBe(-1);
+        for (let i = 0; i < level.tiles.length; i++) if (level.tiles[i] === 1 && !level.blocked?.[i]) expect(dist[i]).not.toBe(-1);
       }
     }
     expect(rivers).toBeGreaterThan(2);
@@ -241,7 +241,7 @@ describe('generateLevel', () => {
         flood(high, 14);
         expect(count(high, Water.Shallow) + count(high, Water.Deep)).toBeGreaterThan(count(low, Water.Shallow) + count(low, Water.Deep));
         const dist = floorDistances(high, high.start);
-        for (let i = 0; i < high.tiles.length; i++) if (high.tiles[i] === 1) expect(dist[i]).not.toBe(-1);
+        for (let i = 0; i < high.tiles.length; i++) if (high.tiles[i] === 1 && !high.blocked?.[i]) expect(dist[i]).not.toBe(-1);
         // The stairs stay dry.
         for (const p of [...high.up.steps, ...high.down.steps]) expect(waterAt(high, p.x, p.y)).toBe(waterAt(dry, p.x, p.y));
       }
@@ -318,7 +318,7 @@ describe('generateLevel', () => {
               // Rock stays rock: no corridor was cut through.
               if (c === '#') expect(level.tiles[i]).toBe(0);
               else if (c === 'W') expect(isDeep(level, p.x + x, p.y + y)).toBe(true);
-              else expect(dist[i]).not.toBe(-1);
+              else if (!level.blocked?.[i]) expect(dist[i]).not.toBe(-1);
             }
           }
         }

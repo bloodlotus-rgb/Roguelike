@@ -444,6 +444,25 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     if (lock) drawMark(ctx, lock === 'locked' ? 'locked' : 'stuck', p.x + size / 2, p.y + size / 2, Math.max(4, size * 0.3));
   }
 
+  // Furniture: solid pieces as dark blocks, braziers as a small fire.
+  for (const piece of level.pieces) {
+    if (!seen(piece.x, piece.y) || piece.kind === 'arch' || piece.kind === 'chains') continue;
+    const c = at(piece.x + 0.5, piece.y + 0.5);
+    if (piece.kind === 'brazier') {
+      ctx.fillStyle = '#d9822b';
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = Math.max(1, size / 12);
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, Math.max(2.5, size * 0.25), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = 'rgba(33, 27, 23, 0.55)';
+      const s = size * 0.7;
+      ctx.fillRect(c.x - s / 2, c.y - s / 2, s, s);
+    }
+  }
+
   // Collapses: a heap of stones across the corridor.
   ctx.strokeStyle = INK;
   ctx.fillStyle = PAPER_DARK;
