@@ -1431,6 +1431,34 @@ describe('pits and ropes', () => {
     expect(world.survival.health).toBeLessThan(health);
   });
 
+  it("a zone's last storey: its way down always locked, a grate over the well if its room cannot be shut", () => {
+    let gates = 0;
+    for (const seed of ['estirpe', 'tainted', 'abc', '12345', 'mansion', 'ashen-crypt-417']) {
+      const world = new World(seed, 'headsman', 0, 4);
+      expect(world.level.locks.some((l) => l.kind === 'locked')).toBe(true);
+      const gate = world.level.locks.find((l) => l.gate);
+      if (!gate) continue;
+      gates++;
+      world.enemies = [];
+      const { down, width } = world.level;
+      const mouth = down.steps[0];
+      expect(world.level.closed?.has(mouth.y * width + mouth.x)).toBe(true);
+      world.player = { x: down.top.x + 0.5, y: down.top.y + 0.5 };
+      world.reshaped();
+      world.update(0.02, NO_INPUT);
+      expect(world.interaction).toBe('bash');
+      // With the key of the area: open, for good.
+      addItem(world.inventory, gate.key!);
+      world.update(0.02, NO_INPUT);
+      expect(world.interaction).toBe('unlock');
+      world.interact();
+      world.update(0.02, NO_INPUT);
+      expect(world.level.closed?.has(mouth.y * width + mouth.x)).toBe(false);
+      expect(countOf(world.inventory, gate.key!)).toBe(0);
+    }
+    expect(gates).toBeGreaterThan(0);
+  }, 60_000);
+
   it('a stuck grate over the pit keeps everyone out', () => {
     const world = new World('estirpe', 'headsman');
     const { pit, width } = world.level;

@@ -273,14 +273,20 @@ describe('generateLevel', () => {
     let sealedStairs = 0;
     let sealedPits = 0;
     for (const seed of seeds) {
-      for (let depth = 1; depth <= 4; depth++) {
+      for (let depth = 1; depth <= 8; depth++) {
         const level = generateLevel(seed, depth);
+        // Only the last storey of a zone has its way down locked (the zone's passage).
+        if (depth % 4 !== 0) expect(level.locks.some((l) => l.kind === 'locked')).toBe(false);
+        // ...and always: its room behind locked doors, or a locked grate over the well.
+        else expect(level.locks.some((l) => l.kind === 'locked')).toBe(true);
         const closed = new Set([...level.rubble, ...level.locks].map((p) => p.y * level.width + p.x));
         const dist = floorDistances({ ...level, closed }, level.start);
         const at = (p: { x: number; y: number }) => dist[p.y * level.width + p.x];
         if (level.locks.some((l) => l.kind === 'locked')) {
           sealedStairs++;
-          expect(at(level.down.top)).toBe(-1);
+          // Behind the locked doors, or past the grate over the well.
+          const gate = level.locks.some((l) => l.gate);
+          expect(at(gate ? level.down.steps[1] : level.down.top)).toBe(-1);
           expect(level.key).toBeDefined();
           expect(at(level.key!)).toBeGreaterThan(0);
           expect(level.items.some((i) => i.kind === level.key!.kind)).toBe(true);
@@ -291,11 +297,11 @@ describe('generateLevel', () => {
         const grate = level.locks.some((l) => l.kind === 'stuck' && l.x === level.pit.x && l.y === level.pit.y);
         if (level.locks.some((l) => l.kind === 'stuck')) sealedPits++;
         if (!grate) expect(at(level.pit)).toBe(-1);
-        // Every lock is a door of the level, but the grate over the pit.
-        for (const l of level.locks) if (l.x !== level.pit.x || l.y !== level.pit.y) expect(level.doors.some((d) => d.x === l.x && d.y === l.y)).toBe(true);
+        // Every lock is a door of the level, but the grates over the pit and the well.
+        for (const l of level.locks) if ((l.x !== level.pit.x || l.y !== level.pit.y) && !l.gate) expect(level.doors.some((d) => d.x === l.x && d.y === l.y)).toBe(true);
       }
     }
-    expect(sealedStairs).toBeGreaterThan(5);
+    expect(sealedStairs).toBe(seeds.length * 2);
     expect(sealedPits).toBeGreaterThan(3);
   });
 

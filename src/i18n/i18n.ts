@@ -7,6 +7,8 @@ const strings = {
   thirst: { es: 'Sed', en: 'Thirst' },
   light: { es: 'Luz', en: 'Light' },
   depth: { es: 'Profundidad', en: 'Depth' },
+  storey: { es: 'piso {n}', en: 'storey {n}' },
+  zoneEntered: { es: 'Entrás en {zone}', en: 'You enter {zone}' },
   seed: { es: 'Semilla', en: 'Seed' },
   descend: { es: 'Bajar', en: 'Descend' },
   paused: { es: 'En pausa', en: 'Paused' },

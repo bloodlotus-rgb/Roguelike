@@ -8,7 +8,7 @@ import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies'
 import { clearSight, EYE_HEIGHT, Surfaces, visibleTiles3D } from './paths';
 import { bodyBlocked, fallHarm, moveBody, settle, type Fall } from './bodies';
 import { type Voxels } from './voxels';
-import { Building, STOREY } from './building';
+import { Building, dropBelow, STOREY } from './building';
 import { BODY } from './bodies';
 import { Rng } from './rng';
 import { covers, packTiles, unpackTiles, type CampSite, type ChalkSign, type DeathCause, type Work } from './dynasty';
@@ -749,7 +749,8 @@ export class World {
   }
 
   private changeStorey(way: 'down' | 'up'): void {
-    const dz = way === 'down' ? STOREY : -STOREY;
+    // The floor below is a storey down (and a zone's slab more, between zones).
+    const dz = way === 'down' ? dropBelow(this.depth) : -dropBelow(this.depth - 1);
     const body: Fall = { z: this.body.z + dz, vz: this.body.vz, from: this.body.from === null ? null : this.body.from + dz };
     this.changeLevel(way, { ...this.player });
     this.body = body;
@@ -1801,6 +1802,9 @@ export class World {
     // The pit is open (one can fall in) unless its grate is stuck over it; nobody walks
     // through a collapse.
     if (this.lockAt(this.level.pit.x, this.level.pit.y)) shut.add(this.level.pit.y * this.level.width + this.level.pit.x);
+    // A locked grate over the mouth of the well down closes the whole well.
+    const gate = this.wellGate();
+    if (gate) for (const t of this.wellTiles(this.level.down)) shut.add(t);
     for (const p of this.rubble) shut.add(p.y * this.level.width + p.x);
     for (const w of this.works) {
       if (w.kind !== 'barricade' || w.depth !== this.depth) continue;
@@ -1985,6 +1989,25 @@ export class World {
     if (!lock) return null;
     if (this.works.some((w) => w.kind === 'unlocked' && w.depth === this.depth && w.x === x && w.y === y)) return null;
     return lock.kind;
+  }
+
+  /** The locked grate over the mouth of the well down (a zone's passage), while it holds. */
+  private wellGate(): Point | null {
+    const gate = this.level.locks.find((l) => l.gate);
+    return gate && this.lockAt(gate.x, gate.y) ? gate : null;
+  }
+
+  /** The grate over the well, within reach. */
+  private gateInReach(): Point | null {
+    const gate = this.wellGate();
+    return gate && dist(this.player, { x: gate.x + 0.5, y: gate.y + 0.5 }) <= 1.7 ? gate : null;
+  }
+
+  /** The tiles of a stairwell's spiral (3 × 3). */
+  private wellTiles(sw: Stairwell): number[] {
+    const out: number[] = [];
+    for (let k = 1; k <= 3; k++) for (let s = -1; s <= 1; s++) out.push((sw.top.y + sw.dir.y * k + sw.dir.x * s) * this.level.width + sw.top.x + sw.dir.x * k - sw.dir.y * s);
+    return out;
   }
 
   /** The iron grate stuck over the pit, within reach. */
@@ -2604,6 +2627,8 @@ export class World {
     }
     if (this.rubbleInReach()) return 'clear';
     if (this.grateInReach()) return 'force';
+    const gate = this.gateInReach();
+    if (gate) return this.keyFor(gate) ? 'unlock' : this.cls.picksLocks ? 'pick' : 'bash';
     const f = this.featureInReach();
     if (!f) {
       const water = this.waterInReach();
@@ -2653,6 +2678,16 @@ export class World {
     }
     if (door) return this.toggleDoor(events);
     if (this.grateInReach()) return this.startForcing(this.level.pit, 'stuck', events);
+    const gate = this.gateInReach();
+    if (gate) {
+      const key = this.keyFor(gate);
+      if (key) {
+        removeItem(this.inventory, key.uid);
+        return this.openLock(gate.x, gate.y, events);
+      }
+      if (this.cls.picksLocks) return this.startPicking(gate, events);
+      return void events.push({ type: 'cantUse', reason: 'locked' });
+    }
     const rubble = this.rubbleInReach();
     if (rubble) return this.startDigging(rubble, events);
     const f = this.featureInReach();

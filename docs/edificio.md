@@ -190,3 +190,25 @@ Dos piezas vecinas encajan si sus aberturas coinciden.
   - generar los pisos de abajo de antemano, en segundo plano, para que cambiar de piso no se trabe en el celular;
   - los sectores pasan a tener 4 pisos de alto con el plan (Ed2);
   - el desagüe (sumidero) y la catarata siguen dibujándose como antes.
+
+## Ed2 implementada: el plan
+
+- **El plan** (`src/core/plan.ts`) se decide de una vez con la semilla:
+  - **5 áreas de 5 zonas, de 4 pisos cada una**: 100 pisos en total;
+  - **las épocas por estratos**: las bodegas siempre arriba (son de la mansión) y la raíz siempre al fondo; las tres del medio se sortean entre las otras ocho y se ordenan por antigüedad. Cada semilla, su combinación;
+  - el ancho de cada área (de 144 a 672 casillas) queda en el plan.
+- **Las zonas**:
+  - **Losa entre zonas**: 1 m más de roca bajo el último piso de cada zona. La atraviesan solo la escalera de caracol de la zona (que ahí baja 7 m) y el pozo de ese piso (una caída de 7 m, un atajo).
+  - **Las grietas no la cruzan**, y el relleno provisorio no pone abismos en el último piso de una zona.
+  - **El paso de zona siempre está cerrado con llave**: el cuarto de la escalera tras puertas con cerrojo, o, si el cuarto no se puede cerrar, una **reja con cerrojo sobre la boca del pozo**, que cierra la escalera entera. Se abre con la llave, con ganzúas (el Saqueador) o a golpes, y queda abierta para la familia. La llave está en el mismo piso, lejos de la llegada.
+  - **Dentro de una zona los pisos están abiertos**: sus escaleras no tienen cerrojo.
+  - **Llaves por área**: hierro en las áreas 1 y 2, bronce en la 3, hueso en la 4 y la 5.
+- **Nombres**: cada zona se llama por su época y su número ("Bodegas I", "Cripta III").
+  - El HUD y el mapa muestran la zona y el piso ("Bodegas II · piso 3").
+  - Al entrar en una zona nueva aparece su nombre.
+- **El fondo**: bajo el piso 100 no hay nada; su escalera de bajada está tapiada. Lo que espera ahí (la raíz de la maldición) queda para más adelante.
+- **Supuestos para validar**:
+  - El relleno sigue siendo el de los niveles de hoy, de 170 × 130 en todas las áreas. El ancho de cada área se aplica con el jenga (Ed3), que arma las zonas con su tamaño real: hacerlo ahora obligaba a reescribir el generador viejo.
+  - Los horrores, el loot y la dificultad siguen yendo por piso (crecen con la profundidad). Los caídos por zona llegan con la etapa de los jefes.
+  - Los umbrales entre áreas (las piezas enormes) llegan con el jenga y las catástrofes (Ed3 y Ed4).
+- **Guardado**: misma versión. Ojo: en una dinastía en curso, los cerrojos se mueven a los pasos de zona; las puertas que ya se abrieron siguen abiertas.

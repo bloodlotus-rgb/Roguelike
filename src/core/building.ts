@@ -17,6 +17,7 @@
  * Pure logic, deterministic: the same seed always gives the same building.
  */
 import { generateLevel, type Level, type Point, type Stairwell } from './dungeon';
+import { MAX_DEPTH, ZONE_SLAB, zoneIndex } from './plan';
 import { DEEP, HIGH, levelVoxels, Material, Voxels, type Column, type Span } from './voxels';
 
 /** Height of a storey: floor to floor. */
@@ -28,9 +29,14 @@ export const SECTOR = 48;
 /** Rock a crack can go down through before it ends (in storeys). */
 const CRACK_STOREYS = 3;
 
-/** The floor of storey d, in the building's height. */
+/** The floor of storey d, in the building's height: storeys 6 m apart, and between zones their slab. */
 export function floorZ(depth: number): number {
-  return -(depth - 1) * STOREY;
+  return -(depth - 1) * STOREY - zoneIndex(depth) * ZONE_SLAB;
+}
+
+/** How far the floor drops from storey d to the next (more where a zone's slab lies between). */
+export function dropBelow(depth: number): number {
+  return floorZ(depth) - floorZ(depth + 1);
 }
 
 /** The 3 × 3 tiles of a stairwell's spiral: (k along the flight 1..3, s across -1..1). */
@@ -70,9 +76,9 @@ function sideCorners(dx: number, dy: number): [number, number] {
 
 /**
  * The columns of a spiral well, in the frame of the storey above it (its floor at 0; the
- * storey below has its floor at -STOREY). Keyed by tile index.
+ * storey below has its floor at -drop). Keyed by tile index.
  */
-function wellColumns(sw: Stairwell, width: number): Map<number, Column> {
+function wellColumns(sw: Stairwell, width: number, drop: number): Map<number, Column> {
   const out = new Map<number, Column>();
   const index = (p: Point) => p.y * width + p.x;
   const steps = new Map<number, Span[]>();
@@ -80,8 +86,8 @@ function wellColumns(sw: Stairwell, width: number): Map<number, Column> {
     const here = wellTile(sw, k, s);
     const prev = i === 0 ? wellTile(sw, 0, 0) : wellTile(sw, SPIRAL[i - 1][0], SPIRAL[i - 1][1]);
     const next = i === SPIRAL.length - 1 ? wellTile(sw, 4, 0) : wellTile(sw, SPIRAL[i + 1][0], SPIRAL[i + 1][1]);
-    const hin = (-STOREY * i) / SPIRAL.length;
-    const hout = (-STOREY * (i + 1)) / SPIRAL.length;
+    const hin = (-drop * i) / SPIRAL.length;
+    const hout = (-drop * (i + 1)) / SPIRAL.length;
     const a = sideCorners(prev.x - here.x, prev.y - here.y);
     const b = sideCorners(next.x - here.x, next.y - here.y);
     const slope: [number, number, number, number] = [0, 0, 0, 0];
@@ -114,7 +120,7 @@ function wellColumns(sw: Stairwell, width: number): Map<number, Column> {
         continue;
       }
       const flights = (steps.get(t) ?? []).sort((p, q) => p.bottom - q.bottom);
-      out.set(t, [{ bottom: DEEP, top: -STOREY, mat: Material.Rock }, ...flights, { bottom: WELL_ROOF, top: HIGH, mat: Material.Rock }]);
+      out.set(t, [{ bottom: DEEP, top: -drop, mat: Material.Rock }, ...flights, { bottom: WELL_ROOF, top: HIGH, mat: Material.Rock }]);
     }
   }
   return out;
@@ -203,7 +209,10 @@ export class Building {
   }
 
   private makeStorey(level: Level): StoreyData {
-    return { level, voxels: levelVoxels(level), down: wellColumns(level.down, level.width), up: wellColumns(level.up, level.width) };
+    const depth = level.depth;
+    // The deepest storey's stairs down are walled up: there is nothing under it.
+    const down = depth < MAX_DEPTH ? wellColumns(level.down, level.width, dropBelow(depth)) : new Map<number, Column>();
+    return { level, voxels: levelVoxels(level), down, up: wellColumns(level.up, level.width, dropBelow(depth - 1)) };
   }
 
   /** A fresh copy of the level at a depth, as generated (generated once, then copied). */
@@ -247,7 +256,7 @@ export class Building {
     const down = data.down.get(tile);
     if (down) return down;
     const up = data.up.get(tile);
-    return up ? shift(up, STOREY) : null;
+    return up ? shift(up, dropBelow(depth - 1)) : null;
   }
 
   /** The storey's own column, cut to its band (no wells, no cracks). */
@@ -273,10 +282,32 @@ export class Building {
     for (let k = 1; k <= CRACK_STOREYS + 1; k++) {
       const o = depth - k;
       if (o < 1) return null;
+      if (zoneIndex(o) !== zoneIndex(depth)) {
+        // The slab between zones stops every crack; only the pit of a zone's last storey,
+        // right above, goes through (a way down, falling).
+        return k === 1 && this.pitOf(o, x, y) && this.opening(o, x, y) ? o : null;
+      }
       if (this.opening(o, x, y)) return o;
       if (!this.rock(o, x, y)) return null;
     }
     return null;
+  }
+
+  private pitOf(depth: number, x: number, y: number): boolean {
+    const { pit } = this.storey(depth).level;
+    return pit.x === x && pit.y === y;
+  }
+
+  /**
+   * The rock between two zones, under storey d (its last): solid, but for the zone's
+   * passage (the well going down) and the open pit.
+   */
+  private slabColumn(depth: number, x: number, y: number): Column {
+    const low = BAND.low - ZONE_SLAB;
+    const well = this.storey(depth).down.get(y * this.width + x);
+    if (well) return clip(well, low, BAND.low);
+    if (this.pitOf(depth, x, y) && this.opening(depth, x, y)) return [];
+    return [{ bottom: low, top: BAND.low, mat: Material.Rock }];
   }
 
   /** A column of storey d's band, in its frame (floor at 0), with wells and cracks. */
@@ -286,6 +317,7 @@ export class Building {
       const up = this.storey(1).up.get(y * this.width + x);
       return clip(up ?? [{ bottom: DEEP, top: HIGH, mat: Material.Rock }], BAND.low, BAND.high);
     }
+    if (depth > MAX_DEPTH) return [{ bottom: BAND.low, top: BAND.high, mat: Material.Rock }];
     const well = this.wellAt(depth, y * this.width + x);
     if (well) return clip(well, BAND.low, BAND.high);
     const col = this.own(depth, x, y);
@@ -343,7 +375,14 @@ export class Building {
         const col: Column = [];
         // The rock under the view, unless a crack goes on down through its lowest storey.
         if (this.band(depth + 2, x, y).some((s) => s.bottom <= BAND.low + 1e-6)) col.push({ bottom: DEEP, top: floorZ(depth + 2) - floorZ(depth) + BAND.low, mat: Material.Rock });
-        for (const d of bands) col.push(...shift(this.band(d, x, y), floorZ(d) - floorZ(depth)));
+        for (const d of bands) {
+          col.push(...shift(this.band(d, x, y), floorZ(d) - floorZ(depth)));
+          // Between zones, the slab under the upper storey's band.
+          const upper = d - 1;
+          if (upper >= Math.max(1, depth - 1) && upper < MAX_DEPTH && zoneIndex(upper) !== zoneIndex(d)) {
+            col.push(...shift(this.slabColumn(upper, x, y), floorZ(upper) - floorZ(depth)));
+          }
+        }
         col.push({ bottom: floorZ(depth - 1) - floorZ(depth) + BAND.high, top: HIGH, mat: Material.Rock });
         v.set(x, y, merge(col));
       }

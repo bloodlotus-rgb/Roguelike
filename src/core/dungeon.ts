@@ -1,5 +1,6 @@
 import { CONFIG } from './config';
 import type { ItemKind, KeyKind } from './inventory';
+import { isZoneEnd, MAX_DEPTH, zoneKey } from './plan';
 import { connectorsOf, LOCATIONS, type LocationDef } from './locations';
 import { PIECE_CHARS, PIECES, type Piece, type PieceKind } from './pieces';
 import { Rng } from './rng';
@@ -170,7 +171,8 @@ export interface Level {
    * Doors that do not simply open: `locked` ones (the way down) open with the level's key
    * or are forced, slowly and loudly; `stuck` ones are forced. One entry per tile.
    */
-  locks: Array<Point & { kind: 'locked' | 'stuck'; key?: KeyKind }>;
+  /** Locked and stuck doors; a `gate` is an iron grate over the mouth of the well down (not a door). */
+  locks: Array<Point & { kind: 'locked' | 'stuck'; key?: KeyKind; gate?: boolean }>;
   /** Locations drawn by hand set into this level (their rooms have shape 'place'). */
   places: Array<{ id: string; x: number; y: number; w: number; h: number }>;
   /** What the level is furnished with (see pieces.ts). */
@@ -1089,7 +1091,8 @@ function generateLayout(seed: string, depth: number): Level {
   const clear = [...upBlock, ...downBlock, level.pit, level.landing, ...(fall ? [fall] : [])];
   if (fall) plungePool(level, fall);
   runRiver(level, Rng.derive(seed, 'river', depth), clear, { down, nextArrival });
-  cutChasms(level, Rng.derive(seed, 'chasms', depth), clear, forced);
+  // A chasm is a crack down through the storeys under it: never over the slab that closes a zone.
+  if (!isZoneEnd(depth)) cutChasms(level, Rng.derive(seed, 'chasms', depth), clear, forced);
   raiseTerraces(level, Rng.derive(seed, 'terraces', depth), clear, forced);
   fillPools(level, Rng.derive(seed, 'pools', depth), clear, forced);
 
@@ -1275,10 +1278,15 @@ function sealWays(level: Level, rng: Rng): void {
     const dist = floorDistances({ ...level, closed: closedSet() }, level.start);
     if (dist[target.y * width + target.x] !== -1) locks.splice(before);
   };
-  seal({ x: level.down.top.x - level.down.dir.x, y: level.down.top.y - level.down.dir.y }, 'locked');
-  // Deeper locks take rarer keys.
-  const keyKind: KeyKind =
-    level.depth <= 3 ? 'keyIron' : level.depth <= 6 ? (rng.chance(0.7) ? 'keyBronze' : 'keyIron') : rng.chance(0.6) ? 'keyBone' : 'keyBronze';
+  // Only the way out of a zone is locked (its passage, through the slab between zones);
+  // within a zone the storeys are open to each other. Under the deepest, there is no way.
+  const passage = isZoneEnd(level.depth) && level.depth < MAX_DEPTH;
+  if (passage) seal({ x: level.down.top.x - level.down.dir.x, y: level.down.top.y - level.down.dir.y }, 'locked');
+  // A zone's passage is always locked: where its room cannot be shut, a locked iron grate
+  // closes the mouth of the well itself.
+  if (passage && !locks.some((l) => l.kind === 'locked')) locks.push({ ...level.down.steps[0], kind: 'locked', gate: true });
+  // Deeper areas take rarer keys.
+  const keyKind: KeyKind = zoneKey(level.depth);
   for (const l of locks) if (l.kind === 'locked') l.key = keyKind;
   const before = locks.length;
   seal(level.pit, 'stuck');
@@ -1287,7 +1295,7 @@ function sealWays(level: Level, rng: Rng): void {
   if (locks.length === before && !pitInLockedRoom) locks.push({ ...level.pit, kind: 'stuck' });
   level.locks = locks;
   const isPit = (p: Point) => p.x === level.pit.x && p.y === level.pit.y;
-  for (const l of locks) if (!isPit(l) && !level.doors.some((d) => d.x === l.x && d.y === l.y)) level.doors.push({ x: l.x, y: l.y });
+  for (const l of locks) if (!isPit(l) && !l.gate && !level.doors.some((d) => d.x === l.x && d.y === l.y)) level.doors.push({ x: l.x, y: l.y });
   // The key: somewhere reachable with every lock shut, far from the arrival, on dry floor.
   if (!locks.some((l) => l.kind === 'locked')) return;
   const dist = floorDistances({ ...level, closed: closedSet() }, level.start);
