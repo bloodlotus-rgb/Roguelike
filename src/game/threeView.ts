@@ -68,6 +68,8 @@ const cutaway = {
   night: { value: 0 },
   /** Space between hatch lines on screen, in device pixels. */
   lineSpacing: { value: 7 },
+  /** How far the flame lights across the floor plan; nothing past it gets light. */
+  reach: { value: 7 },
 };
 /** Hatch lines per tile at the coarsest level of detail used up close. */
 const HATCH_BASE = 7;
@@ -148,6 +150,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
     shader.uniforms.uPlayer = cutaway.player;
     shader.uniforms.uNight = cutaway.night;
     shader.uniforms.uLineSpacing = cutaway.lineSpacing;
+    shader.uniforms.uReach = cutaway.reach;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;')
       .replace(
@@ -169,7 +172,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
       .replace('#include <lights_fragment_begin>', LIGHTS_WITH_INK_SHADOW)
       .replace(
         '#include <common>',
-        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
+        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform float uReach;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
       )
       .replace(
         '#include <map_fragment>',
@@ -198,7 +201,10 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           // Lambert multiplies by the paper's color and divides by pi; undo both to get the
           // light alone, so 1.0 means fully lit.
           vec3 lightRgb = irradiance / max(diffuseColor.rgb, vec3(0.02)) * 3.14159;
+          // The flame reaches a storey down through holes, but across the plan never past
+          // its radius: what lies beyond stays dark.
           float lit = dot(lightRgb, vec3(0.3333)) * ${boost.toFixed(2)};
+          lit *= 1.0 - smoothstep(uReach * 0.86, uReach, distance(vInkPos.xz, uPlayer.xz));
           // The flame's tint without its strength: the paper keeps one tone, ink does the rest.
           vec3 tint = lightRgb / max(max(lightRgb.r, max(lightRgb.g, lightRgb.b)), 1e-4);
           vec3 paper = diffuseColor.rgb * tint;
@@ -1118,7 +1124,8 @@ export class ThreeView {
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
       geo.setIndex(indices);
       const floor = new THREE.Mesh(geo, inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.floor }), { boost: 4 }));
-      floor.receiveShadow = true;
+      // Seen only through the holes: no shadow test, the hole itself is the shadow's edge.
+      floor.receiveShadow = false;
       g.add(floor);
     }
     if (walls.length > 0) {
@@ -1129,7 +1136,7 @@ export class ThreeView {
       );
       const m = new THREE.Matrix4();
       walls.forEach(([x, y], i) => mesh.setMatrixAt(i, m.makeTranslation(x + 0.5, -LEVEL_HEIGHT / 2, y + 0.5)));
-      mesh.receiveShadow = true;
+      mesh.receiveShadow = false;
       mesh.castShadow = true;
       g.add(mesh);
     }
@@ -1265,7 +1272,8 @@ export class ThreeView {
       p.y - Math.sin(this.lightAngle) * back + swayZ,
     );
     this.light.target.position.set(p.x + Math.cos(this.lightAngle) * 3, 0.2 + world.heightAt(p) * 0.7, p.y + Math.sin(this.lightAngle) * 3);
-    this.light.distance = radius + back;
+    this.light.distance = radius + back + LEVEL_HEIGHT * 1.4;
+    cutaway.reach.value = radius + back;
     this.light.angle = world.visionCone;
     this.light.intensity = world.survival.light > 0 && !world.invisible ? 6 * flicker : 0;
     // Warmer and redder when it dips.
