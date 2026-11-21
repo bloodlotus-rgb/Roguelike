@@ -8,7 +8,7 @@
  * V1: the model, its queries, and the columns derived from a level as the game builds it
  * today. Pure logic, no drawing.
  */
-import { groundHeight, isBridge, isChasm, isDeep, isFloor, isShallow, isVoid, LEVEL_HEIGHT, onSteps, stairProgress, type Level, type Point } from './dungeon';
+import { Ground, groundAt, groundHeight, isBridge, isChasm, isDeep, isFloor, isShallow, isVoid, LEVEL_HEIGHT, onSteps, stairProgress, type Level, type Point } from './dungeon';
 
 export const Material = {
   Rock: 1,
@@ -22,8 +22,18 @@ export type Material = (typeof Material)[keyof typeof Material];
 
 export interface Span {
   bottom: number;
+  /** The top; on a sloped span (a ramp), its height at the middle of the tile. */
   top: number;
   mat: Material;
+  /** A sloped top: its height at the corners (x0y0, x1y0, x1y1, x0y1). */
+  slope?: [number, number, number, number];
+}
+
+/** The top of a span at a point of its tile (fx, fy in 0..1). */
+export function topAt(s: Span, fx: number, fy: number): number {
+  if (!s.slope) return s.top;
+  const [a, b, c, d] = s.slope;
+  return (a * (1 - fx) + b * fx) * (1 - fy) + (d * (1 - fx) + c * fx) * fy;
 }
 
 /** A tile's column: solid spans, sorted from the bottom, never overlapping. */
@@ -50,7 +60,11 @@ export function ceilingHeights(level: Level): Float32Array {
     const tall = r.shape === 'hall' || r.w * r.h >= 150 ? CEILING.hall : CEILING.room;
     for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) if (open(x, y)) heights[y * width + x] = tall;
   }
-  for (const p of [...level.up.steps, level.up.top, level.up.bottom]) heights[p.y * width + p.x] = Math.min(heights[p.y * width + p.x] || CEILING.stairs, CEILING.stairs);
+  // Only over open tiles: an end of the flight can be rock.
+  for (const p of [...level.up.steps, level.up.top, level.up.bottom]) {
+    const i = p.y * width + p.x;
+    if (heights[i]) heights[i] = Math.min(heights[i], CEILING.stairs);
+  }
   return heights;
 }
 
@@ -163,6 +177,10 @@ export function levelVoxels(level: Level): Voxels {
         mat = Material.Stone;
       }
       const column: Column = [{ bottom: DEEP, top: ground, mat }];
+      if (mat === Material.Rock && groundAt(level, x, y) === Ground.Ramp) {
+        const at = (fx: number, fy: number) => groundHeight(level, { x: x + Math.min(0.999, Math.max(0.001, fx)), y: y + Math.min(0.999, Math.max(0.001, fy)) });
+        column[0].slope = [at(0, 0), at(1, 0), at(1, 1), at(0, 1)];
+      }
       if (isShallow(level, x, y)) column.push({ bottom: ground, top: ground + 0.12, mat: Material.Water });
       // The stairs up rise into the level above: no ceiling right over the steps.
       if (!onSteps(level.up, centre)) column.push(roof);
