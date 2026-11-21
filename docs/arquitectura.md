@@ -1,6 +1,6 @@
 # Arquitectura de la mazmorra: piezas, grilla 3D, locaciones y proporciones (propuesta v1)
 
-> Estado: **propuesta para discutir**. Nada de esto está implementado. Lo marcado **[Propuesta]** es mío para validar.
+> Estado: **aprobado para empezar**, en el orden de la sección 5. Lo marcado **[Propuesta]** es mío para validar.
 
 Cuatro cosas que se apoyan una en otra:
 
@@ -234,3 +234,9 @@ Hoy las paredes miden 2,2 en primera persona, los pasillos tienen una casilla de
 4. **Locaciones** en tandas de 10 a 15.
 
 El día, el alto, el cinturón y los objetos (en `expedicion-v2.md`) pueden ir en paralelo, porque tocan otras partes del código.
+
+## Decisiones
+
+1. **Se arranca por acá**: proporciones, después la grilla 3D, las piezas y las locaciones.
+2. **Las locaciones las diseño yo en tandas de 10 a 15**, y vos revisás cada tanda: descartás, cambiás o agregás.
+3. **El nivel es un proyecto de varios días** (ver `expedicion-v2.md`). Eso pide **accesos al nivel siguiente que haya que buscar y abrir**, y probablemente **niveles más grandes**.

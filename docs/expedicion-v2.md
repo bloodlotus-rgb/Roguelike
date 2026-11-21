@@ -1,6 +1,6 @@
 # La expedición, segunda vuelta: el día, el cuerpo y los objetos (propuesta v1)
 
-> Estado: **propuesta para discutir**. Nada de esto está implementado. Lo marcado **[Propuesta]** es mío para validar; las preguntas abiertas están al final.
+> Estado: **en discusión**, con las primeras decisiones tomadas (ver "Decisiones" al final). Nada está implementado todavía. Lo marcado **[Propuesta]** es mío para validar.
 
 ## Dónde estamos
 
@@ -164,3 +164,13 @@ Ya acordamos agregarlas "en algún momento". **[Propuesta]** Lo dejo para una et
 2. **El alto**: ¿te gusta como pausa con riesgo? ¿Uno "gratis" al mediodía?
 3. **El cinturón**: ¿sí? ¿3 lugares?
 4. **Objetos**: ¿cuáles querés primero? Mi orden sería: cinturón y alto, luz táctica (bengala, vela, farol), herramientas (pico, palanca, garfio), y después cuidados y carga.
+
+## Decisiones
+
+1. **Un nivel es un proyecto de varios días**, no una etapa de un día.
+   - Se explora con **idas y vueltas al campamento**: el jugador va interviniendo el nivel (planta y prende antorchas, despeja derrumbes, fuerza o rompe puertas cerradas) mientras **busca los accesos al nivel siguiente**.
+   - El día no tiene que alcanzar para un nivel: cada día es una salida desde el campamento y una vuelta.
+   - **[Supuesto]** La duración del día queda como está (7 de día y 2,5 de noche) hasta probar este ritmo.
+   - Los niveles probablemente tengan que crecer más.
+2. **Herramientas para el cuerpo durante el día**: el **alto con riesgo**, **racionar con estados de hambre y sed**, y **lo que da la mazmorra**, con su precio. **El cinturón queda afuera.**
+3. **Orden**: primero proporciones y arquitectura (`arquitectura.md`). El día, el cuerpo y los objetos van después.
