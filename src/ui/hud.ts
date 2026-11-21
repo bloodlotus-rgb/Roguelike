@@ -4,7 +4,7 @@ import type { Survival } from '../core/survival';
 import type { World } from '../core/world';
 import type { Interaction } from '../core/world';
 import { BackpackUi } from './backpack';
-import { drawMap, type MapExtras } from './map';
+import { drawMap, drawMark, MAP_ZOOM, type MapExtras, type MapMark, type MapView } from './map';
 import { getLang, onLangChange, setLang, t, type StringKey } from '../i18n/i18n';
 
 type Meter = 'health' | 'hunger' | 'thirst' | 'light';
@@ -92,8 +92,19 @@ export class Hud {
       </div>
       <section class="map-screen" hidden>
         <div class="map-sheet">
-          <h2 class="map-title"></h2>
-          <canvas class="map-canvas"></canvas>
+          <header class="map-head">
+            <h2 class="map-title"></h2>
+            <button class="map-close" type="button" aria-label="×">×</button>
+          </header>
+          <div class="map-frame">
+            <canvas class="map-canvas"></canvas>
+            <div class="map-tools">
+              <button type="button" data-zoom="1.4">+</button>
+              <button type="button" data-zoom="0.7">−</button>
+              <button type="button" class="map-center" data-i18n="mapCenter"></button>
+            </div>
+          </div>
+          <ul class="map-legend"></ul>
           <p class="map-hint" data-i18n="mapHint"></p>
         </div>
       </section>
@@ -152,10 +163,21 @@ export class Hud {
     root.querySelector('.pause-button')!.addEventListener('click', handlers.onPause);
     this.viewButton = root.querySelector('.view-button')!;
     this.viewButton.addEventListener('click', handlers.onToggleView);
+    // Tapping outside the sheet, or its cross, closes the map.
     this.mapScreen.addEventListener('pointerdown', (e) => {
+      if (e.target !== this.mapScreen) return;
       e.preventDefault();
       this.closeMap();
     });
+    root.querySelector('.map-close')!.addEventListener('click', () => this.closeMap());
+    root.querySelectorAll<HTMLButtonElement>('[data-zoom]').forEach((b) =>
+      b.addEventListener('click', () => this.zoomMap(Number(b.dataset.zoom))),
+    );
+    root.querySelector('.map-center')!.addEventListener('click', () => {
+      this.mapFollow = true;
+      this.renderMap();
+    });
+    this.bindMapGestures();
     root.querySelector('.seed-value')!.textContent = seed;
 
     this.descendButton.addEventListener('click', handlers.onDescend);
@@ -333,11 +355,87 @@ export class Hud {
     return !this.mapScreen.hidden;
   }
 
+  /** Where the map looks; it follows the hero until dragged away. */
+  private mapView: MapView = { cx: 0, cy: 0, zoom: MAP_ZOOM.start };
+  private mapFollow = true;
+
+  /** Dragging moves the map, pinching or the wheel zooms it. */
+  private bindMapGestures(): void {
+    const canvas = this.mapCanvas;
+    const pointers = new Map<number, { x: number; y: number }>();
+    let pinch = 0;
+    canvas.style.touchAction = 'none';
+    canvas.addEventListener('pointerdown', (e) => {
+      canvas.setPointerCapture(e.pointerId);
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()];
+        pinch = Math.hypot(a.x - b.x, a.y - b.y);
+      }
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      const last = pointers.get(e.pointerId);
+      if (!last) return;
+      const now = { x: e.clientX, y: e.clientY };
+      pointers.set(e.pointerId, now);
+      if (pointers.size === 1) {
+        this.mapFollow = false;
+        this.mapView.cx -= (now.x - last.x) / this.mapView.zoom;
+        this.mapView.cy -= (now.y - last.y) / this.mapView.zoom;
+      } else if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinch > 0) this.zoomMap(d / pinch, false);
+        pinch = d;
+      }
+      this.renderMap();
+    });
+    const up = (e: PointerEvent) => {
+      pointers.delete(e.pointerId);
+      pinch = 0;
+    };
+    canvas.addEventListener('pointerup', up);
+    canvas.addEventListener('pointercancel', up);
+    canvas.addEventListener(
+      'wheel',
+      (e) => {
+        e.preventDefault();
+        this.zoomMap(e.deltaY < 0 ? 1.15 : 1 / 1.15);
+      },
+      { passive: false },
+    );
+  }
+
+  private zoomMap(factor: number, redraw = true): void {
+    this.mapView.zoom = Math.max(MAP_ZOOM.min, Math.min(MAP_ZOOM.max, this.mapView.zoom * factor));
+    if (redraw) this.renderMap();
+  }
+
+  /** The legend: every mark the map uses, drawn the same way, with its name. */
+  private renderLegend(): void {
+    const marks: MapMark[] = ['hero', 'down', 'up', 'camp', 'fountain', 'pit', 'chasm', 'bridge', 'rubble'];
+    const list = this.mapScreen.querySelector('.map-legend')!;
+    list.innerHTML = '';
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    for (const mark of marks) {
+      const item = document.createElement('li');
+      const icon = document.createElement('canvas');
+      icon.width = icon.height = 22 * dpr;
+      const ctx = icon.getContext('2d')!;
+      ctx.scale(dpr, dpr);
+      drawMark(ctx, mark, 11, 11, 7);
+      item.append(icon, document.createTextNode(t(`mapMark_${mark}` as StringKey)));
+      list.append(item);
+    }
+  }
+
   /** Opens the map; it keeps redrawing while open, since the game does not stop. */
   openMap(world: World, extras: MapExtras = {}): void {
     this.mapWorld = world;
     this.mapExtras = extras;
     this.mapScreen.hidden = false;
+    this.mapFollow = true;
+    this.renderLegend();
     this.renderMap();
     window.clearInterval(this.mapTimer);
     this.mapTimer = window.setInterval(() => this.renderMap(), 400);
@@ -352,7 +450,15 @@ export class Hud {
   private renderMap(): void {
     if (!this.mapWorld) return;
     this.mapTitle.textContent = t('mapTitle', { depth: this.mapWorld.depth });
-    drawMap(this.mapCanvas, this.mapWorld, this.mapExtras);
+    if (this.mapFollow) {
+      this.mapView.cx = this.mapWorld.player.x;
+      this.mapView.cy = this.mapWorld.player.y;
+    }
+    const w = this.mapWorld;
+    // Never lose the level entirely off the page.
+    this.mapView.cx = Math.max(0, Math.min(w.level.width, this.mapView.cx));
+    this.mapView.cy = Math.max(0, Math.min(w.level.height, this.mapView.cy));
+    drawMap(this.mapCanvas, w, this.mapExtras, this.mapView, { down: t('mapMark_down'), up: t('mapMark_up') });
   }
 
   setPaused(paused: boolean): void {

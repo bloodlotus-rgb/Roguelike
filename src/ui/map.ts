@@ -11,11 +11,137 @@ export interface MapExtras {
   deaths?: Array<{ x: number; y: number; name: string }>;
 }
 
+/** Where the map looks: the tile at its centre and how many pixels a tile takes. */
+export interface MapView {
+  cx: number;
+  cy: number;
+  zoom: number;
+}
+
+export const MAP_ZOOM = { min: 5, max: 48, start: 22 };
+
+/** Marks of the map, shared by the map and its legend. */
+export type MapMark = 'hero' | 'down' | 'up' | 'camp' | 'fountain' | 'pit' | 'rubble' | 'bridge' | 'chasm' | 'death';
+
+/** Draws one mark centred on (x, y), `r` pixels across from the centre. */
+export function drawMark(ctx: CanvasRenderingContext2D, mark: MapMark, x: number, y: number, r: number, angle = -Math.PI / 2): void {
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = Math.max(1.2, r / 4);
+  switch (mark) {
+    case 'hero': {
+      // An arrow pointing where the hero faces, in a ring.
+      ctx.fillStyle = 'rgba(139, 42, 31, 0.18)';
+      ctx.beginPath();
+      ctx.arc(x, y, r * 1.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+      ctx.fillStyle = BLOOD;
+      ctx.beginPath();
+      ctx.moveTo(r * 1.15, 0);
+      ctx.lineTo(-r * 0.8, r * 0.8);
+      ctx.lineTo(-r * 0.35, 0);
+      ctx.lineTo(-r * 0.8, -r * 0.8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = PAPER;
+      ctx.lineWidth = Math.max(1.2, r / 5);
+      ctx.stroke();
+      break;
+    }
+    case 'down':
+    case 'up': {
+      // A square of ink with steps, and a triangle saying which way.
+      ctx.fillStyle = mark === 'down' ? INK : PAPER;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      ctx.strokeRect(x - r, y - r, r * 2, r * 2);
+      ctx.fillStyle = mark === 'down' ? PAPER : INK;
+      ctx.beginPath();
+      const s = mark === 'down' ? 1 : -1;
+      ctx.moveTo(x - r * 0.6, y - r * 0.35 * s);
+      ctx.lineTo(x + r * 0.6, y - r * 0.35 * s);
+      ctx.lineTo(x, y + r * 0.55 * s);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case 'camp':
+      ctx.fillStyle = '#d9822b';
+      ctx.beginPath();
+      ctx.moveTo(x, y - r);
+      ctx.lineTo(x + r * 0.9, y + r * 0.7);
+      ctx.lineTo(x - r * 0.9, y + r * 0.7);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      break;
+    case 'fountain':
+      ctx.fillStyle = '#7d93a3';
+      ctx.beginPath();
+      ctx.arc(x, y, r * 0.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      break;
+    case 'pit':
+      ctx.fillStyle = INK;
+      ctx.beginPath();
+      ctx.arc(x, y, r * 0.85, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    case 'rubble':
+      ctx.fillStyle = PAPER_DARK;
+      for (const [fx, fy, fr] of [[-0.4, 0.25, 0.42], [0.38, 0.22, 0.45], [0, -0.35, 0.42]]) {
+        ctx.beginPath();
+        ctx.arc(x + fx * r, y + fy * r, fr * r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+      break;
+    case 'bridge':
+      ctx.fillStyle = '#b48a5a';
+      ctx.fillRect(x - r, y - r * 0.55, r * 2, r * 1.1);
+      ctx.beginPath();
+      for (let i = -1; i <= 1; i++) {
+        ctx.moveTo(x + i * r * 0.5, y - r * 0.55);
+        ctx.lineTo(x + i * r * 0.5, y + r * 0.55);
+      }
+      ctx.stroke();
+      ctx.strokeRect(x - r, y - r * 0.55, r * 2, r * 1.1);
+      break;
+    case 'chasm':
+      ctx.fillStyle = 'rgba(20, 16, 13, 0.9)';
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      break;
+    case 'death':
+      ctx.strokeStyle = BLOOD;
+      ctx.lineWidth = Math.max(1.5, r / 3);
+      ctx.beginPath();
+      ctx.moveTo(x - r * 0.8, y - r * 0.8);
+      ctx.lineTo(x + r * 0.8, y + r * 0.8);
+      ctx.moveTo(x + r * 0.8, y - r * 0.8);
+      ctx.lineTo(x - r * 0.8, y + r * 0.8);
+      ctx.stroke();
+      break;
+  }
+  ctx.restore();
+}
+
+/** A place worth finding, with what the map knows about where it is. */
+interface Landmark {
+  mark: MapMark;
+  x: number;
+  y: number;
+  label?: string;
+}
+
 /**
- * The hero's map: only what has been seen, drawn like a sketch on paper.
- * Fits the explored area into the canvas.
+ * The hero's map: only what has been seen, drawn like a sketch on paper, looking at
+ * `view`. Landmarks out of sight get an arrow on the edge pointing their way.
  */
-export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtras = {}): void {
+export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtras = {}, view?: MapView, labels: Partial<Record<MapMark, string>> = {}): void {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const rect = canvas.getBoundingClientRect();
   canvas.width = Math.max(1, Math.round(rect.width * dpr));
@@ -29,35 +155,14 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
   ctx.fillRect(0, 0, W, H);
 
   const { level, explored, fx } = world;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (let y = 0; y < level.height; y++) {
-    for (let x = 0; x < level.width; x++) {
-      if (!explored[y * level.width + x]) continue;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-    }
-  }
-  // Known places outside what was seen still have to fit on the page.
-  const extra: Array<{ x: number; y: number }> = [...(extras.deaths ?? [])];
-  if (fx.mapStairs) extra.push(level.stairs);
-  for (const p of extra) {
-    minX = Math.min(minX, Math.floor(p.x));
-    minY = Math.min(minY, Math.floor(p.y));
-    maxX = Math.max(maxX, Math.floor(p.x));
-    maxY = Math.max(maxY, Math.floor(p.y));
-  }
-  if (!Number.isFinite(minX)) return;
-  const pad = 2;
-  const cols = maxX - minX + 1 + pad * 2;
-  const rows = maxY - minY + 1 + pad * 2;
-  const size = Math.min(W / cols, H / rows, 22);
-  const offX = (W - cols * size) / 2 - (minX - pad) * size;
-  const offY = (H - rows * size) / 2 - (minY - pad) * size;
+  const v = view ?? { cx: world.player.x, cy: world.player.y, zoom: MAP_ZOOM.start };
+  const size = v.zoom;
+  const offX = W / 2 - v.cx * size;
+  const offY = H / 2 - v.cy * size;
+  const minX = Math.max(0, Math.floor(-offX / size) - 1);
+  const minY = Math.max(0, Math.floor(-offY / size) - 1);
+  const maxX = Math.min(level.width - 1, Math.ceil((W - offX) / size) + 1);
+  const maxY = Math.min(level.height - 1, Math.ceil((H - offY) / size) + 1);
   const at = (x: number, y: number) => ({ x: offX + x * size, y: offY + y * size });
   const seen = (x: number, y: number) =>
     x >= 0 && y >= 0 && x < level.width && y < level.height && explored[y * level.width + x] === 1;
@@ -179,44 +284,30 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     }
   }
 
+  // Marks are never smaller than a fingertip can tell apart.
+  const markR = Math.max(5, size * 0.4);
+
   // Fountains, once seen: water is geography.
   for (const f of level.features) {
     if (f.kind !== 'fountain' || !seen(f.x, f.y)) continue;
     const p = at(f.x + 0.5, f.y + 0.5);
-    const r = Math.max(3, size * 0.32);
-    ctx.fillStyle = '#7d93a3';
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = Math.max(1, size / 12);
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    drawMark(ctx, 'fountain', p.x, p.y, markR);
   }
 
   // The family's camps on this level: known to all, seen or not.
+  const landmarks: Landmark[] = [];
   for (const camp of world.camps) {
     if (camp.depth !== world.depth) continue;
     const p = at(camp.x + 0.5, camp.y + 0.5);
-    const r = Math.max(4, size * 0.42);
-    ctx.fillStyle = '#d9822b';
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = Math.max(1, size / 12);
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y - r);
-    ctx.lineTo(p.x + r * 0.8, p.y + r * 0.6);
-    ctx.lineTo(p.x - r * 0.8, p.y + r * 0.6);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+    drawMark(ctx, 'camp', p.x, p.y, markR * 1.1);
+    landmarks.push({ mark: 'camp', x: camp.x + 0.5, y: camp.y + 0.5 });
   }
 
   // The pit, once seen, and its rope; a rope down from above at the landing.
   if (seen(level.pit.x, level.pit.y)) {
     const p = at(level.pit.x + 0.5, level.pit.y + 0.5);
-    ctx.fillStyle = INK;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, Math.max(3, size * 0.4), 0, Math.PI * 2);
-    ctx.fill();
+    drawMark(ctx, 'pit', p.x, p.y, markR);
+    landmarks.push({ mark: 'pit', x: level.pit.x + 0.5, y: level.pit.y + 0.5 });
     if (world.works.some((w) => w.kind === 'rope' && w.depth === world.depth)) {
       ctx.strokeStyle = '#b48a5a';
       ctx.lineWidth = Math.max(1.5, size / 8);
@@ -319,19 +410,11 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
   // Where the family's heroes fell: a cross and a name.
   for (const death of extras.deaths ?? []) {
     const p = at(death.x, death.y);
-    const r = Math.max(4, size * 0.4);
-    ctx.strokeStyle = BLOOD;
-    ctx.lineWidth = Math.max(1.5, size / 7);
-    ctx.beginPath();
-    ctx.moveTo(p.x - r, p.y - r);
-    ctx.lineTo(p.x + r, p.y + r);
-    ctx.moveTo(p.x + r, p.y - r);
-    ctx.lineTo(p.x - r, p.y + r);
-    ctx.stroke();
+    drawMark(ctx, 'death', p.x, p.y, markR);
     ctx.fillStyle = INK;
     ctx.font = `italic ${Math.max(10, Math.min(14, size * 0.7))}px Georgia, serif`;
     ctx.textAlign = 'center';
-    ctx.fillText(death.name, p.x, p.y - r - 3);
+    ctx.fillText(death.name, p.x, p.y - markR - 3);
   }
 
   // The flights of steps, down and up, as hatched strips once seen.
@@ -344,29 +427,57 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     });
   }
 
-  // The stairs down, once found (Rune Readers know where they are from the start).
-  const { stairs } = level;
-  if (seen(stairs.x, stairs.y) || fx.mapStairs) {
-    const p = at(stairs.x, stairs.y);
-    ctx.fillStyle = INK;
-    ctx.fillRect(p.x + size * 0.15, p.y + size * 0.15, size * 0.7, size * 0.7);
-    ctx.strokeStyle = PAPER;
-    ctx.lineWidth = Math.max(1, size / 12);
-    for (let i = 1; i <= 3; i++) {
-      ctx.beginPath();
-      ctx.moveTo(p.x + size * (0.15 + i * 0.08), p.y + size * (0.15 + i * 0.17));
-      ctx.lineTo(p.x + size * (0.85 - i * 0.08), p.y + size * (0.15 + i * 0.17));
-      ctx.stroke();
+  // The stairs, down and up, once found (Rune Readers know the way down from the start).
+  const mid = (sw: typeof level.down) => ({ x: sw.steps[1].x + 0.5, y: sw.steps[1].y + 0.5 });
+  const stairs: Array<[MapMark, typeof level.down, boolean]> = [
+    ['down', level.down, level.down.steps.some((p) => seen(p.x, p.y)) || !!fx.mapStairs],
+    ['up', level.up, level.up.steps.some((p) => seen(p.x, p.y))],
+  ];
+  ctx.font = `italic ${Math.max(11, Math.min(15, size * 0.6))}px Georgia, serif`;
+  ctx.textAlign = 'center';
+  for (const [mark, sw, known] of stairs) {
+    if (!known) continue;
+    const c = mid(sw);
+    const p = at(c.x, c.y);
+    drawMark(ctx, mark, p.x, p.y, markR * 1.15);
+    if (labels[mark]) {
+      ctx.fillStyle = INK;
+      ctx.fillText(labels[mark]!, p.x, p.y - markR * 1.15 - 4);
     }
+    landmarks.push({ mark, x: c.x, y: c.y, label: labels[mark] });
   }
 
-  // The hero.
+  // The hero: an arrow pointing where they face.
   const hero = at(world.player.x, world.player.y);
-  ctx.fillStyle = BLOOD;
-  ctx.beginPath();
-  ctx.arc(hero.x, hero.y, Math.max(3, size * 0.35), 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = PAPER;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
+  drawMark(ctx, 'hero', hero.x, hero.y, Math.max(7, size * 0.45), Math.atan2(world.facing.y, world.facing.x));
+
+  // Landmarks off the page: an arrow on the edge pointing their way.
+  const margin = 20;
+  for (const l of landmarks) {
+    const p = at(l.x, l.y);
+    if (p.x >= margin && p.x <= W - margin && p.y >= margin && p.y <= H - margin) continue;
+    const dx = p.x - W / 2;
+    const dy = p.y - H / 2;
+    const k = Math.min((W / 2 - margin) / Math.max(1e-6, Math.abs(dx)), (H / 2 - margin) / Math.max(1e-6, Math.abs(dy)));
+    const ex = W / 2 + dx * k;
+    const ey = H / 2 + dy * k;
+    const a = Math.atan2(dy, dx);
+    ctx.save();
+    ctx.fillStyle = PAPER;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(ex, ey, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.moveTo(ex + Math.cos(a) * 19, ey + Math.sin(a) * 19);
+    ctx.lineTo(ex + Math.cos(a + 0.5) * 13, ey + Math.sin(a + 0.5) * 13);
+    ctx.lineTo(ex + Math.cos(a - 0.5) * 13, ey + Math.sin(a - 0.5) * 13);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    drawMark(ctx, l.mark, ex, ey, 7);
+  }
 }
