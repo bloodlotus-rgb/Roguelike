@@ -1151,7 +1151,7 @@ export class ThreeView {
       worldUv: 'box',
       grime: true,
       outline: true,
-      erode: 0.16,
+      erode: 0.1,
     });
     const top = inkMaterial(
       new THREE.MeshLambertMaterial({ map: this.textures.ceiling, side: THREE.DoubleSide, shadowSide: THREE.BackSide }),
@@ -1159,7 +1159,7 @@ export class ThreeView {
     );
     const shaft = inkMaterial(
       new THREE.MeshLambertMaterial({ map: this.textures.wall, bumpMap: this.wallRelief, bumpScale: 3, flatShading: true }),
-      { cut: true, worldUv: 'column', grime: true, erode: 0.12 },
+      { cut: true, worldUv: 'column', grime: true, erode: 0.08 },
     );
     // One mesh with only the faces that look onto a floor, so no inner faces exist.
     this.walls = new THREE.Mesh(wallGeometry(level, this.wallTiles, FLAT_WALLS ? 0 : BRICK_DEPTH, (x, y) => this.wallTopAt(x, y)), [side, top]);
@@ -1376,7 +1376,7 @@ export class ThreeView {
     const material = inkMaterial(new THREE.MeshLambertMaterial({ map: this.stone, flatShading: true, color: 0xd8cdb4 }), {
       worldUv: 'box',
       outline: true,
-      erode: 0.14,
+      erode: 0.1,
     });
     const seg = quality === 'ultra' ? 2 : 1;
     const geometry = new THREE.BoxGeometry(1, 1, 1, seg, 1, seg);
