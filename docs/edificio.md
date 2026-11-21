@@ -212,3 +212,40 @@ Dos piezas vecinas encajan si sus aberturas coinciden.
   - Los horrores, el loot y la dificultad siguen yendo por piso (crecen con la profundidad). Los caídos por zona llegan con la etapa de los jefes.
   - Los umbrales entre áreas (las piezas enormes) llegan con el jenga y las catástrofes (Ed3 y Ed4).
 - **Guardado**: misma versión. Ojo: en una dinastía en curso, los cerrojos se mueven a los pasos de zona; las puertas que ya se abrieron siguen abiertas.
+
+## Ed3a implementada: el armado del jenga
+
+- **El armado** (`src/core/jenga.ts`, con tests): una zona es una caja de celdas (6 × 6 m, un piso de alto) de 4 pisos.
+  - **Piezas**: prismas de celdas que giran en 4 sentidos, con **aberturas**: puertas (en un costado, al nivel del piso de una celda) y escotillas (en el techo o el piso, para los pasos de zona).
+  - **Primera tanda, procedural**:
+    - pasillo, codo, T y cruce;
+    - cuartito, sala, sala grande y salón;
+    - salón de dos pisos con galería;
+    - escaleras de caracol de 2 y 3 pisos.
+  - **Cómo crece**:
+    1. desde el pozo de llegada (la escalera que baja de la zona de arriba);
+    2. primero se plantan las escaleras entre pisos, para que los cuatro pisos queden unidos;
+    3. cada puerta abierta pide una pieza cuya abertura encaje y que entre en las celdas libres, hasta llenar la zona con su densidad (~40 %);
+    4. lo que quedó aparte se une con **túneles por la roca**, y si no se puede, se saca;
+    5. las puertas que no llevan a nada se tapian.
+  - **El paso de zona**: el pozo de salida, en el piso más hondo, junto a la pieza más lejana de la llegada.
+- **Garantías (tests)**:
+  - siempre igual con la misma semilla;
+  - toda pieza unida a la llegada y toda abertura con su par;
+  - los cuatro pisos construidos;
+  - la salida lejos;
+  - la zona más grande (112 × 112 celdas × 4 pisos, ~11.700 piezas) se arma en menos de medio segundo.
+- **Para mirarlo**: `?jenga=view&zone=N&seed=…` dibuja la zona piso por piso (vista de desarrollo).
+- **Todavía no se juega**: es el plano de la zona, no sus vóxeles.
+
+### Lo que sigue
+
+- **Ed3b · Jugar en el jenga**, detrás de un interruptor (`?jenga=1`) hasta que tenga agua, abismos y locaciones:
+  - la forma de cada pieza en vóxeles;
+  - los pisos jugables con el tamaño real de cada área;
+  - el juego pasa de "una escalera de bajada y una de subida por nivel" a muchas escaleras de caracol por piso.
+- **Ed3c**:
+  - las locaciones de hoy como piezas;
+  - las piezas procedurales con forma propia;
+  - el relleno de los espacios muertos;
+  - las 100 piezas diseñadas, una vez aprobadas.
