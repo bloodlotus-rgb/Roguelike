@@ -95,7 +95,8 @@ export class BackpackUi {
     const items = inv.items
       .map((it) => {
         const { w, h } = footprint(it.kind, it.turned);
-        const sips = it.kind === 'waterskin' ? `<span class="pack-sips">${it.charges ?? 0}</span>` : '';
+        // Sips left in a waterskin; how many are piled, for small things.
+        const sips = it.kind === 'waterskin' ? `<span class="pack-sips">${it.charges ?? 0}</span>` : (it.count ?? 1) > 1 ? `<span class="pack-sips pile">×${it.count}</span>` : '';
         // The picture is drawn upright; a turned item is rotated a quarter turn.
         const img = it.turned
           ? `<img src="${picture(it.kind)}" alt="" style="width:${h * CELL - 8}px;height:${w * CELL - 8}px;transform:rotate(90deg)">`
@@ -105,7 +106,7 @@ export class BackpackUi {
       .join('');
     const detail = chosen
       ? `<div class="pack-detail">
-          <b>${t(`item_${chosen.kind}` as StringKey)}</b>
+          <b>${t(`item_${chosen.kind}` as StringKey)}${(chosen.count ?? 1) > 1 ? ` ×${chosen.count}` : ''}</b>
           <span>${t(`itemDesc_${chosen.kind}` as StringKey)}${chosen.kind === 'waterskin' ? ` (${t('sips', { n: chosen.charges ?? 0 })}${chosen.turbid ? `, ${t('turbid')}` : ''})` : ''}${chosen.kind === 'mushroom' && chosen.poison && this.knowsMushrooms ? ` (${t('poisonous')})` : ''}${chosen.kind === 'chalk' ? ` (${t('uses', { n: chosen.charges ?? 0 })})` : ''}</span>
           <span class="pack-actions">
             ${

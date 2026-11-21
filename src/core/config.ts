@@ -30,10 +30,10 @@ export const CONFIG = {
     leapSpan: 1.5,
   },
   items: {
-    ration: { min: 2, max: 3 },
+    ration: { min: 1, max: 2 },
     oil: { min: 1, max: 2 },
-    gold: { min: 3, max: 5 },
-    marchRationChance: 0.3,
+    gold: { min: 2, max: 4 },
+    marchRationChance: 0.25,
     mushroom: { min: 1, max: 3 },
     mushroomPoison: 0.35,
   },
@@ -79,12 +79,13 @@ export const CONFIG = {
   },
   loot: {
     /** Searching a container: how many things, and what (weights). */
+    // Fewer finds, and more of them worth carrying: less loose food, more of what opens the way.
     remains: {
       min: 1,
-      max: 3,
-      table: { ration: 25, oil: 18, gold: 15, marchRation: 8, waterskin: 7, bandage: 10, campKit: 7, firewood: 10 },
+      max: 2,
+      table: { ration: 12, oil: 20, gold: 18, marchRation: 10, waterskin: 6, bandage: 10, campKit: 6, firewood: 4, rope: 5, torch: 9 },
     },
-    crate: { min: 0, max: 2, table: { ration: 30, oil: 16, gold: 10, firewood: 20, bandage: 8, planks: 8, torch: 5, chalk: 3 } },
+    crate: { min: 0, max: 2, table: { ration: 14, oil: 18, gold: 12, firewood: 12, bandage: 8, planks: 12, torch: 10, chalk: 5, rope: 4 } },
     /** Chance that a slain Crawler or Husk leaves flesh worth eating (if cooked). */
     horrorMeat: 0.2,
     /** Reach of fountains and containers, in tiles. */

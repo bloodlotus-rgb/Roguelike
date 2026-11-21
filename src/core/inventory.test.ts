@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addItem, emptyInventory, findSpot, fits, itemAt, moveItem, removeItem, starterKit, turnItem } from './inventory';
+import { addItem, countOf, emptyInventory, enlarged, findSpot, fits, itemAt, moveItem, removeItem, removeStack, starterKit, turnItem } from './inventory';
 
 describe('backpack', () => {
   it('places items where they fit and refuses when full', () => {
@@ -33,6 +33,29 @@ describe('backpack', () => {
     const inv = starterKit();
     const skin = inv.items.find((it) => it.kind === 'waterskin');
     expect(skin?.charges).toBe(4);
-    expect(inv.items.length).toBe(7);
+    // The two rations share one pile.
+    expect(inv.items.length).toBe(6);
+    expect(countOf(inv, 'ration')).toBe(2);
+  });
+
+  it('small things pile up in one place, up to a limit, and come off one at a time', () => {
+    const inv = emptyInventory();
+    for (let i = 0; i < 5; i++) addItem(inv, 'ration');
+    const piles = inv.items.filter((it) => it.kind === 'ration');
+    expect(piles.map((p) => p.count ?? 1).sort()).toEqual([1, 4]);
+    const big = piles.find((p) => p.count === 4)!;
+    expect(removeItem(inv, big.uid)?.count).toBe(1);
+    expect(big.count).toBe(3);
+    expect(removeStack(inv, big.uid)?.count).toBe(3);
+    expect(countOf(inv, 'ration')).toBe(1);
+    // Waterskins and planks never pile.
+    addItem(inv, 'waterskin');
+    addItem(inv, 'waterskin');
+    expect(inv.items.filter((it) => it.kind === 'waterskin').length).toBe(2);
+  });
+
+  it('a backpack from an older save grows to the current size', () => {
+    const old = { cols: 5, rows: 4, items: [], nextUid: 1 };
+    expect(enlarged(old)).toMatchObject({ cols: 6, rows: 5 });
   });
 });

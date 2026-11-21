@@ -28,19 +28,21 @@ export interface ItemDef {
   onTheMove?: boolean;
   /** Only by the fire: eating, drinking, cooking, dressing wounds. */
   campOnly?: boolean;
+  /** How many fit in one place, piled up (small things only). */
+  stack?: number;
 }
 
 export const ITEMS: Record<ItemKind, ItemDef> = {
-  ration: { w: 1, h: 1, campOnly: true },
-  marchRation: { w: 1, h: 2, onTheMove: true },
+  ration: { w: 1, h: 1, campOnly: true, stack: 4 },
+  marchRation: { w: 1, h: 2, onTheMove: true, stack: 2 },
   waterskin: { w: 1, h: 2, charges: 4, campOnly: true },
-  oil: { w: 1, h: 1 },
-  firewood: { w: 2, h: 1, campOnly: true },
-  bandage: { w: 1, h: 1, campOnly: true },
+  oil: { w: 1, h: 1, stack: 3 },
+  firewood: { w: 2, h: 1, campOnly: true, stack: 3 },
+  bandage: { w: 1, h: 1, campOnly: true, stack: 4 },
   mushroom: { w: 1, h: 1, campOnly: true },
   horrorMeat: { w: 1, h: 2, campOnly: true },
   campKit: { w: 2, h: 3 },
-  torch: { w: 1, h: 2 },
+  torch: { w: 1, h: 2, stack: 2 },
   chalk: { w: 1, h: 1, charges: 5 },
   planks: { w: 1, h: 3 },
   rope: { w: 2, h: 2 },
@@ -61,6 +63,8 @@ export interface Packed {
   turbid?: boolean;
   /** A mushroom that will make you sick (Wits can tell). */
   poison?: boolean;
+  /** How many are piled here (1 when absent). */
+  count?: number;
 }
 
 export interface Inventory {
@@ -70,8 +74,21 @@ export interface Inventory {
   nextUid: number;
 }
 
-export function emptyInventory(cols = 5, rows = 4): Inventory {
+/** The backpack's size. */
+export const PACK = { cols: 6, rows: 5 };
+
+export function emptyInventory(cols = PACK.cols, rows = PACK.rows): Inventory {
   return { cols, rows, items: [], nextUid: 1 };
+}
+
+/** A backpack from an older save grows to the current size; what is in it stays put. */
+export function enlarged(inv: Inventory): Inventory {
+  return { ...inv, cols: Math.max(inv.cols, PACK.cols), rows: Math.max(inv.rows, PACK.rows) };
+}
+
+/** How many are piled in one place. */
+export function countIn(item: Packed): number {
+  return item.count ?? 1;
 }
 
 /** Width and height an item takes, turned or not. */
@@ -120,6 +137,15 @@ export function addItem(
   charges = ITEMS[kind].charges,
   extra: Pick<Packed, 'turbid' | 'poison'> = {},
 ): Packed | null {
+  // Small things go onto a pile of the same, if there is one with room.
+  const max = ITEMS[kind].stack ?? 1;
+  if (max > 1 && charges === undefined) {
+    const pile = inv.items.find((it) => it.kind === kind && countIn(it) < max);
+    if (pile) {
+      pile.count = countIn(pile) + 1;
+      return pile;
+    }
+  }
   const spot = findSpot(inv, kind);
   if (!spot) return null;
   const item: Packed = { uid: inv.nextUid++, kind, ...spot, ...extra };
@@ -128,10 +154,22 @@ export function addItem(
   return item;
 }
 
+/** Takes one out (from the top of a pile, or the item itself). Returns what was taken. */
 export function removeItem(inv: Inventory, uid: number): Packed | null {
   const index = inv.items.findIndex((it) => it.uid === uid);
   if (index < 0) return null;
+  const item = inv.items[index];
+  if (countIn(item) > 1) {
+    item.count = countIn(item) - 1;
+    return { ...item, count: 1 };
+  }
   return inv.items.splice(index, 1)[0];
+}
+
+/** Takes out a whole pile at once. */
+export function removeStack(inv: Inventory, uid: number): Packed | null {
+  const index = inv.items.findIndex((it) => it.uid === uid);
+  return index < 0 ? null : inv.items.splice(index, 1)[0];
 }
 
 /** Moves (and maybe turns) an item to a cell, if it fits there. */
@@ -159,7 +197,7 @@ export function turnItem(inv: Inventory, uid: number): boolean {
 }
 
 export function countOf(inv: Inventory, kind: ItemKind): number {
-  return inv.items.filter((it) => it.kind === kind).length;
+  return inv.items.filter((it) => it.kind === kind).reduce((n, it) => n + countIn(it), 0);
 }
 
 /** What each new life carries down from the mansion (until the shop exists). */
