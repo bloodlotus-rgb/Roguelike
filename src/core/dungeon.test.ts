@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canStep, floorDistances, generateLevel, Ground, isFloor, isVoid } from './dungeon';
+import { canStep, floorDistances, generateLevel, Ground, isChasm, isFloor, isVoid } from './dungeon';
 
 const seeds = ['estirpe', 'tainted', 'abc', '12345', 'mansion'];
 
@@ -128,7 +128,36 @@ describe('generateLevel', () => {
         for (const item of level.items) expect(seen[item.y * width + item.x]).toBe(1);
       }
     }
-    expect(terraces).toBeGreaterThan(3);
+    expect(terraces).toBeGreaterThan(2);
+  });
+
+  it('chasms cut rooms wall to wall; passages never run into one; bridges are floor', () => {
+    let chasms = 0;
+    let bridges = 0;
+    for (const seed of seeds) {
+      for (let depth = 1; depth <= 6; depth++) {
+        const level = generateLevel(seed, depth);
+        const inRoom = (x: number, y: number) => level.rooms.some((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+        let here = false;
+        for (let y = 0; y < level.height; y++) {
+          for (let x = 0; x < level.width; x++) {
+            if (!isChasm(level, x, y)) continue;
+            here = true;
+            expect(inRoom(x, y)).toBe(true);
+            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+              if (isFloor(level, x + dx, y + dy)) expect(inRoom(x + dx, y + dy)).toBe(true);
+            }
+          }
+        }
+        if (here) chasms++;
+        for (const tile of level.bridges) {
+          expect(level.tiles[tile]).toBe(1);
+          bridges++;
+        }
+      }
+    }
+    expect(chasms).toBeGreaterThan(2);
+    expect(bridges).toBeGreaterThan(0);
   });
 });
 

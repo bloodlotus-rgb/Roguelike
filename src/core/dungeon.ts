@@ -7,6 +7,8 @@ export const Tile = {
   Floor: 1,
   /** Open air over the level below: you see and light across it, but nobody walks on it. */
   Void: 2,
+  /** A chasm: a crack with no bottom in sight. Seen and lit across; crossed only by a bridge. */
+  Chasm: 3,
 } as const;
 export type Tile = (typeof Tile)[keyof typeof Tile];
 
@@ -152,6 +154,8 @@ export interface Level {
   gallery: Room | null;
   /** Where a rope from the level above comes down. */
   landing: Point;
+  /** Tiles of chasm spanned by a bridge (floor now, drawn as planks). */
+  bridges: number[];
   /** Ground of each tile (see `Ground`); absent means all low. */
   ground?: Uint8Array;
   /** Tiles shut right now (closed doors, barricades): floor, but nothing gets through. */
@@ -175,7 +179,16 @@ export function isPassable(level: Level, x: number, y: number): boolean {
 /** Whether sight and light get across a tile: floor or open air, not shut. */
 export function isSeeThrough(level: Level, x: number, y: number): boolean {
   const t = tileAt(level, x, y);
-  return (t === Tile.Floor || t === Tile.Void) && !level.closed?.has(y * level.width + x);
+  return (t === Tile.Floor || t === Tile.Void || t === Tile.Chasm) && !level.closed?.has(y * level.width + x);
+}
+
+export function isChasm(level: Level, x: number, y: number): boolean {
+  return tileAt(level, x, y) === Tile.Chasm;
+}
+
+/** A tile with a bridge over a chasm. */
+export function isBridge(level: Level, x: number, y: number): boolean {
+  return level.bridges.includes(y * level.width + x);
 }
 
 /** Open air over the level below (a gallery's void). */
@@ -363,6 +376,50 @@ const DIRS: Point[] = [
 const inside = (r: Room, p: Point) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
 /**
+ * Chasms: a crack one or two tiles wide that cuts a plain room from wall to wall. If it
+ * would split the level, a bridge spans it; otherwise there may be one, or the way is
+ * around. No passage ever runs straight into the crack.
+ */
+function cutChasms(level: Level, rng: Rng, keepClear: Point[], forced: number): void {
+  const { width, tiles } = level;
+  level.rooms.forEach((room, index) => {
+    if (index < forced || room.shape !== 'rect' || !rng.chance(CONFIG.level.chasmChance)) return;
+    if (level.gallery && overlaps(room, level.gallery, 0)) return;
+    if (keepClear.some((p) => p.x >= room.x - 2 && p.x <= room.x + room.w + 1 && p.y >= room.y - 2 && p.y <= room.y + room.h + 1)) return;
+    // The crack runs across the room's long side, leaving at least two tiles on each bank.
+    const acrossX = room.w >= room.h;
+    const long = acrossX ? room.w : room.h;
+    const wide = rng.int(1, 2);
+    if (long < wide + 4) return;
+    const at = rng.int(2, long - 2 - wide);
+    const crack: Point[] = [];
+    for (let k = 0; k < wide; k++) {
+      for (let j = 0; j < (acrossX ? room.h : room.w); j++) {
+        crack.push(acrossX ? { x: room.x + at + k, y: room.y + j } : { x: room.x + j, y: room.y + at + k });
+      }
+    }
+    if (crack.some((p) => !isFloor(level, p.x, p.y))) return;
+    // Both ends of the crack meet wall, not a passage.
+    const ends = crack.flatMap((p) => NEIGHBOURS.map(([dx, dy]) => ({ x: p.x + dx, y: p.y + dy }))).filter((q) => !inside(room, q));
+    if (ends.some((q) => isFloor(level, q.x, q.y))) return;
+    const before = floorDistances(level, level.start);
+    for (const p of crack) tiles[p.y * width + p.x] = Tile.Chasm;
+    const after = floorDistances(level, level.start);
+    const split = before.some((d, i) => d !== -1 && after[i] === -1 && tiles[i] === Tile.Floor);
+    if (!split && !rng.chance(CONFIG.level.bridgeChance)) return;
+    // A bridge across, somewhere along the crack (not against a wall).
+    const span = (acrossX ? room.h : room.w) - 2;
+    if (span < 1) return;
+    const j = rng.int(1, span);
+    for (let k = 0; k < wide; k++) {
+      const p = acrossX ? { x: room.x + at + k, y: room.y + j } : { x: room.x + j, y: room.y + at + k };
+      tiles[p.y * width + p.x] = Tile.Floor;
+      level.bridges.push(p.y * width + p.x);
+    }
+  });
+}
+
+/**
  * Terraces: in some plain rooms, a raised band along one wall. One ramp climbs to it
  * from the room's floor, and wherever a passage runs into the band there is a ramp too,
  * so no way in is lost.
@@ -374,6 +431,7 @@ function raiseTerraces(level: Level, rng: Rng, keepClear: Point[], forced: numbe
     if (index < forced || room.shape !== 'rect' || room.w < 6 || room.h < 6 || !rng.chance(CONFIG.level.terraceChance)) return;
     if (level.gallery && overlaps(room, level.gallery, 0)) return;
     if (keepClear.some((p) => p.x >= room.x - 1 && p.x <= room.x + room.w && p.y >= room.y - 1 && p.y <= room.y + room.h)) return;
+    for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) if (isChasm(level, x, y) || isBridge(level, x, y)) return;
     const depth = rng.int(2, 3);
     const inside = (p: Point) => p.x >= room.x && p.x < room.x + room.w && p.y >= room.y && p.y < room.y + room.h;
     const bandFor = (side: number) => {
@@ -559,6 +617,7 @@ function generateLayout(seed: string, depth: number): Level {
     pit: { x: 0, y: 0 },
     landing: landing ?? { ...up.bottom },
     gallery: null,
+    bridges: [],
   };
 
   // Stairwells are cut last, so no corridor breaks them; any room a stairwell cut off is
@@ -622,6 +681,7 @@ function generateLayout(seed: string, depth: number): Level {
   }
 
   level.ground = new Uint8Array(width * height);
+  cutChasms(level, Rng.derive(seed, 'chasms', depth), [...upBlock, ...downBlock, level.pit, level.landing], 1 + (landing ? 1 : 0) + (above?.gallery ? 1 : 0));
   raiseTerraces(level, Rng.derive(seed, 'terraces', depth), [...upBlock, ...downBlock, level.pit, level.landing], 1 + (landing ? 1 : 0) + (above?.gallery ? 1 : 0));
 
   // Fountains and drips are geography: the same in every life.
@@ -651,6 +711,7 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
     ...layout,
     tiles: layout.tiles.slice(),
     ground: layout.ground?.slice(),
+    bridges: layout.bridges.slice(),
     rooms: layout.rooms.map((r) => ({ ...r })),
     features: layout.features.map((f) => ({ ...f })),
     doorways: layout.doorways.map((d) => ({ ...d })),

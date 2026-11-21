@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import type { Level, Point } from '../core/dungeon';
 import { CONFIG } from '../core/config';
-import { generateLevel, Ground, groundAt, groundHeight, isFloor, isVoid, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
+import { generateLevel, Ground, groundAt, groundHeight, isBridge, isChasm, isFloor, isVoid, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
 import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
@@ -20,7 +20,7 @@ import { drawChalk, drawFloorDecor, drawProjectile } from './art';
 import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
 import { InkPost } from './inkPost';
 import { BRICK_DEPTH, layBricks } from './masonry';
-import { campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
+import { bridgeModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
 import { easeInOut, easeOut, swingPhase } from './swing';
 import { Effects } from './threeEffects';
 import { drawHands, inkTexture } from './firstPerson';
@@ -30,6 +30,8 @@ export type CameraMode = 'top' | 'first';
 
 const EYE = 1.15;
 const WALL_FIRST = 2.2;
+/** How far down a chasm's rock walls are drawn, past where any light reaches. */
+const CHASM_DEPTH = 6;
 /** From above the walls stand tall too; the ones between the camera and the hero fade out. */
 const WALL_TOP = 1.6;
 const TOP_TILT = (55 * Math.PI) / 180;
@@ -324,10 +326,11 @@ function wallGeometry(level: Level, tiles: Array<[number, number]>, inset = 0): 
     const xm = x + e;
     const zp = y + 1 - e;
     const zm = y + e;
-    if (isFloor(level, x + 1, y)) quad([[xp, 0, y + 1], [xp, 0, y], [xp, 1, y], [xp, 1, y + 1]], [1, 0, 0]);
-    if (isFloor(level, x - 1, y)) quad([[xm, 0, y], [xm, 0, y + 1], [xm, 1, y + 1], [xm, 1, y]], [-1, 0, 0]);
-    if (isFloor(level, x, y + 1)) quad([[x, 0, zp], [x + 1, 0, zp], [x + 1, 1, zp], [x, 1, zp]], [0, 0, 1]);
-    if (isFloor(level, x, y - 1)) quad([[x + 1, 0, zm], [x, 0, zm], [x, 1, zm], [x + 1, 1, zm]], [0, 0, -1]);
+    const open = (tx: number, ty: number) => isFloor(level, tx, ty) || isChasm(level, tx, ty);
+    if (open(x + 1, y)) quad([[xp, 0, y + 1], [xp, 0, y], [xp, 1, y], [xp, 1, y + 1]], [1, 0, 0]);
+    if (open(x - 1, y)) quad([[xm, 0, y], [xm, 0, y + 1], [xm, 1, y + 1], [xm, 1, y]], [-1, 0, 0]);
+    if (open(x, y + 1)) quad([[x, 0, zp], [x + 1, 0, zp], [x + 1, 1, zp], [x, 1, zp]], [0, 0, 1]);
+    if (open(x, y - 1)) quad([[x + 1, 0, zm], [x, 0, zm], [x, 1, zm], [x + 1, 1, zm]], [0, 0, -1]);
   }
   const sideIndices = indices.length;
   for (const [x, y] of tiles) quad([[x, 1, y + 1], [x + 1, 1, y + 1], [x + 1, 1, y], [x, 1, y]], [0, 1, 0]);
@@ -839,6 +842,7 @@ export class ThreeView {
     this.levelGroup.add(this.stairsMesh(level.down, 'down'));
     this.levelGroup.add(this.stairsMesh(level.up, 'up'));
     this.levelGroup.add(this.belowMesh(level));
+    this.levelGroup.add(this.chasmMesh(level));
     if (level.gallery) this.levelGroup.add(this.railingMesh(level));
     this.ceiling = new THREE.Mesh(
       this.tileQuads(level, WALL_FIRST, false),
@@ -851,9 +855,9 @@ export class ThreeView {
     this.columnTiles = [];
     for (let y = 0; y < level.height; y++) {
       for (let x = 0; x < level.width; x++) {
-        if (isFloor(level, x, y) || isVoid(level, x, y)) continue;
+        if (isFloor(level, x, y) || isVoid(level, x, y) || isChasm(level, x, y)) continue;
         let touches = false;
-        for (let dy = -1; dy <= 1 && !touches; dy++) for (let dx = -1; dx <= 1; dx++) if (isFloor(level, x + dx, y + dy)) touches = true;
+        for (let dy = -1; dy <= 1 && !touches; dy++) for (let dx = -1; dx <= 1; dx++) if (isFloor(level, x + dx, y + dy) || isChasm(level, x + dx, y + dy)) touches = true;
         if (!touches) continue;
         const column = isFloor(level, x - 1, y) && isFloor(level, x + 1, y) && isFloor(level, x, y - 1) && isFloor(level, x, y + 1);
         (column ? this.columnTiles : this.wallTiles).push([x, y]);
@@ -948,7 +952,7 @@ export class ThreeView {
     const start = level.start;
     for (let y = 0; y < level.height; y++) {
       for (let x = 0; x < level.width; x++) {
-        if (!isFloor(level, x, y)) continue;
+        if (!isFloor(level, x, y) || isBridge(level, x, y)) continue;
         if (Math.abs(x - start.x) + Math.abs(y - start.y) < 2) continue;
         if (x === level.stairs.x && y === level.stairs.y) continue;
         const nearWall = !isFloor(level, x - 1, y) || !isFloor(level, x + 1, y) || !isFloor(level, x, y - 1) || !isFloor(level, x, y + 1);
@@ -1197,6 +1201,81 @@ export class ThreeView {
     return g;
   }
 
+  /**
+   * Chasms: the rock walls of the crack going down until the light gives out, over a
+   * bottom of solid ink, and the dungeon's old bridges across them.
+   */
+  private chasmMesh(level: Level): THREE.Group {
+    const g = new THREE.Group();
+    const deep = (x: number, y: number) => isChasm(level, x, y) || isBridge(level, x, y);
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const colors: number[] = [];
+    const indices: number[] = [];
+    let n = 0;
+    const bottom: Array<[number, number]> = [];
+    for (let y = 0; y < level.height; y++) {
+      for (let x = 0; x < level.width; x++) {
+        if (!deep(x, y)) continue;
+        bottom.push([x, y]);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          if (deep(x + dx, y + dy)) continue;
+          // The face on the far edge of this tile, looking back into the crack.
+          const ex = dx === 1 ? x + 1 : dx === -1 ? x : null;
+          const ez = dy === 1 ? y + 1 : dy === -1 ? y : null;
+          const a = ex !== null ? { x: ex, z: y } : { x, z: ez! };
+          const b = ex !== null ? { x: ex, z: y + 1 } : { x: x + 1, z: ez! };
+          positions.push(a.x, 0, a.z, b.x, 0, b.z, b.x, -CHASM_DEPTH, b.z, a.x, -CHASM_DEPTH, a.z);
+          for (let i = 0; i < 4; i++) normals.push(-dx, 0, -dy);
+          // Darker the deeper: the rock sinks into ink.
+          colors.push(1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0);
+          const flip = dx === 1 || dy === -1;
+          if (flip) indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
+          else indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
+          n += 4;
+        }
+      }
+    }
+    if (n === 0) return g;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.setIndex(indices);
+    const rock = new THREE.Mesh(
+      geo,
+      inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling, vertexColors: true, side: THREE.DoubleSide }), {
+        worldUv: 'box',
+        grime: true,
+      }),
+    );
+    rock.receiveShadow = true;
+    g.add(rock);
+    const floor = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.05, 1), this.mats.ink, bottom.length);
+    const m = new THREE.Matrix4();
+    bottom.forEach(([x, y], i) => floor.setMatrixAt(i, m.makeTranslation(x + 0.5, -CHASM_DEPTH, y + 0.5)));
+    g.add(floor);
+    // The dungeon's own bridges (the family's are drawn with the other works).
+    const old = new Set(generateLevel(level.seed, level.depth, 0).bridges);
+    for (const tile of old) {
+      const x = tile % level.width;
+      const y = Math.floor(tile / level.width);
+      g.add(this.bridgeAt(level, x, y, true));
+    }
+    return g;
+  }
+
+  /** A tile of bridge, turned to run between its two banks. */
+  private bridgeAt(level: Level, x: number, y: number, old: boolean): THREE.Group {
+    const obj = outlined(bridgeModel(this.mats, old, x * 31 + y), this.mats);
+    // Chasm on the sides means the bridge runs the other way.
+    const alongX = isChasm(level, x, y - 1) || isChasm(level, x, y + 1) || isBridge(level, x, y - 1) || isBridge(level, x, y + 1);
+    obj.rotation.y = alongX ? 0 : Math.PI / 2;
+    obj.position.set(x + 0.5, 0, y + 0.5);
+    return obj;
+  }
+
   /** One textured quad per floor tile, at height `y`, facing up (floor) or down (ceiling). */
   private tileQuads(level: Level, y: number, up: boolean): THREE.BufferGeometry {
     const positions: number[] = [];
@@ -1206,11 +1285,14 @@ export class ThreeView {
     let n = 0;
     for (let ty = 0; ty < level.height; ty++) {
       for (let tx = 0; tx < level.width; tx++) {
-        if (!isFloor(level, tx, ty)) continue;
+        // The ceiling runs on over chasms; the floor stops at their edge.
+        if (!isFloor(level, tx, ty) && (up || !isChasm(level, tx, ty))) continue;
         // The stairs down and the pit open holes in the floor; the stairs up rise through
         // the ceiling.
         const hole = (sw: Stairwell) => sw.steps.some((p) => p.x === tx && p.y === ty);
         if (up && (hole(level.down) || (tx === level.pit.x && ty === level.pit.y))) continue;
+        // Bridges are planks over the drop, drawn as models.
+        if (up && isBridge(level, tx, ty)) continue;
         if (!up && hole(level.up)) continue;
         // Terraces stand raised and ramps slope; the ceiling stays flat.
         const at = (cx: number, cy: number) => (up ? y + groundHeight(level, { x: tx + cx, y: ty + cy }) : y);
@@ -1629,7 +1711,18 @@ export class ThreeView {
     const seen = new Set<number>();
     const lit: Array<{ x: number; y: number; d: number; h: number }> = [];
     for (const w of world.works) {
-      if (w.depth !== world.depth || (w.kind !== 'torch' && w.kind !== 'chalk')) continue;
+      if (w.depth !== world.depth) continue;
+      if (w.kind === 'bridge') {
+        seen.add(w.id);
+        if (!this.works.has(w.id)) {
+          const obj = new THREE.Group();
+          for (const p of w.span ?? []) obj.add(this.bridgeAt(this.level!, p.x, p.y, false));
+          this.scene.add(obj);
+          this.works.set(w.id, { obj, key: 'bridge' });
+        }
+        continue;
+      }
+      if (w.kind !== 'torch' && w.kind !== 'chalk') continue;
       seen.add(w.id);
       const burning = w.kind === 'torch' && w.condition > 0;
       const key = w.kind === 'torch' ? `torch-${burning}` : `chalk-${w.sign}`;

@@ -123,6 +123,28 @@ export function torchModel(m: ModelMaterials): Parts {
   return g;
 }
 
+/**
+ * One tile of bridge over a chasm, walked along x: planks across two beams. An old bridge
+ * of the dungeon has posts and a rope rail; one the family laid is just planks, unevenly
+ * cut. `seed` varies the planks from tile to tile.
+ */
+export function bridgeModel(m: ModelMaterials, old: boolean, seed: number): Parts {
+  const g = new THREE.Group();
+  const wobble = (k: number) => Math.sin(seed * 12.9898 + k * 78.233) * 0.5;
+  for (const z of [-0.36, 0.36]) part(g, box(1.02, 0.08, 0.08), m.wood, 0, -0.07, z);
+  for (let i = 0; i < 6; i++) {
+    const len = old ? 0.96 : 0.84 + wobble(i) * 0.14;
+    part(g, box(0.15, 0.04, len), m.wood, -0.42 + i * 0.168, -0.01, old ? 0 : wobble(i + 9) * 0.05, 0, old ? 0 : wobble(i + 3) * 0.12, 0);
+  }
+  if (old) {
+    for (const z of [-0.47, 0.47]) {
+      part(g, cyl(0.03, 0.035, 0.72, 6), m.wood, -0.44, 0.31, z);
+      part(g, cyl(0.012, 0.012, 1.02, 5), m.cloth, 0, 0.6, z, 0, 0, Math.PI / 2);
+    }
+  }
+  return g;
+}
+
 /** Height of a standing torch's flame. */
 export const TORCH_FLAME = 1.08;
 

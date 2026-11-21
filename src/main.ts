@@ -285,7 +285,7 @@ class Session implements SceneHost {
         this.dynasty.chronicle.push({ type: 'campLost', generation: this.dynasty.generation, depth: e.camp.depth, reason: 'night' });
         this.hud.toastText(t('toast_campLost', { depth: e.camp.depth }), true);
       } else if (e.type === 'workBuilt') {
-        const keys = { torch: 'toast_torchSet', barricade: 'toast_barricade', chalk: 'toast_chalk', rope: 'toast_rope' } as const;
+        const keys = { torch: 'toast_torchSet', barricade: 'toast_barricade', chalk: 'toast_chalk', rope: 'toast_rope', bridge: 'toast_bridge' } as const;
         this.hud.toast(keys[e.work.kind]);
       } else if (e.type === 'bashing') this.hud.toast(e.barricade ? 'toast_bashingBarricade' : 'toast_bashingDoor');
       else if (e.type === 'shutBroken') {

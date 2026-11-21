@@ -952,6 +952,58 @@ describe('works', () => {
   });
 });
 
+describe('chasms', () => {
+  /** A crack `wide` tiles across the clearing, just ahead of the hero. */
+  function crack(world: World, wide: number): number {
+    const cx = Math.floor(world.player.x);
+    const cy = Math.floor(world.player.y);
+    for (let k = 1; k <= wide; k++) for (let y = cy - 5; y <= cy + 5; y++) world.level.tiles[y * world.level.width + cx + k] = 3;
+    world.player = { x: cx + 0.6, y: cy + 0.5 };
+    world.facing = { x: 1, y: 0 };
+    return cx;
+  }
+
+  it('nobody walks into a chasm', () => {
+    const world = arena('headsman');
+    const cx = crack(world, 1);
+    run(world, 1, move(1, 0));
+    expect(world.player.x).toBeLessThan(cx + 1);
+    tap(world, 'dodge');
+    run(world, 0.6);
+    expect(world.player.x).toBeLessThan(cx + 1);
+  });
+
+  it('the plunderer leaps a chasm one tile wide with a dodge, but not a wider one', () => {
+    const world = arena('plunderer');
+    const cx = crack(world, 1);
+    const events = tap(world, 'dodge');
+    run(world, 0.6);
+    expect(events.some((e) => e.type === 'leap')).toBe(true);
+    expect(world.player.x).toBeGreaterThan(cx + 2);
+
+    const wide = arena('plunderer');
+    const wx = crack(wide, 2);
+    tap(wide, 'dodge');
+    run(wide, 0.6);
+    expect(wide.player.x).toBeLessThan(wx + 1);
+  });
+
+  it('planks laid at the edge make a bridge the family keeps', () => {
+    const world = arena('headsman');
+    const cx = crack(world, 2);
+    world.inventory.items = world.inventory.items.filter((i) => i.kind !== 'campKit');
+    addItem(world.inventory, 'planks');
+    const planks = world.inventory.items.find((i) => i.kind === 'planks')!;
+    world.useItem(planks.uid);
+    world.update(0.02, NO_INPUT);
+    const bridge = world.works.find((w) => w.kind === 'bridge');
+    expect(bridge?.span).toHaveLength(2);
+    expect(world.level.bridges.length).toBeGreaterThanOrEqual(2);
+    run(world, 1.5, move(1, 0));
+    expect(world.player.x).toBeGreaterThan(cx + 3);
+  });
+});
+
 describe('doors and barricades', () => {
   /** A world standing next to a doorway, with nothing else around. */
   function atDoorway(): { world: World; d: { x: number; y: number } } {

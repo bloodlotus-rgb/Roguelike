@@ -15,6 +15,11 @@ export const CONFIG = {
     tunnelChance: 0.35,
     /** Chance a plain room gets a raised terrace along one wall. */
     terraceChance: 0.35,
+    /** Chance a plain room is cut by a chasm, and that a chasm which can be walked around still has a bridge. */
+    chasmChance: 0.2,
+    bridgeChance: 0.4,
+    /** Widest stretch of chasm a leap carries over, in tiles. */
+    leapSpan: 1.5,
   },
   items: {
     ration: { min: 2, max: 3 },
@@ -97,6 +102,8 @@ export const CONFIG = {
     /** Condition a torch loses each dawn (about three days on a full load). */
     torchBurn: 34,
     reach: 1.2,
+    /** Widest chasm a load of planks spans, in tiles. */
+    bridgeSpan: 2,
     /** A plain door's strength, and how fast hunting horrors batter doors and barricades. */
     doorHp: 60,
     bashDoor: 20,

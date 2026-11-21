@@ -144,6 +144,11 @@ export class Sound {
       case 'dodge':
         this.playNoise({ filter: 'bandpass', freq: 400, freqEnd: 1200, q: 0.7, duration: 0.22, gain: 0.18 });
         break;
+      case 'leap':
+        // A rush of air over the drop, then far below, nothing.
+        this.playNoise({ filter: 'lowpass', freq: 900, freqEnd: 140, duration: 0.5, gain: 0.22 });
+        this.playTone({ freq: 55, freqEnd: 40, type: 'sine', duration: 0.5, gain: 0.25 });
+        break;
       case 'special':
         if (event.kind === 'flare') {
           this.playNoise({ filter: 'lowpass', freq: 300, freqEnd: 4000, duration: 0.5, gain: 0.45 });

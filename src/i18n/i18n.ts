@@ -55,6 +55,7 @@ const strings = {
   action_ropeDown: { es: 'Bajar por la soga', en: 'Climb down the rope' },
   action_ropeUp: { es: 'Subir por la soga', en: 'Climb up the rope' },
   toast_rope: { es: 'Ataste una soga en el pozo', en: 'You tied a rope at the pit' },
+  toast_bridge: { es: 'Tendiste un puente sobre el abismo', en: 'You laid a bridge over the chasm' },
   action_openDoor: { es: 'Abrir', en: 'Open' },
   action_closeDoor: { es: 'Cerrar', en: 'Shut' },
   toast_barricade: { es: 'Barricaste la entrada', en: 'You barricaded the doorway' },
@@ -72,7 +73,7 @@ const strings = {
     en: 'Set it on the floor and it stays lit for the family: your lamp rests in its light and horrors hesitate. Fill it with oil.',
   },
   itemDesc_chalk: { es: 'Deja una marca en el piso, para vos y tus herederos. Se borra con los años.', en: 'Leaves a mark on the floor, for you and your heirs. It fades with the years.' },
-  itemDesc_planks: { es: 'Para barricar una entrada.', en: 'To barricade a doorway.' },
+  itemDesc_planks: { es: 'Para barricar una entrada o tender un puente sobre un abismo angosto.', en: 'To barricade a doorway or bridge a narrow chasm.' },
   itemDesc_rope: { es: 'Atada en un pozo, es un atajo al nivel de abajo.', en: 'Tied at a pit, it is a shortcut to the level below.' },
   uses: { es: '{n} usos', en: '{n} uses' },
   sign_arrow: { es: 'Flecha', en: 'Arrow' },
@@ -217,8 +218,8 @@ const strings = {
     en: 'Bloodthirst: a kill wins back half the health you just lost.',
   },
   classPassive_plunderer: {
-    es: 'Ojo de rata: ves los objetos cercanos en la oscuridad y los horrores sueltan más botín.',
-    en: 'Rat eye: you see nearby items in the dark and horrors drop more loot.',
+    es: 'Ojo de rata: ves los objetos cercanos en la oscuridad y los horrores sueltan más botín. Esquivando, saltás abismos de una baldosa.',
+    en: 'Rat eye: you see nearby items in the dark and horrors drop more loot. A dodge leaps a chasm one tile wide.',
   },
   classPassive_candlebearer: {
     es: 'Llama devota: tu luz dura más y los horrores dudan antes de entrar en ella.',

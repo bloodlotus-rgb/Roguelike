@@ -1,4 +1,4 @@
-import { isFloor, isVoid } from '../core/dungeon';
+import { isBridge, isChasm, isFloor, isVoid } from '../core/dungeon';
 import type { World } from '../core/world';
 
 const PAPER = '#ece2cb';
@@ -71,6 +71,27 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
       ctx.fillRect(p.x, p.y, size + 0.5, size + 0.5);
     }
   }
+  // Bridges: planks across the drop.
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = Math.max(0.6, size / 12);
+  for (const tile of level.bridges) {
+    const x = tile % level.width;
+    const y = Math.floor(tile / level.width);
+    if (!seen(x, y)) continue;
+    const p = at(x, y);
+    const alongX = isChasm(level, x, y - 1) || isChasm(level, x, y + 1) || isBridge(level, x, y - 1) || isBridge(level, x, y + 1);
+    ctx.beginPath();
+    for (let i = 1; i < 4; i++) {
+      if (alongX) {
+        ctx.moveTo(p.x + (i / 4) * size, p.y + size * 0.1);
+        ctx.lineTo(p.x + (i / 4) * size, p.y + size * 0.9);
+      } else {
+        ctx.moveTo(p.x + size * 0.1, p.y + (i / 4) * size);
+        ctx.lineTo(p.x + size * 0.9, p.y + (i / 4) * size);
+      }
+    }
+    ctx.stroke();
+  }
 
   // Walls: hatched where they touch a seen floor, outlined along the floor.
   ctx.strokeStyle = INK;
@@ -79,6 +100,14 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     for (let x = minX - 1; x <= maxX + 1; x++) {
       if (isFloor(level, x, y)) continue;
       // Open air over the level below: drawn as a drop, not a wall.
+      // A chasm: solid ink, no bottom.
+      if (isChasm(level, x, y)) {
+        if (!seen(x, y)) continue;
+        const v = at(x, y);
+        ctx.fillStyle = 'rgba(20, 16, 13, 0.9)';
+        ctx.fillRect(v.x, v.y, size + 0.5, size + 0.5);
+        continue;
+      }
       if (isVoid(level, x, y)) {
         if (!seen(x, y)) continue;
         const v = at(x, y);

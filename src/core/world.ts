@@ -1,11 +1,11 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { floorDistances, generateLevel, goldPile, groundHeight, isFloor, isSeeThrough, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { floorDistances, generateLevel, goldPile, groundHeight, isChasm, isFloor, isSeeThrough, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
 import { addItem, ITEMS, removeItem, starterKit, type Inventory, type ItemKind } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
-import { hasLineOfSight, moveWithCollision, visibleTiles } from './geometry';
+import { blocked, hasLineOfSight, moveWithCollision, visibleTiles } from './geometry';
 import { Rng } from './rng';
 import { packTiles, unpackTiles, type CampSite, type ChalkSign, type DeathCause, type Work } from './dynasty';
 import { freshSurvival, isDead, lightRadius, tickSurvival, type Survival } from './survival';
@@ -108,7 +108,7 @@ export interface Projectile {
 export type PlayerAction =
   | { type: 'none' }
   | { type: 'attack'; phase: 'windup' | 'recovery'; timer: number; step: ComboStep }
-  | { type: 'dodge'; timer: number; dir: Point }
+  | { type: 'dodge'; timer: number; dir: Point; leap?: { from: Point; spare: number } }
   | { type: 'special'; timer: number; target: Enemy | null };
 
 export type WorldEvent =
@@ -126,6 +126,7 @@ export type WorldEvent =
   | { type: 'dawn' }
   | { type: 'campBuilt'; camp: CampSite }
   | { type: 'cantBuild'; reason: 'danger' | 'corridor' | 'taken' }
+  | { type: 'leap' }
   | { type: 'campLost'; camp: CampSite }
   | { type: 'workBuilt'; work: Work }
   | { type: 'torchFilled' }
@@ -905,12 +906,37 @@ export class World {
     if (dodgePressed && this.dodgeCooldown <= 0 && (free || this.action.type === 'attack')) {
       const dir = moving ? normalize(input.move) : this.facing;
       this.action = { type: 'dodge', timer: COMBAT.dodge.duration, dir };
+      if (this.cls.leapsChasms && this.leapAhead(dir)) {
+        this.action.leap = { from: { ...this.player }, spare: 0.4 };
+        events.push({ type: 'leap' });
+      }
       this.invulnerableTimer = COMBAT.dodge.invulnerable + (this.fx.dodgeInvulnerable ?? 0);
       this.dodgeCooldown = COMBAT.dodge.cooldown * quicknessFactor(this.attrs);
       this.spend(this.cls.costs.dodge);
       this.running = false;
       events.push({ type: 'dodge', dir });
     }
+  }
+
+  /**
+   * Whether a dodge along `dir` reaches a chasm narrow enough to leap: it starts within
+   * the dodge's reach, is at most about a tile across and has floor on the far side.
+   */
+  private leapAhead(dir: Point): boolean {
+    const reach = COMBAT.dodge.distance * (1 + (this.fx.dodgeDistance ?? 0));
+    let start = -1;
+    for (let t = 0; t <= reach + 1.6; t += 0.05) {
+      const x = Math.floor(this.player.x + dir.x * t);
+      const y = Math.floor(this.player.y + dir.y * t);
+      const chasm = isChasm(this.level, x, y);
+      if (start < 0) {
+        if (chasm) {
+          if (t > reach) return false;
+          start = t;
+        } else if (!isFloor(this.level, x, y)) return false;
+      } else if (!chasm) return isFloor(this.level, x, y) && t - start <= CONFIG.level.leapSpan;
+    }
+    return false;
   }
 
   private movePlayer(dt: number, input: ControlInput): void {
@@ -922,6 +948,7 @@ export class World {
         this.action.dir.x * speed * dt,
         this.action.dir.y * speed * dt,
         CONFIG.player.radius,
+        !!this.action.leap,
       );
       return;
     }
@@ -943,6 +970,15 @@ export class World {
     if (action.timer > 0) return;
     switch (action.type) {
       case 'dodge':
+        // A leap goes on until both feet are on the far side (or, failing that, back).
+        if (action.leap && blocked(this.level, this.player, CONFIG.player.radius)) {
+          if (action.leap.spare > 0) {
+            action.leap.spare -= 0.03;
+            action.timer = 0.03;
+            return;
+          }
+          this.player = action.leap.from;
+        }
         this.action = { type: 'none' };
         return;
       case 'attack':
@@ -1471,6 +1507,7 @@ export class World {
 
   /** Marks shut doors and barricades in the level, so nothing passes or sees through. */
   private refreshShut(): void {
+    this.applyBridges();
     const shut = new Set<number>();
     for (const [tile, door] of this.doorStates) if (door.state === 'shut') shut.add(tile);
     // Nobody walks over the pit.
@@ -1545,6 +1582,62 @@ export class World {
     const door = this.doorStates.get(target.y * this.level.width + target.x);
     if (door) door.state = 'broken';
     const work = this.newWork('barricade', { x: target.x, y: target.y, open: false });
+    this.refreshShut();
+    events.push({ type: 'workBuilt', work });
+  }
+
+  // Bridges -----------------------------------------------------------------------------
+
+  /** Lays the family's bridges over their chasms: floor to walk on, drawn as planks. */
+  private applyBridges(): void {
+    for (const w of this.works) {
+      if (w.kind !== 'bridge' || w.depth !== this.depth || w.condition <= 0) continue;
+      for (const p of w.span ?? []) {
+        const tile = p.y * this.level.width + p.x;
+        if (!isChasm(this.level, p.x, p.y)) continue;
+        this.level.tiles[tile] = 1;
+        if (!this.level.bridges.includes(tile)) this.level.bridges.push(tile);
+      }
+    }
+  }
+
+  /**
+   * A chasm the hero stands at the edge of, narrow enough to bridge with planks: the tiles
+   * to span, nearest the way the hero faces.
+   */
+  chasmInReach(): Point[] | null {
+    const px = Math.floor(this.player.x);
+    const py = Math.floor(this.player.y);
+    let best: Point[] | null = null;
+    let bestScore = -Infinity;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      // Close enough to the edge on that side.
+      const edge = dx ? (dx > 0 ? px + 1 - this.player.x : this.player.x - px) : dy > 0 ? py + 1 - this.player.y : this.player.y - py;
+      if (edge > CONFIG.works.reach - 0.5) continue;
+      const span: Point[] = [];
+      let x = px + dx;
+      let y = py + dy;
+      while (isChasm(this.level, x, y) && span.length <= CONFIG.works.bridgeSpan) {
+        span.push({ x, y });
+        x += dx;
+        y += dy;
+      }
+      if (span.length === 0 || span.length > CONFIG.works.bridgeSpan || !isFloor(this.level, x, y)) continue;
+      const score = dx * this.facing.x + dy * this.facing.y;
+      if (score > bestScore) {
+        bestScore = score;
+        best = span;
+      }
+    }
+    return best;
+  }
+
+  /** Lays planks across the chasm at hand: a bridge the family keeps. */
+  private buildBridge(uid: number, events: WorldEvent[]): void {
+    const span = this.chasmInReach();
+    if (!span) return void events.push({ type: 'cantBuild', reason: 'taken' });
+    removeItem(this.inventory, uid);
+    const work = this.newWork('bridge', { x: span[0].x, y: span[0].y, span: span.map((p) => ({ ...p })) });
     this.refreshShut();
     events.push({ type: 'workBuilt', work });
   }
@@ -2002,7 +2095,8 @@ export class World {
       return;
     }
     if (item.kind === 'planks') {
-      this.buildBarricade(uid, events);
+      if (this.chasmInReach()) this.buildBridge(uid, events);
+      else this.buildBarricade(uid, events);
       return;
     }
     if (item.kind === 'torch' || item.kind === 'chalk') {
