@@ -110,7 +110,8 @@ describe('World basics', () => {
     for (let i = 0; i < 2000; i++) {
       world.update(0.05, move(Math.cos(i / 50), Math.sin(i / 37)));
       world.survival = { ...world.survival, hunger: 100, thirst: 100, light: 100 };
-      expect(isFloor(world.level, Math.floor(world.player.x), Math.floor(world.player.y))).toBe(true);
+      // Floor, or the spiral of a stairwell (rock in the plan, steps in the voxels).
+      expect(isFloor(world.level, Math.floor(world.player.x), Math.floor(world.player.y)) || world.atUpStairs || world.atStairs).toBe(true);
     }
   });
 
@@ -885,10 +886,13 @@ describe('climbing and the mansion', () => {
     expect(world.ascend()).toBe('climbed');
     expect(world.depth).toBe(1);
     expect(world.taken.has(item.id)).toBe(true);
-    expect(world.atStairs).toBe(true);
-    // And the way up from depth 1 is the mansion.
+    // Out at the head of the well down.
+    expect(Math.floor(world.player.x)).toBe(world.level.down.top.x);
+    expect(Math.floor(world.player.y)).toBe(world.level.down.top.y);
+    // And the way up from depth 1 is the mansion; coming back, at the foot of its well.
     world.returnFromSurface();
-    expect(world.atUpStairs).toBe(true);
+    expect(Math.floor(world.player.x)).toBe(world.level.up.bottom.x);
+    expect(world.playerZ).toBeCloseTo(0);
     expect(world.ascend()).toBe('mansion');
   });
 
@@ -1403,29 +1407,68 @@ describe('pits and ropes', () => {
     expect(world.depth).toBe(1);
   });
 
-  it('nobody walks over the pit', () => {
-    const world = arena();
-    const { pit } = world.level;
-    expect(world.level.closed?.has(pit.y * world.level.width + pit.x)).toBe(true);
+  it('the pit is a real hole: nobody walks into it, but pushing at its edge drops you to the landing below, hurt', () => {
+    const world = new World('estirpe', 'headsman');
+    world.enemies = [];
+    const { pit, width } = world.level;
+    // No grate over it.
+    world.level.closed?.delete(pit.y * width + pit.x);
+    const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dy]) => isFloor(world.level, pit.x + dx, pit.y + dy))!;
+    world.player = { x: pit.x + side[0] + 0.5, y: pit.y + side[1] + 0.5 };
+    world.reshaped();
+    // A short push: still at the edge.
+    run(world, 0.3, move(-side[0], -side[1]));
+    expect(world.depth).toBe(1);
+    const health = world.survival.health;
+    const events: WorldEvent[] = [];
+    for (let t = 0; t < 3 && world.depth === 1; t += 0.02) events.push(...world.update(0.02, move(-side[0], -side[1])));
+    events.push(...run(world, 1.5));
+    expect(world.depth).toBe(2);
+    expect(Math.floor(world.player.x)).toBe(world.level.landing.x);
+    expect(Math.floor(world.player.y)).toBe(world.level.landing.y);
+    expect(world.playerZ).toBeCloseTo(0);
+    expect(events.some((e) => e.type === 'fell')).toBe(true);
+    expect(world.survival.health).toBeLessThan(health);
+  });
+
+  it('a stuck grate over the pit keeps everyone out', () => {
+    const world = new World('estirpe', 'headsman');
+    const { pit, width } = world.level;
+    if (world.level.locks.some((l) => l.x === pit.x && l.y === pit.y)) expect(world.level.closed?.has(pit.y * width + pit.x)).toBe(true);
   });
 });
 
 describe('stairs you walk', () => {
-  it('walking down the steps takes you to the level below, in the same place; up brings you back', () => {
+  /** Walks the hero over the surfaces toward a spot, frame by frame, until `done`. */
+  function walkToward(world: World, goal: { x: number; y: number }, goalZ: number, done: () => boolean, seconds = 30): WorldEvent[] {
+    const events: WorldEvent[] = [];
+    const s = world.surfaces;
+    const field = s.distancesTo(s.nodeAt(goal, goalZ));
+    for (let t = 0; t < seconds && !done(); t += 0.02) {
+      const dir = s.directionFrom(field, world.player, world.playerZ) ?? { x: goal.x - world.player.x, y: goal.y - world.player.y };
+      events.push(...world.update(0.02, move(dir.x, dir.y)));
+    }
+    return events;
+  }
+
+  it('walking down the spiral well takes you to the storey below; up brings you back', () => {
     const world = arena();
     const { down } = world.level;
     world.player = { x: down.top.x + 0.5, y: down.top.y + 0.5 };
-    const dirMove = move(down.dir.x, down.dir.y);
-    let events: WorldEvent[] = [];
-    for (let i = 0; i < 200 && world.depth === 1; i++) events.push(...world.update(0.02, dirMove));
+    world.reshaped();
+    const foot = { x: down.bottom.x + 0.5, y: down.bottom.y + 0.5 };
+    const events = walkToward(world, foot, -6, () => world.depth === 2);
     expect(world.depth).toBe(2);
     expect(events.some((e) => e.type === 'levelChanged')).toBe(true);
-    expect(world.heightAt(world.player)).toBeGreaterThan(0);
-    // Back up the same steps.
-    const back = move(-down.dir.x, -down.dir.y);
-    for (let i = 0; i < 200 && world.depth === 2; i++) world.update(0.02, back);
+    expect(events.some((e) => e.type === 'fell')).toBe(false);
+    // Now in the storey below's frame: still on the steps, above its floor.
+    expect(world.playerZ).toBeGreaterThan(0);
+    expect(world.atUpStairs).toBe(true);
+    // Back up the same well, to the head of the stairs above.
+    const head = { x: down.top.x + 0.5, y: down.top.y + 0.5 };
+    walkToward(world, head, 6, () => world.depth === 1);
     expect(world.depth).toBe(1);
-    expect(world.heightAt(world.player)).toBeLessThan(0);
+    expect(world.playerZ).toBeLessThan(0);
   });
 
   it('a hunting horror close behind follows you down the stairs', () => {
@@ -1440,11 +1483,13 @@ describe('stairs you walk', () => {
     expect(world.enemies.some((e) => e.kind === 'crawler' && e.alerted && e.id === hunter.id)).toBe(true);
   });
 
-  it('from depth 1 the stairs up lead out to the mansion', () => {
+  it('from depth 1 the well up leads out to the mansion', () => {
     const world = new World('estirpe', 'headsman');
     world.enemies = [];
     const { up } = world.level;
-    const events = run(world, 2, move(-up.dir.x, -up.dir.y));
+    // The highest step, just under the mansion.
+    const head = { x: up.top.x + up.dir.x + 0.5, y: up.top.y + up.dir.y + 0.5 };
+    const events = walkToward(world, head, 6, () => world.playerZ > 3.5);
     expect(events).toContainEqual({ type: 'toMansion' });
   });
 });

@@ -46,10 +46,10 @@ export const HIGH = 40;
 export const CLEARANCE = 1.6;
 
 /**
- * How high the ceiling is over each open tile: passages 3, rooms 4, great halls 5.5; over
+ * How high the ceiling is over each open tile: passages 3, rooms 4, great halls 5; over
  * the stairs up it comes down to meet the flight.
  */
-export const CEILING = { passage: 3, room: 4, hall: 5.5, stairs: LEVEL_HEIGHT + 0.6 };
+export const CEILING = { passage: 3, room: 4, hall: 5, stairs: LEVEL_HEIGHT + 0.6 };
 
 export function ceilingHeights(level: Level): Float32Array {
   const { width, height } = level;
@@ -69,7 +69,7 @@ export function ceilingHeights(level: Level): Float32Array {
 }
 
 /** How deep deep water is, and where its surface lies. */
-export const DEEP_WATER = { floor: -1.2, surface: -0.16 };
+export const DEEP_WATER = { floor: -0.9, surface: -0.16 };
 
 export class Voxels {
   readonly columns: Column[];
