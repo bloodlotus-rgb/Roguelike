@@ -1004,6 +1004,48 @@ describe('chasms', () => {
   });
 });
 
+describe('collapses', () => {
+  it('some corridors are blocked by stones that can be dug out, loudly, for the whole family', () => {
+    let world: World | null = null;
+    for (const seed of ['estirpe', 'tainted', 'abc', '12345', 'mansion', 'ashen']) {
+      const w = new World(seed, 'headsman', 0, 1, { works: [] });
+      for (let i = 0; i < 4 && w.rubble.length === 0; i++) w.descend();
+      if (w.rubble.length > 0) {
+        world = w;
+        break;
+      }
+    }
+    expect(world).not.toBeNull();
+    const w = world!;
+    const stones = w.rubble[0];
+    const tile = stones.y * w.level.width + stones.x;
+    expect(w.level.closed?.has(tile)).toBe(true);
+    // Stand next to it, along the corridor.
+    const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dy]) => isFloor(w.level, stones.x + dx, stones.y + dy))!;
+    w.enemies = [place(w, 'crawler', 0, 0, 'idle')];
+    w.player = { x: stones.x + side[0] + 0.5, y: stones.y + side[1] + 0.5 };
+    const far = w.enemies[0];
+    far.pos = { x: w.player.x + 6, y: w.player.y };
+    far.state = 'idle';
+    far.alerted = false;
+    w.update(0.02, NO_INPUT);
+    expect(w.interaction).toBe('clear');
+    w.interact();
+    const events = run(w, CONFIG.works.digTime + 0.5);
+    expect(events.some((e) => e.type === 'dig')).toBe(true);
+    // The noise carried.
+    expect(far.alerted).toBe(true);
+    // (It may have come and stopped the work; if so, clear it away and finish.)
+    if (w.digging === null && w.rubble.some((p) => p.x === stones.x && p.y === stones.y)) {
+      w.enemies = [];
+      w.interact();
+      run(w, CONFIG.works.digTime + 0.5);
+    }
+    expect(w.works.some((x) => x.kind === 'cleared')).toBe(true);
+    expect(w.level.closed?.has(tile)).toBe(false);
+  });
+});
+
 describe('doors and barricades', () => {
   /** A world standing next to a doorway, with nothing else around. */
   function atDoorway(): { world: World; d: { x: number; y: number } } {

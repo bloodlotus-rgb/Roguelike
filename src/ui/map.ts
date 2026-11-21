@@ -259,6 +259,21 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     ctx.stroke();
   }
 
+  // Collapses: a heap of stones across the corridor.
+  ctx.strokeStyle = INK;
+  ctx.fillStyle = PAPER_DARK;
+  ctx.lineWidth = Math.max(0.8, size / 12);
+  for (const s of world.rubble) {
+    if (!seen(s.x, s.y)) continue;
+    const p = at(s.x, s.y);
+    for (const [fx, fy, fr] of [[0.3, 0.62, 0.2], [0.68, 0.6, 0.22], [0.5, 0.32, 0.2]]) {
+      ctx.beginPath();
+      ctx.arc(p.x + fx * size, p.y + fy * size, fr * size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
   // The family's torches and chalk marks on this level.
   for (const w of world.works) {
     if (w.depth !== world.depth) continue;

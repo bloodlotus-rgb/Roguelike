@@ -144,6 +144,11 @@ export class Sound {
       case 'dodge':
         this.playNoise({ filter: 'bandpass', freq: 400, freqEnd: 1200, q: 0.7, duration: 0.22, gain: 0.18 });
         break;
+      case 'dig':
+        // A pick on stone, and grit falling.
+        this.playTone({ freq: 180, freqEnd: 90, type: 'square', duration: 0.08, gain: 0.25 });
+        this.playNoise({ filter: 'highpass', freq: 1800, freqEnd: 900, duration: 0.35, gain: 0.12 });
+        break;
       case 'leap':
         // A rush of air over the drop, then far below, nothing.
         this.playNoise({ filter: 'lowpass', freq: 900, freqEnd: 140, duration: 0.5, gain: 0.22 });

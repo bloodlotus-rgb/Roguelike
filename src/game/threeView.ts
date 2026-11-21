@@ -20,7 +20,7 @@ import { drawChalk, drawFloorDecor, drawProjectile } from './art';
 import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
 import { InkPost } from './inkPost';
 import { BRICK_DEPTH, layBricks } from './masonry';
-import { bridgeModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
+import { bridgeModel, rubbleModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
 import { easeInOut, easeOut, swingPhase } from './swing';
 import { Effects } from './threeEffects';
 import { drawHands, inkTexture } from './firstPerson';
@@ -1701,12 +1701,30 @@ export class ThreeView {
   }
 
   private ropeKey = '';
+  private rubbleKey = '';
+  private rubbleMeshes: THREE.Object3D[] = [];
+
+  /** Collapses not yet dug out on this level. */
+  private syncRubble(world: World): void {
+    for (const m of this.rubbleMeshes) this.scene.remove(m);
+    this.rubbleMeshes = world.rubble.map((p) => {
+      const obj = outlined(rubbleModel(this.mats, p.x * 17 + p.y * 5), this.mats);
+      obj.position.set(p.x + 0.5, 0, p.y + 0.5);
+      this.scene.add(obj);
+      return obj;
+    });
+  }
 
   private syncWorks(world: World, now: number): void {
     const ropeKey = `${world.depth}:${world.works.filter((w) => w.kind === 'rope').map((w) => `${w.depth}-${w.condition > 0}`).join(',')}`;
     if (ropeKey !== this.ropeKey) {
       this.ropeKey = ropeKey;
       this.syncRopes(world);
+    }
+    const rubbleKey = `${world.depth}:${world.rubble.map((p) => `${p.x},${p.y}`).join(';')}`;
+    if (rubbleKey !== this.rubbleKey) {
+      this.rubbleKey = rubbleKey;
+      this.syncRubble(world);
     }
     const seen = new Set<number>();
     const lit: Array<{ x: number; y: number; d: number; h: number }> = [];

@@ -103,3 +103,13 @@ Para romper la monotonía de la generación (lo charlamos hace tiempo): **piezas
 - **Ver abajo**: por la escalera, el pozo y las galerías se ve el nivel de abajo, iluminado por tu llama (que llega un piso más abajo, sin alcanzar más lejos en el plano).
 - Las partidas anteriores se descartan: se empieza una estirpe nueva (guardado versión 5).
 - **Pendiente para N4**: que los horrores de otro nivel te noten por los huecos (te ven, te oyen o ven tu luz) y vengan; tirar un frasco encendido por un pozo.
+
+## N2 implementada
+
+- **Cuevas y túneles**: un tercio de los pasillos son túneles naturales que serpentean en vez de ir en ángulo recto.
+- **Terrazas**: algunas salas grandes tienen una franja elevada contra una pared. Se sube **solo por una rampa**; se **baja saltando** desde cualquier borde, sin daño (la altura es baja). Los horrores siguen la misma regla: desde arriba tenés que rodear para que te alcancen.
+- **Abismos**: algunas salas tienen una grieta de una o dos casillas de ancho, de pared a pared, sin fondo a la vista. Por encima se ve y pasa la luz; nadie cae (es un borde, como una pared). Si la grieta partiría el nivel, hay un **puente viejo** de la mazmorra; si no, a veces hay uno y a veces hay que rodear.
+- **Puentes de la familia**: con unas **tablas** al borde de un abismo de hasta dos casillas se tiende un puente (las mismas tablas sirven para barricar una entrada; al borde de un abismo hacen puente). El puente queda para la familia y se gasta con los años.
+- **El saqueador salta**: esquivando hacia un abismo de una casilla, lo cruza de un salto. **[Supuesto]** Es parte de su pasiva (Ojo de rata) y solo vale para una casilla.
+- **Derrumbes**: algunos pasillos rectos están tapados por piedras. Siempre hay otro camino, así que un derrumbe es un rodeo o un **atajo para cavar**: se despeja con el botón de acción, quieto unos seis segundos, gastando hambre y sed como al pelear. **Hace ruido**: cada golpe despierta a los horrores a unas nueve casillas, y si uno llega al lado se corta el trabajo. Lo despejado queda despejado para siempre en la estirpe.
+- **[Supuesto]** Quedan para más adelante: techos que se caen abriendo pozos nuevos, puentes que se rompen solos y caer al abismo.

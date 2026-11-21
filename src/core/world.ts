@@ -127,6 +127,8 @@ export type WorldEvent =
   | { type: 'campBuilt'; camp: CampSite }
   | { type: 'cantBuild'; reason: 'danger' | 'corridor' | 'taken' }
   | { type: 'leap' }
+  | { type: 'digging'; seconds: number }
+  | { type: 'dig' }
   | { type: 'campLost'; camp: CampSite }
   | { type: 'workBuilt'; work: Work }
   | { type: 'torchFilled' }
@@ -184,6 +186,7 @@ export type Interaction =
   | 'fountain'
   | 'drip'
   | 'search'
+  | 'clear'
   | null;
 
 /** Counters behind the acquired traits. */
@@ -332,6 +335,8 @@ export class World {
   calm = 0;
   /** Eating, drinking or filling the lamp: standing still for a moment. */
   channel: { uid: number; timer: number } | null = null;
+  /** Digging out a collapse: which, and how long is left. */
+  digging: { x: number; y: number; timer: number; pulse: number } | null = null;
   private commands: Command[] = [];
   /** A floor item that did not fit, so the toast is not repeated every frame. */
   private refused = -1;
@@ -760,6 +765,7 @@ export class World {
     this.path.clear();
     this.searched.clear();
     this.channel = null;
+    this.digging = null;
     this.projectiles = [];
     this.action = { type: 'none' };
     this.running = false;
@@ -804,6 +810,7 @@ export class World {
     if (events.some((e) => e.type === 'toMansion')) return events;
     this.updateFollowers(dt);
     this.updateChannel(dt, input, events);
+    this.updateDigging(dt, input, events);
     this.updateAction(dt, events);
 
     const passive = this.cls.passive;
@@ -1510,8 +1517,9 @@ export class World {
     this.applyBridges();
     const shut = new Set<number>();
     for (const [tile, door] of this.doorStates) if (door.state === 'shut') shut.add(tile);
-    // Nobody walks over the pit.
+    // Nobody walks over the pit, or through a collapse.
     shut.add(this.level.pit.y * this.level.width + this.level.pit.x);
+    for (const p of this.rubble) shut.add(p.y * this.level.width + p.x);
     for (const w of this.works) {
       if (w.kind !== 'barricade' || w.depth !== this.depth) continue;
       const tile = w.y * this.level.width + w.x;
@@ -1642,6 +1650,71 @@ export class World {
     events.push({ type: 'workBuilt', work });
   }
 
+  // Collapses ------------------------------------------------------------------------------
+
+  private cleared(x: number, y: number): boolean {
+    return this.works.some((w) => w.kind === 'cleared' && w.depth === this.depth && w.x === x && w.y === y);
+  }
+
+  /** Collapses on this level not yet dug out by the family. */
+  get rubble(): Point[] {
+    return this.level.rubble.filter((p) => !this.cleared(p.x, p.y));
+  }
+
+  /** A collapse right in front of the hero. */
+  private rubbleInReach(): Point | null {
+    let best: Point | null = null;
+    let bestD = CONFIG.works.reach + 0.3;
+    for (const p of this.rubble) {
+      const d = dist(this.player, { x: p.x + 0.5, y: p.y + 0.5 });
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  private startDigging(p: Point, events: WorldEvent[]): void {
+    if (this.inDanger) return void events.push({ type: 'cantUse', reason: 'danger' });
+    if (this.digging) return;
+    this.digging = { x: p.x, y: p.y, timer: CONFIG.works.digTime, pulse: 0 };
+    events.push({ type: 'digging', seconds: CONFIG.works.digTime });
+  }
+
+  /**
+   * Digging is slow, tiring and loud: every blow of the pick carries down the corridors,
+   * and whatever hears it comes. A horror at arm's length, or moving, stops it.
+   */
+  private updateDigging(dt: number, input: ControlInput, events: WorldEvent[]): void {
+    const dig = this.digging;
+    if (!dig) return;
+    const moving = length(input.move) > 0.15 || input.attack || input.dodge || input.special;
+    const close = this.enemies.some((e) => e.state !== 'dead' && dist(e.pos, this.player) < 2.5);
+    if (moving || close) {
+      this.digging = null;
+      events.push({ type: 'interrupted' });
+      return;
+    }
+    this.spend(this.cls.costs.attack, dt);
+    dig.pulse -= dt;
+    if (dig.pulse <= 0) {
+      dig.pulse = 0.8;
+      events.push({ type: 'dig' });
+      for (const e of this.enemies) {
+        if (e.state === 'dead' || dist(e.pos, this.player) > CONFIG.works.digNoise) continue;
+        e.alerted = true;
+        e.forgetTimer = 0;
+      }
+    }
+    dig.timer -= dt;
+    if (dig.timer > 0) return;
+    this.digging = null;
+    const work = this.newWork('cleared', { x: dig.x, y: dig.y });
+    this.refreshShut();
+    events.push({ type: 'workBuilt', work });
+  }
+
   /** Hunting horrors at a shut door or barricade batter it until it gives. */
   private bashTimer = 0;
   private bashShut(dt: number, events: WorldEvent[]): void {
@@ -1651,6 +1724,8 @@ export class World {
     for (const tile of [...shut]) {
       const x = tile % this.level.width;
       const y = Math.floor(tile / this.level.width);
+      // Only doors and barricades are battered (not the pit, not a collapse).
+      if (!this.barricadeAt(x, y) && !this.doorStates.has(tile)) continue;
       const centre = { x: x + 0.5, y: y + 0.5 };
       // Hunting horrors that reach it stay pressed against it, battering.
       const near = this.enemies.filter((e) => e.state !== 'dead' && e.alerted && dist(e.pos, centre) < 1.8);
@@ -1991,6 +2066,7 @@ export class World {
     if (this.torchToRefill) return 'torch';
     const door = this.doorInReach();
     if (door) return door.shut ? 'openDoor' : 'closeDoor';
+    if (this.rubbleInReach()) return 'clear';
     const f = this.featureInReach();
     if (!f) return null;
     return f.kind === 'fountain' || f.kind === 'drip' ? f.kind : 'search';
@@ -2024,6 +2100,8 @@ export class World {
   private doInteract(events: WorldEvent[]): void {
     if (this.torchToRefill) return this.refillTorch(events);
     if (this.doorInReach()) return this.toggleDoor(events);
+    const rubble = this.rubbleInReach();
+    if (rubble) return this.startDigging(rubble, events);
     const f = this.featureInReach();
     if (!f) return;
     if (f.kind === 'fountain' || f.kind === 'drip') {

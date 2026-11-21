@@ -154,6 +154,8 @@ export interface Level {
   gallery: Room | null;
   /** Where a rope from the level above comes down. */
   landing: Point;
+  /** Collapses blocking a corridor: floor under the stones, shut until someone clears them. */
+  rubble: Point[];
   /** Tiles of chasm spanned by a bridge (floor now, drawn as planks). */
   bridges: number[];
   /** Ground of each tile (see `Ground`); absent means all low. */
@@ -618,6 +620,7 @@ function generateLayout(seed: string, depth: number): Level {
     landing: landing ?? { ...up.bottom },
     gallery: null,
     bridges: [],
+    rubble: [],
   };
 
   // Stairwells are cut last, so no corridor breaks them; any room a stairwell cut off is
@@ -697,6 +700,7 @@ function generateLayout(seed: string, depth: number): Level {
   level.doorways = findDoorways(level);
   const doorRng = Rng.derive(seed, 'doors', depth);
   level.doors = level.doorways.filter(() => doorRng.chance(CONFIG.features.doorChance));
+  level.rubble = collapse(level, Rng.derive(seed, 'rubble', depth), [...upBlock, ...downBlock, level.pit, level.landing]);
   layouts.set(key, level);
   return level;
 }
@@ -712,6 +716,7 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
     tiles: layout.tiles.slice(),
     ground: layout.ground?.slice(),
     bridges: layout.bridges.slice(),
+    rubble: layout.rubble.map((p) => ({ ...p })),
     rooms: layout.rooms.map((r) => ({ ...r })),
     features: layout.features.map((f) => ({ ...f })),
     doorways: layout.doorways.map((d) => ({ ...d })),
@@ -731,6 +736,41 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
   level.features.forEach((f, i) => (f.id = i));
   level.items = placeItems(level, lootRng, taken);
   return level;
+}
+
+/**
+ * Collapses: stones fallen into a straight stretch of corridor. Only where there is
+ * another way round, so a collapse is a detour to walk or a shortcut to dig out.
+ */
+function collapse(level: Level, rng: Rng, keepClear: Point[]): Point[] {
+  const { width, height } = level;
+  const inRoom = (x: number, y: number) => level.rooms.some((r) => inside(r, { x, y }));
+  const near = (p: Point, list: Point[], d: number) => list.some((q) => Math.abs(q.x - p.x) <= d && Math.abs(q.y - p.y) <= d);
+  const candidates: Point[] = [];
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      if (!isFloor(level, x, y) || inRoom(x, y)) continue;
+      const p = { x, y };
+      if (near(p, keepClear, 4) || near(p, level.doorways, 1)) continue;
+      // A straight stretch: floor on two opposite sides, rock on the other two.
+      const straightX = isFloor(level, x - 1, y) && isFloor(level, x + 1, y) && !isFloor(level, x, y - 1) && !isFloor(level, x, y + 1);
+      const straightY = isFloor(level, x, y - 1) && isFloor(level, x, y + 1) && !isFloor(level, x - 1, y) && !isFloor(level, x + 1, y);
+      if (straightX || straightY) candidates.push(p);
+    }
+  }
+  const chosen: Point[] = [];
+  const count = rng.chance(CONFIG.level.rubbleChance) ? rng.int(1, 2) : 0;
+  for (let attempt = 0; attempt < 30 && chosen.length < count && candidates.length > 0; attempt++) {
+    const p = candidates.splice(rng.int(0, candidates.length - 1), 1)[0];
+    if (near(p, chosen, 6)) continue;
+    // Everything must still be reachable with the stones in place.
+    const closed = new Set([...chosen, p].map((q) => q.y * width + q.x));
+    const dist = floorDistances({ ...level, closed }, level.start);
+    let cut = false;
+    for (let i = 0; i < dist.length && !cut; i++) if (level.tiles[i] === Tile.Floor && !closed.has(i) && dist[i] === -1) cut = true;
+    if (!cut) chosen.push(p);
+  }
+  return chosen;
 }
 
 /**
