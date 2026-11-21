@@ -36,7 +36,7 @@ export interface MeshOptions {
   minZ: number;
   /** How far wall faces sit back into the wall (behind the bricks laid on them). */
   inset?: number;
-  /** The lowest floor drawn: lower ones (a basin's bottom, the level below) are not. */
+  /** The lowest floor drawn (by default, anything above the tile's lowest drawn height). */
   floorMin?: number;
   /** The depth at which rock has gone to ink. */
   fade?: number;
@@ -46,6 +46,13 @@ export interface MeshOptions {
   skip?: (x: number, y: number) => boolean;
   /** Solid tiles drawn elsewhere (round columns): no faces against them, no cap. */
   hollow?: (x: number, y: number) => boolean;
+  /** Per tile, instead of `minZ` and `maxZ`: how far down and up it is drawn. */
+  minZAt?: (x: number, y: number) => number;
+  maxZAt?: (x: number, y: number) => number;
+  /** Per tile: whether its rock fades to ink with depth (a chasm), or keeps its tone. */
+  fadeAt?: (x: number, y: number) => boolean;
+  /** Only the tiles of this rectangle [x0, x1) × [y0, y1) (a sector). */
+  region?: { x0: number; y0: number; x1: number; y1: number };
 }
 
 /** Solid for drawing: rock and stone, and deep water, which hides what is under it. */
@@ -66,13 +73,14 @@ const SIDES: ReadonlyArray<readonly [number, number]> = [
 ];
 
 export function meshVoxels(v: Voxels, options: MeshOptions): Record<MeshPart, MeshBuffers> {
-  const { maxZ, minZ, inset = 0, floorMin = -0.5, fade = 6 } = options;
+  const { maxZ, inset = 0, fade = 6 } = options;
   const skip = options.skip ?? (() => false);
   const hollow = options.hollow ?? (() => false);
   const out = {} as Record<MeshPart, MeshBuffers>;
   for (const part of MESH_PARTS) out[part] = { positions: [], normals: [], uvs: [], colors: [], indices: [], quads: 0 };
 
   /** A quad, wound so its front looks along `normal`. */
+  let fading = true;
   const quad = (part: MeshPart, corners: number[][], normal: readonly number[], uvs: number[][]) => {
     const b = out[part];
     // The diagonals' cross product points out of the front of a counter-clockwise quad.
@@ -86,7 +94,7 @@ export function meshVoxels(v: Voxels, options: MeshOptions): Record<MeshPart, Me
       b.normals.push(normal[0], normal[1], normal[2]);
       b.uvs.push(uvs[i][0], uvs[i][1]);
       if (part === 'rock') {
-        const c = Math.min(1, Math.max(0, 1 + corners[i][1] / fade));
+        const c = fading ? Math.min(1, Math.max(0, 1 + corners[i][1] / fade)) : 1;
         b.colors.push(c, c, c);
       }
     }
@@ -98,14 +106,21 @@ export function meshVoxels(v: Voxels, options: MeshOptions): Record<MeshPart, Me
   const opaqueColumns = v.columns.map((c) => c.filter(opaque));
   const outside = v.column(-1, -1);
   const solids = (x: number, y: number) => (x < 0 || y < 0 || x >= v.width || y >= v.height ? outside : opaqueColumns[y * v.width + x]);
-  const capZ = maxZ - 1e-3;
-  const topSolid = opaqueColumns.map((c) => c.some((s) => capZ >= s.bottom && capZ < s.top));
+  const top = (x: number, y: number) => options.maxZAt?.(x, y) ?? maxZ;
+  const topSolid = opaqueColumns.map((c, i) => {
+    const capZ = top(i % v.width, Math.floor(i / v.width)) - 1e-3;
+    return c.some((s) => capZ >= s.bottom && capZ < s.top);
+  });
   const solidAtTop = (x: number, y: number) => x < 0 || y < 0 || x >= v.width || y >= v.height || topSolid[y * v.width + x];
+  const r = options.region ?? { x0: 0, y0: 0, x1: v.width, y1: v.height };
 
-  for (let y = 0; y < v.height; y++) {
-    for (let x = 0; x < v.width; x++) {
+  for (let y = Math.max(0, r.y0); y < Math.min(v.height, r.y1); y++) {
+    for (let x = Math.max(0, r.x0); x < Math.min(v.width, r.x1); x++) {
       if (skip(x, y)) continue;
       const col = solids(x, y);
+      const maxZ = top(x, y);
+      const minZ = options.minZAt?.(x, y) ?? options.minZ;
+      fading = options.fadeAt?.(x, y) ?? true;
       // The cap: a solid tile cut off by the top of the view, beside open air.
       if (!hollow(x, y) && solidAtTop(x, y)) {
         let beside = false;
@@ -123,7 +138,7 @@ export function meshVoxels(v: Voxels, options: MeshOptions): Record<MeshPart, Me
         const hi = Math.min(above ? above.bottom : HIGH, maxZ);
         /** The bottom of the air at a point of the tile. */
         const lo = (fx: number, fy: number) => Math.max(below ? topAt(below, fx, fy) : DEEP, clip);
-        if (below && ground(below) && below.top >= floorMin && below.top <= maxZ) {
+        if (below && ground(below) && below.top >= (options.floorMin ?? minZ + 1e-3) && below.top <= maxZ) {
           // The floor, sloped on a ramp.
           const h = (fx: number, fy: number) => topAt(below, fx, fy);
           quad('floor', [[x, h(0, 0), y], [x + 1, h(1, 0), y], [x + 1, h(1, 1), y + 1], [x, h(0, 1), y + 1]], [0, 1, 0], [[0, 1], [1, 1], [1, 0], [0, 0]]);
