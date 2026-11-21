@@ -18,6 +18,7 @@ import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
 import { drawChalk, drawFloorDecor, drawProjectile } from './art';
 import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
+import { InkPost } from './inkPost';
 import { BRICK_DEPTH, layBricks } from './masonry';
 import { campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
 import { easeInOut, easeOut, swingPhase } from './swing';
@@ -36,6 +37,10 @@ const TOP_TILT = (55 * Math.PI) / 180;
 const TOP_TILES = 9.5;
 /** In the top view the light hangs above everyone's heads so tall cut-outs are lit whole. */
 const FLAME_HEIGHT = 2.3;
+/** The flame's strength (with inverse-square falloff it lights a few tiles brightly). */
+const FLAME_POWER = 14;
+/** `?post=0` turns the drawing-on-paper pass off. */
+const POST = typeof window !== 'undefined' && new URL(window.location.href).searchParams.get('post') !== '0';
 const UP = new THREE.Vector3(0, 1, 0);
 /** `?walls=flat` brings back the painted walls instead of real bricks. */
 const FLAT_WALLS = typeof window !== 'undefined' && new URL(window.location.href).searchParams.get('walls') === 'flat';
@@ -204,7 +209,9 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           // The flame reaches a storey down through holes, but across the plan never past
           // its radius: what lies beyond stays dark.
           float lit = dot(lightRgb, vec3(0.3333)) * ${boost.toFixed(2)};
-          lit *= 1.0 - smoothstep(uReach * 0.86, uReach, distance(vInkPos.xz, uPlayer.xz));
+          // The last stretch of the reach fades out gently, as hatching closing into ink.
+          float edgeFade = 1.0 - smoothstep(uReach * 0.6, uReach, distance(vInkPos.xz, uPlayer.xz));
+          lit *= edgeFade * edgeFade * (3.0 - 2.0 * edgeFade);
           // The flame's tint without its strength: the paper keeps one tone, ink does the rest.
           vec3 tint = lightRgb / max(max(lightRgb.r, max(lightRgb.g, lightRgb.b)), 1e-4);
           vec3 paper = diffuseColor.rgb * tint;
@@ -224,9 +231,12 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           float shadowed = 1.0 - smoothstep(0.25, 0.75, inkShadow + wobble * 0.25);
           float rim = smoothstep(0.08, 0.35, shadowed) * (1.0 - smoothstep(0.65, 0.92, shadowed));
           tone = max(tone, mix(tone, 0.6, rim));
-          float w1 = smoothstep(0.18, 0.24, tone) * 0.08;
-          float w2 = smoothstep(0.4, 0.46, tone) * 0.09;
-          float w3 = smoothstep(0.58, 0.64, tone) * 0.1 + smoothstep(0.64, 0.76, tone) * 0.14;
+          // Each pass comes in thin, then all of them thicken together until they close into
+          // solid ink: no step between the last lines and the dark.
+          float closing = smoothstep(0.62, 0.98, tone) * 0.42;
+          float w1 = smoothstep(0.18, 0.24, tone) * 0.08 + closing;
+          float w2 = smoothstep(0.4, 0.46, tone) * 0.09 + closing;
+          float w3 = smoothstep(0.58, 0.64, tone) * 0.1 + closing;
           // Like a hand on paper, lines keep about the same spacing on the page wherever
           // they are: a near surface takes up more of the page and so gets more lines, a far
           // one fewer. Density changes in steps of two, the new lines growing in between the
@@ -244,7 +254,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
             inkPen(pw.x + pw.y, pw.x - pw.y, freq, grow, w1, 0.0, lift),
             inkPen(pw.x - pw.y, pw.x + pw.y, freq, grow, w2, 17.0, lift));
           ink = max(ink, inkPen(pw.x * 1.3, pw.y, freq, grow, w3, 41.0, lift * 0.5));
-          ink = max(ink, smoothstep(0.74, 0.78, tone));
+          ink = max(ink, step(0.985, tone));
           ink = max(ink, smoothstep(0.82, 0.92, shadowed));
           float edge = 0.0;
           ${
@@ -494,6 +504,21 @@ function eyesCanvas(kind: EnemyKind): HTMLCanvasElement {
   return c;
 }
 
+/** A warm radial glow, fading to nothing at the edge. */
+function haloCanvas(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 64;
+  const ctx = c.getContext('2d')!;
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255, 190, 110, 0.35)');
+  g.addColorStop(0.35, 'rgba(255, 160, 80, 0.12)');
+  g.addColorStop(1, 'rgba(255, 140, 60, 0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  return c;
+}
+
 /** A small chalk-white glint: something lies there in the dark. */
 function glintCanvas(): HTMLCanvasElement {
   const c = document.createElement('canvas');
@@ -574,6 +599,9 @@ export class ThreeView {
   private readonly items = new Map<number, { obj: THREE.Object3D; glint: THREE.Sprite }>();
   /** Materials for the small 3D models, dressed in ink. */
   private readonly mats: ModelMaterials;
+  /** The drawing-on-paper pass over each frame (off with ?post=0). */
+  private readonly post: InkPost | null = POST ? new InkPost() : null;
+  private readonly haloMaterial: THREE.SpriteMaterial;
   private readonly flameMaterial: THREE.SpriteMaterial;
   private readonly glintMaterial: THREE.SpriteMaterial;
   /** Fountains, remains and crates; a container's drawing changes once searched. */
@@ -632,7 +660,8 @@ export class ThreeView {
 
     this.scene.add(this.levelGroup);
     this.effects = new Effects(this.scene);
-    this.light = new THREE.SpotLight(0xffd6a0, 6, 8, COMBAT.visionCone, 0.06, 1.4);
+    // A real flame: light falls with the square of the distance (decay 2).
+    this.light = new THREE.SpotLight(0xffd6a0, FLAME_POWER, 8, COMBAT.visionCone, 0.06, 2);
     this.light.castShadow = true;
     this.light.shadow.mapSize.set(1024, 1024);
     this.light.shadow.bias = -0.0008;
@@ -688,7 +717,23 @@ export class ThreeView {
       new THREE.SpriteMaterial({ map: flameTexture, transparent: true, depthWrite: false, depthTest: false }),
     );
     this.flame.renderOrder = 11;
+    // Every flame has a soft halo around it.
+    this.haloMaterial = new THREE.SpriteMaterial({
+      map: canvasTexture(haloCanvas()),
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.flame.add(this.halo(3.2));
     this.scene.add(this.flame);
+  }
+
+  /** A soft glow around a flame, scaled relative to it. */
+  private halo(scale: number): THREE.Sprite {
+    const halo = new THREE.Sprite(this.haloMaterial);
+    halo.scale.set(scale, scale, 1);
+    halo.renderOrder = 10;
+    return halo;
   }
 
   /** Gives a point light soft, cheap shadows within its reach. */
@@ -733,7 +778,8 @@ export class ThreeView {
     this.syncWorks(world, now);
     this.syncDoors(world);
     this.syncProjectiles(world);
-    this.renderer.render(this.scene, this.camera);
+    if (this.post) this.post.render(this.renderer, this.scene, this.camera, now);
+    else this.renderer.render(this.scene, this.camera);
     this.drawHandsOverlay(world, now, moved > 0.002);
   }
 
@@ -1260,7 +1306,8 @@ export class ThreeView {
     const gust = Math.max(0, Math.sin(t * 1.7) * Math.sin(t * 0.63)) * Math.sin(t * 31) * 0.5;
     const low = world.survival.light < 20 ? 1 - world.survival.light / 20 : 0;
     const flicker = 1 + wave * (0.05 + low * 0.12) + gust * 0.08;
-    const radius = world.lightRadius * (1 + wave * 0.025);
+    // The flame breathes in strength, never in reach: the edge of the light holds still.
+    const radius = world.lightRadius;
     const height = this.mode === 'first' ? EYE - 0.05 : FLAME_HEIGHT;
     const swayX = Math.sin(t * 2.9) * 0.04 + Math.sin(t * 7.7) * 0.02;
     const swayZ = Math.cos(t * 3.3) * 0.04 + Math.sin(t * 6.1) * 0.02;
@@ -1272,10 +1319,10 @@ export class ThreeView {
       p.y - Math.sin(this.lightAngle) * back + swayZ,
     );
     this.light.target.position.set(p.x + Math.cos(this.lightAngle) * 3, 0.2 + world.heightAt(p) * 0.7, p.y + Math.sin(this.lightAngle) * 3);
-    this.light.distance = radius + back + LEVEL_HEIGHT * 1.4;
+    this.light.distance = radius + back + LEVEL_HEIGHT * 1.6;
     cutaway.reach.value = radius + back;
     this.light.angle = world.visionCone;
-    this.light.intensity = world.survival.light > 0 && !world.invisible ? 6 * flicker : 0;
+    this.light.intensity = world.survival.light > 0 && !world.invisible ? FLAME_POWER * flicker : 0;
     // Warmer and redder when it dips.
     this.light.color.setRGB(1, 0.8 + 0.06 * wave, 0.56 + 0.1 * wave - low * 0.12);
     this.light.shadow.camera.far = radius + 2;
@@ -1345,9 +1392,15 @@ export class ThreeView {
 
   /** How lit something is at distance `d` from the flame, like the first-person raycaster. */
   private falloff(world: World, d: number): number {
-    const R = world.lightRadius;
+    // The same curve as the light on the walls: inverse square from a flame overhead, faded
+    // over the last stretch of the reach.
+    const R = world.lightRadius + 0.35;
     if (d >= R) return 0;
-    return Math.min(1, (1 - d / R) * 1.4) ** 1.2;
+    const h = this.mode === 'first' ? 0.6 : FLAME_HEIGHT;
+    const light = Math.min(1, ((FLAME_POWER / Math.PI) * 1.2) / (d * d + h * h)) ** 0.6;
+    const t = Math.min(1, Math.max(0, (d - R * 0.6) / (R * 0.4)));
+    const fade = 1 - t * t * (3 - 2 * t);
+    return light * fade;
   }
 
   private heroSheetFrames(): string[] {
@@ -1548,6 +1601,8 @@ export class ThreeView {
           const obj = outlined(torchModel(this.mats), this.mats);
           obj.position.set(w.x + 0.5, 0, w.y + 0.5);
           const flame = new THREE.Sprite(this.flameMaterial);
+        flame.add(this.halo(3.4));
+          flame.add(this.halo(3));
           flame.position.set(w.x + 0.5, TORCH_FLAME, w.y + 0.5);
           flame.visible = burning;
           this.scene.add(flame);
