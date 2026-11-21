@@ -19,7 +19,7 @@ import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
 import { drawChalk, drawFloorDecor, drawProjectile } from './art';
 import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
 import { InkPost } from './inkPost';
-import { BRICK_DEPTH, layBricks } from './masonry';
+import { BRICK_DEPTH, FLAG_TOP, layBricks, layFlagstones, type Brick } from './masonry';
 import { styleIndex } from './style';
 import { onSettings, qualityProfile, settings } from '../settings/settings';
 import { bridgeModel, rubbleModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
@@ -125,6 +125,11 @@ interface InkOptions {
   /** Falling water: streaks of foam pour down the surface. */
   fall?: boolean;
   /**
+   * Worn stone: corners and edges chipped by a fractal noise of the world (more so at the
+   * corners), and the faces pitted. The strength is how deep the wear bites (0 to ~0.25).
+   */
+  erode?: number;
+  /**
    * Multiplies the light this surface gets: for the level below, seen through a hole, so a
    * flame a storey up still shows it (only within the flame's reach).
    */
@@ -132,7 +137,7 @@ interface InkOptions {
 }
 
 function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = {}): THREE.MeshLambertMaterial {
-  const { cut = false, worldUv, grime = false, outline = false, solid = false, boost = 1, flow = false, fall = false } = options;
+  const { cut = false, worldUv, grime = false, outline = false, solid = false, boost = 1, flow = false, fall = false, erode = 0 } = options;
   const uvCode =
     worldUv === 'box'
       ? `bool inkAlongZ = abs(vInkNormal.x) > 0.5;
@@ -164,7 +169,29 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
     : '';
   // Each set of options compiles its own program: three.js would otherwise reuse the first
   // one built for materials that look alike to it (same type, same maps).
-  const cacheKey = `ink:${cut}:${worldUv ?? ''}:${grime}:${outline}:${solid}:${boost}:${flow}:${fall}`;
+  const cacheKey = `ink:${cut}:${worldUv ?? ''}:${grime}:${outline}:${solid}:${boost}:${flow}:${fall}:${erode}`;
+  // The wear is the same everywhere for a given stone: keyed to where it is in the world.
+  const erodeCode = erode
+    ? `{
+        vec4 inkW0 = vec4(transformed, 1.0);
+        #ifdef USE_INSTANCING
+          inkW0 = instanceMatrix * inkW0;
+        #endif
+        vec3 wp = (modelMatrix * inkW0).xyz;
+        float n = inkNoise(wp.xz * 5.3 + wp.y * 3.1) * 0.55 + inkNoise(wp.xz * 13.7 - wp.y * 7.3) * 0.3 + inkNoise(wp.zx * 31.0 + wp.y * 17.0) * 0.15;
+        ${
+          worldUv === 'column'
+            ? `float edgeness = 0.35 + smoothstep(0.38, 0.5, abs(transformed.y));
+        float bite = ${erode.toFixed(3)} * edgeness * smoothstep(0.35, 0.85, n);
+        transformed.xz *= 1.0 - bite;`
+            : `vec3 a = abs(transformed) * 2.0;
+        vec3 e = smoothstep(0.8, 1.0, a);
+        float edgeness = 0.2 + e.x * e.y + e.y * e.z + e.x * e.z + e.x * e.y * e.z;
+        float bite = ${erode.toFixed(3)} * edgeness * smoothstep(0.3, 0.85, n);
+        transformed *= 1.0 - bite;`
+        }
+      }`
+    : '';
   material.customProgramCacheKey = () => cacheKey;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uFade = cutaway.fade;
@@ -178,11 +205,13 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
       .replace(
         '#include <common>',
         '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;' +
-          (flow ? '\nattribute vec2 flow;\nvarying vec2 vFlow;' : ''),
+          (flow ? '\nattribute vec2 flow;\nvarying vec2 vFlow;' : '') +
+          (erode ? INK_NOISE_BASIC : ''),
       )
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
+        ${erodeCode}
         vec4 inkWorld = vec4(transformed, 1.0);
         mat3 inkBasis = mat3(1.0);
         #ifdef USE_INSTANCING
@@ -204,10 +233,15 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
       )
       .replace(
         '#include <map_fragment>',
-        grime
-          ? `#include <map_fragment>
-        diffuseColor.rgb *= 1.0 - 0.45 * smoothstep(0.7, 0.0, vInkPos.y);`
-          : '#include <map_fragment>',
+        `#include <map_fragment>
+        ${grime ? 'diffuseColor.rgb *= 1.0 - 0.45 * smoothstep(0.7, 0.0, vInkPos.y);' : ''}
+        ${
+          erode
+            ? `// Pits and pores in the worn stone: dark spots the hatching picks up.
+        float inkPit = inkNoise(vInkPos.xz * 11.0 + vInkPos.y * 9.0) * 0.6 + inkNoise(vInkPos.zy * 23.0 + vInkPos.x * 5.0) * 0.4;
+        diffuseColor.rgb *= 1.0 - 0.5 * smoothstep(0.6, 0.82, inkPit);`
+            : ''
+        }`,
       )
       .replace(
         '#include <clipping_planes_fragment>',
@@ -436,6 +470,36 @@ function hullMaterial(): THREE.MeshLambertMaterial {
 }
 
 /** Smooth value noise, for edges of ink that wander like a brush. */
+/** Stones of a wall or floor as one instanced mesh: each its own size, turn and tone. */
+function stoneMesh(geometry: THREE.BufferGeometry, material: THREE.Material, list: Brick[]): THREE.InstancedMesh {
+  const mesh = new THREE.InstancedMesh(geometry, material, list.length);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const e = new THREE.Euler();
+  const p = new THREE.Vector3();
+  const sc = new THREE.Vector3();
+  const color = new THREE.Color();
+  list.forEach((b, i) => {
+    e.set(0, b.yaw, b.roll);
+    m.compose(p.set(b.x, b.y, b.z), q.setFromEuler(e), sc.set(b.sx, b.sy, b.sz));
+    mesh.setMatrixAt(i, m);
+    mesh.setColorAt(i, color.setScalar(b.tone));
+  });
+  mesh.receiveShadow = true;
+  mesh.computeBoundingSphere();
+  return mesh;
+}
+
+/** Value noise alone (the vertex shader needs it for worn stone). */
+const INK_NOISE_BASIC = `
+float inkHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float inkNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(inkHash(i), inkHash(i + vec2(1.0, 0.0)), u.x), mix(inkHash(i + vec2(0.0, 1.0)), inkHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}`;
+
 const INK_NOISE = `
 float inkHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float inkNoise(vec2 p) {
@@ -920,6 +984,7 @@ export class ThreeView {
     // The floor is a slab: it shades the level below, which shows only through the holes.
     floorMesh.castShadow = true;
     this.levelGroup.add(floorMesh);
+    this.layPaving(level);
     // Real stairs: down into a shaft cut in the floor, and up toward the level above.
     this.levelGroup.add(this.stairsMesh(level.down, 'down'));
     this.levelGroup.add(this.stairsMesh(level.up, 'up'));
@@ -966,19 +1031,21 @@ export class ThreeView {
           cut: true,
           grime: true,
         });
-    this.brickMaterial = inkMaterial(new THREE.MeshLambertMaterial({ map: this.stone }), {
+    // Flat shading, so the chipped corners catch the light facet by facet.
+    this.brickMaterial = inkMaterial(new THREE.MeshLambertMaterial({ map: this.stone, flatShading: true }), {
       cut: true,
       worldUv: 'box',
       grime: true,
       outline: true,
+      erode: 0.16,
     });
     const top = inkMaterial(
       new THREE.MeshLambertMaterial({ map: this.textures.ceiling, side: THREE.DoubleSide, shadowSide: THREE.BackSide }),
       { cut: true, worldUv: 'box' },
     );
     const shaft = inkMaterial(
-      new THREE.MeshLambertMaterial({ map: this.textures.wall, bumpMap: this.wallRelief, bumpScale: 3 }),
-      { cut: true, worldUv: 'column', grime: true },
+      new THREE.MeshLambertMaterial({ map: this.textures.wall, bumpMap: this.wallRelief, bumpScale: 3, flatShading: true }),
+      { cut: true, worldUv: 'column', grime: true, erode: 0.12 },
     );
     // One mesh with only the faces that look onto a floor, so no inner faces exist.
     this.walls = new THREE.Mesh(wallGeometry(level, this.wallTiles, FLAT_WALLS ? 0 : BRICK_DEPTH), [side, top]);
@@ -986,7 +1053,7 @@ export class ThreeView {
     this.walls.receiveShadow = true;
     this.levelGroup.add(this.walls);
     // Lone wall tiles inside halls are round columns.
-    this.columns = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.33, 0.36, 1, 18), [shaft, top, top], this.columnTiles.length);
+    this.columns = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.33, 0.36, 1, 18, 6), [shaft, top, top], this.columnTiles.length);
     this.columns.castShadow = true;
     this.columns.receiveShadow = true;
     this.levelGroup.add(this.columns);
@@ -1003,7 +1070,7 @@ export class ThreeView {
       inkMaterial(new THREE.MeshLambertMaterial({ map: decorTexture, transparent: true, depthWrite: false })),
     );
     decor.rotation.x = -Math.PI / 2;
-    decor.position.set(level.width / 2, 0.004, level.height / 2);
+    decor.position.set(level.width / 2, 0.004 + (this.paved ? FLAG_TOP : 0), level.height / 2);
     decor.receiveShadow = true;
     this.levelGroup.add(decor);
     this.buildDebris(level);
@@ -1149,28 +1216,53 @@ export class ThreeView {
       if (!list) chunks.set(key, (list = []));
       list.push(b);
     }
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const e = new THREE.Euler();
-    const p = new THREE.Vector3();
-    const sc = new THREE.Vector3();
-    const color = new THREE.Color();
+    // More vertices to wear away the better the quality.
+    const seg = { low: 1, medium: 1, high: 2, ultra: 3 }[settings().quality];
+    const geometry = new THREE.BoxGeometry(1, 1, 1, seg + 1, seg, seg);
     for (const list of chunks.values()) {
-      const mesh = new THREE.InstancedMesh(geometry, this.brickMaterial, list.length);
-      list.forEach((b, i) => {
-        e.set(0, b.yaw, b.roll);
-        m.compose(p.set(b.x, b.y, b.z), q.setFromEuler(e), sc.set(b.sx, b.sy, b.sz));
-        mesh.setMatrixAt(i, m);
-        mesh.setColorAt(i, color.setScalar(b.tone));
-      });
+      const mesh = stoneMesh(geometry, this.brickMaterial, list);
       mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.computeBoundingSphere();
       this.bricks.push(mesh);
       this.levelGroup.add(mesh);
     }
   }
+
+  /**
+   * The paving: flagstones with real volume on every flat tile of floor (not on ramps,
+   * steps, holes or bridges), worn like the bricks. Left out at the lowest quality.
+   */
+  private layPaving(level: Level): void {
+    const quality = settings().quality;
+    this.paved = quality !== 'low';
+    if (!this.paved) return;
+    const steps = new Set([...level.up.steps, ...level.down.steps].map((p) => p.y * level.width + p.x));
+    const paved = (x: number, y: number) =>
+      isFloor(level, x, y) &&
+      groundAt(level, x, y) !== Ground.Ramp &&
+      !steps.has(y * level.width + x) &&
+      !(x === level.pit.x && y === level.pit.y) &&
+      !isBridge(level, x, y);
+    const stones = layFlagstones(level, paved, (x, y) => groundHeight(level, { x: x + 0.5, y: y + 0.5 }));
+    const material = inkMaterial(new THREE.MeshLambertMaterial({ map: this.stone, flatShading: true, color: 0xd8cdb4 }), {
+      worldUv: 'box',
+      outline: true,
+      erode: 0.14,
+    });
+    const seg = { low: 1, medium: 1, high: 2, ultra: 3 }[quality];
+    const geometry = new THREE.BoxGeometry(1, 1, 1, seg, 1, seg);
+    const CHUNK = 12;
+    const chunks = new Map<number, Brick[]>();
+    for (const b of stones) {
+      const key = Math.floor(b.z / CHUNK) * 1000 + Math.floor(b.x / CHUNK);
+      let list = chunks.get(key);
+      if (!list) chunks.set(key, (list = []));
+      list.push(b);
+    }
+    for (const list of chunks.values()) this.levelGroup.add(stoneMesh(geometry, material, list));
+  }
+
+  /** Whether this level is paved with flagstones (things on the floor sit on top of them). */
+  private paved = false;
 
   /**
    * A flight of six steps (two per tile). Going down, the steps sink into a shaft walled
@@ -1427,7 +1519,7 @@ export class ThreeView {
       geo.setIndex(indices);
       return { geo, n };
     };
-    const shallow = sheet((x, y) => isShallow(level, x, y) && !isBridge(level, x, y), 0.035);
+    const shallow = sheet((x, y) => isShallow(level, x, y) && !isBridge(level, x, y), 0.035 + (this.paved ? FLAG_TOP : 0));
     if (shallow.n > 0) {
       const mesh = new THREE.Mesh(
         shallow.geo,
@@ -2005,7 +2097,7 @@ export class ThreeView {
             inkMaterial(new THREE.MeshLambertMaterial({ map: this.chalkTextures.get(w.sign ?? 'arrow')!, transparent: true, depthWrite: false })),
           );
           decal.rotation.set(-Math.PI / 2, 0, -(w.angle ?? 0));
-          decal.position.set(w.x + 0.5, 0.006 + this.groundAt(w.x, w.y), w.y + 0.5);
+          decal.position.set(w.x + 0.5, 0.006 + (this.paved ? FLAG_TOP : 0) + this.groundAt(w.x, w.y), w.y + 0.5);
           decal.receiveShadow = true;
           entry = { obj: decal, key };
         }
