@@ -55,6 +55,8 @@ const strings = {
   action_ropeDown: { es: 'Bajar por la soga', en: 'Climb down the rope' },
   action_ropeUp: { es: 'Subir por la soga', en: 'Climb up the rope' },
   toast_rope: { es: 'Ataste una soga en el pozo', en: 'You tied a rope at the pit' },
+  toast_dam: { es: 'Tapaste el sumidero: el agua deja de caer', en: 'You dammed the sinkhole: the water stops falling' },
+  toast_floodRose: { es: 'El agua sube en la profundidad {depth}', en: 'The water is rising at depth {depth}' },
   toast_cleared: { es: 'Despejaste el derrumbe', en: 'You dug out the collapse' },
   toast_digging: { es: 'Cavás entre las piedras… el ruido llega lejos', en: 'You dig at the stones… the noise carries far' },
   action_clear: { es: 'Despejar', en: 'Dig out' },

@@ -609,6 +609,51 @@ function runRiver(level: Level, rng: Rng, keepClear: Point[], next: { down: Stai
   }
 }
 
+/**
+ * A flood spreading from where a waterfall lands, `amount` tiles out: shallow water over the
+ * low floor nearest the pool first (never on stairs or bridges), and once it has risen far
+ * enough, the room of the pool itself goes deep, as long as that cuts no way off. Changes
+ * the level in place.
+ */
+export function flood(level: Level, amount: number): void {
+  const { fall } = level;
+  if (!fall || amount <= 0) return;
+  const { width, tiles } = level;
+  const water = level.water!;
+  const steps = new Set([...level.up.steps, ...level.down.steps].map((p) => p.y * width + p.x));
+  const dist = new Int32Array(tiles.length).fill(-1);
+  const start = fall.y * width + fall.x;
+  dist[start] = 0;
+  const queue = [start];
+  for (let head = 0; head < queue.length; head++) {
+    const i = queue[head];
+    if (dist[i] >= amount) continue;
+    const x = i % width;
+    const y = Math.floor(i / width);
+    for (const d of DIRS) {
+      const j = (y + d.y) * width + x + d.x;
+      if (dist[j] !== -1 || steps.has(j) || level.bridges.includes(j)) continue;
+      if (tiles[j] !== Tile.Floor && tiles[j] !== Tile.Deep) continue;
+      if (tiles[j] === Tile.Floor && groundAt(level, x + d.x, y + d.y) !== Ground.Low) continue;
+      dist[j] = dist[i] + 1;
+      queue.push(j);
+    }
+  }
+  for (const i of queue) if (tiles[i] === Tile.Floor && water[i] === Water.None) water[i] = Water.Shallow;
+  // Deep in the pool's room once the water has risen high.
+  const rise = amount - CONFIG.water.floodDeepLag;
+  if (rise <= 0) return;
+  for (const i of queue) {
+    const x = i % width;
+    const y = Math.floor(i / width);
+    if (tiles[i] !== Tile.Floor || dist[i] > rise || Math.abs(x - fall.x) > 2 || Math.abs(y - fall.y) > 2) continue;
+    tiles[i] = Tile.Deep;
+    const reached = floorDistances(level, level.start);
+    if (reached.some((d, k) => d === -1 && tiles[k] === Tile.Floor)) tiles[i] = Tile.Floor;
+    else water[i] = Water.Deep;
+  }
+}
+
 /** Under a waterfall from above: a deep plunge pool where it lands, shallow around it. */
 function plungePool(level: Level, fall: Point): void {
   const { width, tiles } = level;

@@ -855,6 +855,7 @@ export class ThreeView {
     this.syncFeatures(world);
     this.syncCamps(world, now);
     this.syncWorks(world, now);
+    this.syncWater(world);
     this.syncDoors(world);
     this.syncProjectiles(world);
     cutaway.time.value = (now / 1000) % 1000;
@@ -912,8 +913,10 @@ export class ThreeView {
     this.levelGroup.add(this.stairsMesh(level.up, 'up'));
     this.levelGroup.add(this.belowMesh(level));
     this.levelGroup.add(this.chasmMesh(level));
+    // Water is drawn by syncWater: floods rise and dams close while you are here.
     this.fallColumn = null;
-    this.levelGroup.add(this.waterMesh(level));
+    this.waterGroup = null;
+    this.waterKey = '';
     if (level.gallery) this.levelGroup.add(this.railingMesh(level));
     this.ceiling = new THREE.Mesh(
       this.tileQuads(level, WALL_FIRST, false),
@@ -1349,7 +1352,30 @@ export class ThreeView {
    * Water: a still sheet over the floor where it is shallow, and where it is deep a dark
    * surface sunk in a stone basin.
    */
-  private waterMesh(level: Level): THREE.Group {
+  private waterGroup: THREE.Group | null = null;
+  private waterKey = '';
+
+  /** Redraws the water when a flood has risen or fallen, or a dam opened or closed. */
+  private syncWater(world: World): void {
+    const key = `${world.depth}:${world.floodLevel}:${world.falling}:${world.draining}`;
+    if (key === this.waterKey || !this.level) return;
+    // The flood changed the level under our feet (floor gone under deep water): redraw it all.
+    const flooded = this.waterKey.startsWith(`${world.depth}:`) && !this.waterKey.startsWith(`${world.depth}:${world.floodLevel}:`);
+    if (flooded) this.buildLevel(world.level);
+    this.waterKey = key;
+    if (this.waterGroup) {
+      this.levelGroup.remove(this.waterGroup);
+      this.waterGroup.traverse((o) => {
+        if (o instanceof THREE.Mesh) o.geometry.dispose();
+      });
+    }
+    this.fallColumn = null;
+    this.waterGroup = this.waterMesh(this.level, world.falling, world.draining);
+    this.levelGroup.add(this.waterGroup);
+    this.applyWallHeight();
+  }
+
+  private waterMesh(level: Level, falling: boolean, draining: boolean): THREE.Group {
     const g = new THREE.Group();
     // The river runs downstream along its course; still water does not move.
     const current = new Map<number, [number, number]>();
@@ -1452,9 +1478,15 @@ export class ThreeView {
       g.add(mesh);
       return mesh;
     };
-    if (sink) column(sink, -0.1, -LEVEL_HEIGHT - 0.2);
+    if (sink && draining) column(sink, -0.1, -LEVEL_HEIGHT - 0.2);
+    if (sink && !draining) {
+      // The family's dam: planks laid across the sinkhole.
+      const dam = outlined(bridgeModel(this.mats, false, sink.x * 7 + sink.y), this.mats);
+      dam.position.set(sink.x + 0.5, -0.04, sink.y + 0.5);
+      g.add(dam);
+    }
     // From the ceiling, whatever its height in this view (see applyWallHeight).
-    if (level.fall) this.fallColumn = column(level.fall, 0.9, -0.1);
+    if (level.fall && falling) this.fallColumn = column(level.fall, 0.9, -0.1);
     return g;
   }
 

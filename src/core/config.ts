@@ -111,6 +111,12 @@ export const CONFIG = {
     splashNoise: 4.5,
     /** How far the roar of a waterfall is heard, in tiles. */
     roarReach: 10,
+    /** How far a flood reaches at most (tiles from the pool), and how much it rises each dawn and each generation. */
+    floodMax: 16,
+    floodPerDawn: 1,
+    floodPerGeneration: 3,
+    /** How far the shallow water must have spread before the pool's room goes deep. */
+    floodDeepLag: 8,
   },
   works: {
     /** Tiles a torch lights; inside it the lamp rests and horrors hesitate. */

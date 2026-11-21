@@ -1,3 +1,4 @@
+import { CONFIG } from './config';
 import type { ClassId } from './classes';
 import type { EnemyKind } from './enemies';
 import { Rng } from './rng';
@@ -38,7 +39,7 @@ export type ChronicleEntry =
   | { type: 'campBuilt'; generation: number; memberId: number; depth: number }
   | { type: 'campLost'; generation: number; depth: number; reason: 'night' | 'time' };
 
-export type WorkKind = 'torch' | 'chalk' | 'barricade' | 'rope' | 'bridge' | 'cleared';
+export type WorkKind = 'torch' | 'chalk' | 'barricade' | 'rope' | 'bridge' | 'cleared' | 'dam';
 export type ChalkSign = 'arrow' | 'danger' | 'water' | 'camp' | 'stairs';
 
 /**
@@ -92,6 +93,8 @@ export interface Dynasty {
   camps: CampSite[];
   /** Torches, marks, barricades and ropes the family keeps in the dungeon. */
   works: Work[];
+  /** How far the flood under each waterfall has spread, by depth (see `flood`). */
+  floods?: Record<number, number>;
   nextId: number;
 }
 
@@ -155,6 +158,7 @@ export function createDynasty(seed: string): Dynasty {
     explored: {},
     camps: [],
     works: [],
+    floods: {},
     nextId: 1,
   };
   const names = new Set<string>();
@@ -210,6 +214,13 @@ export function recordDeath(
 
   dynasty.generation++;
   dynasty.lives++;
+  // Between generations the floods rise, unless the sinkhole above is dammed: then they drain.
+  for (const key of Object.keys(dynasty.floods ?? {})) {
+    const depth = Number(key);
+    const dammed = dynasty.works.some((w) => w.kind === 'dam' && w.depth === depth - 1 && w.condition > 0);
+    const step = dammed ? -CONFIG.water.floodPerGeneration : CONFIG.water.floodPerGeneration;
+    dynasty.floods![depth] = Math.max(0, Math.min(CONFIG.water.floodMax, dynasty.floods![depth] + step));
+  }
   const next = dynasty.generation;
   const rng = Rng.derive(dynasty.seed, 'dynasty', next);
   const names = new Set(dynasty.members.map((m) => m.name));
@@ -265,7 +276,7 @@ export function recordDeath(
   });
 
   // Works wear with the years: chalk fades, ropes rot, torches burn down, barricades sag.
-  const yearly: Record<WorkKind, number> = { chalk: 34, rope: 20, torch: 50, barricade: 15, bridge: 12, cleared: 0 };
+  const yearly: Record<WorkKind, number> = { chalk: 34, rope: 20, torch: 50, barricade: 15, bridge: 12, cleared: 0, dam: 15 };
   dynasty.works = (dynasty.works ?? []).filter((w) => {
     w.condition -= yearly[w.kind];
     return w.condition > 0 || w.kind === 'torch';

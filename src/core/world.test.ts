@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { maxHealth } from './attributes';
 import { CLASSES, type ClassId } from './classes';
-import { isFloor } from './dungeon';
+import { generateLevel, isFloor } from './dungeon';
 import { ENEMIES, type EnemyKind } from './enemies';
 import { CONFIG } from './config';
 import { addItem } from './inventory';
@@ -1069,6 +1069,61 @@ describe('water', () => {
     const events = run(world, 0.05);
     const refill = events.find((e) => e.type === 'refilled');
     expect(refill && refill.type === 'refilled' && refill.turbid).toBe(true);
+  });
+});
+
+describe('floods', () => {
+  /** A seed and depth whose level has a waterfall falling in. */
+  function fallLevel(): { seed: string; depth: number } {
+    for (const seed of ['estirpe', 'tainted', 'abc', '12345', 'mansion', 'falls', 'cascade']) {
+      for (let depth = 2; depth <= 7; depth++) if (generateLevel(seed, depth).fall) return { seed, depth };
+    }
+    throw new Error('no waterfall found');
+  }
+  const dawn = (world: World): WorldEvent[] => {
+    const events: WorldEvent[] = [];
+    (world as unknown as { dawn: (e: WorldEvent[], s: null) => void }).dawn(events, null);
+    return events;
+  };
+
+  it('the water under a waterfall rises each dawn and swamps camps in its way', () => {
+    const { seed, depth } = fallLevel();
+    const floods: Record<number, number> = {};
+    const camps: import('./dynasty').CampSite[] = [];
+    const world = new World(seed, 'headsman', 0, depth, { floods, camps, works: [] });
+    expect(floods[depth]).toBe(0);
+    const fall = world.level.fall!;
+    const before = [...(world.level.water ?? [])].filter((v) => v > 0).length;
+    // A camp right beside the pool.
+    const spot = [[3, 0], [-3, 0], [0, 3], [0, -3]].map(([dx, dy]) => ({ x: fall.x + dx, y: fall.y + dy })).find((p) => isFloor(world.level, p.x, p.y))!;
+    camps.push({ id: 1, depth, x: spot.x, y: spot.y, built: 1, builder: 1, condition: 100 } as import('./dynasty').CampSite);
+    let events: WorldEvent[] = [];
+    for (let i = 0; i < 6; i++) events = events.concat(dawn(world));
+    expect(floods[depth]).toBe(6);
+    expect([...(world.level.water ?? [])].filter((v) => v > 0).length).toBeGreaterThan(before);
+    expect(events.some((e) => e.type === 'floodRose')).toBe(true);
+    expect(camps.length).toBe(0);
+  });
+
+  it('planks over the sinkhole above stop the waterfall, and the flood drains', () => {
+    const { seed, depth } = fallLevel();
+    const floods: Record<number, number> = { [depth]: 5 };
+    const works: import('./dynasty').Work[] = [];
+    const above = new World(seed, 'headsman', 0, depth - 1, { floods, works });
+    const sink = above.level.sink!;
+    above.enemies = [];
+    above.inventory.items = above.inventory.items.filter((i) => i.kind !== 'campKit');
+    const side = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]].find(([dx, dy]) => isFloor(above.level, sink.x + dx, sink.y + dy))!;
+    above.player = { x: sink.x + side[0] + 0.5, y: sink.y + side[1] + 0.5 };
+    addItem(above.inventory, 'planks');
+    above.useItem(above.inventory.items.find((i) => i.kind === 'planks')!.uid);
+    above.update(0.02, NO_INPUT);
+    expect(works.some((w) => w.kind === 'dam')).toBe(true);
+    expect(above.draining).toBe(false);
+    const below = new World(seed, 'headsman', 0, depth, { floods, works });
+    expect(below.falling).toBe(false);
+    dawn(below);
+    expect(floods[depth]).toBe(4);
   });
 });
 

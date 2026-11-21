@@ -1,7 +1,7 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { floorDistances, generateLevel, goldPile, groundHeight, isChasm, isFloor, isSeeThrough, isShallow, waterAt, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { flood, floorDistances, generateLevel, goldPile, groundHeight, isChasm, isFloor, isSeeThrough, isShallow, waterAt, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
 import { addItem, ITEMS, removeItem, starterKit, type Inventory, type ItemKind } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
@@ -131,6 +131,7 @@ export type WorldEvent =
   | { type: 'dig' }
   | { type: 'splash' }
   | { type: 'roar'; near: number }
+  | { type: 'floodRose'; depth: number }
   | { type: 'campLost'; camp: CampSite }
   | { type: 'workBuilt'; work: Work }
   | { type: 'torchFilled' }
@@ -169,6 +170,8 @@ export interface LifeOptions {
   camps?: CampSite[];
   /** The family's torches, marks, barricades and ropes, shared with the dynasty. */
   works?: Work[];
+  /** How far the floods have spread, by depth, shared with the dynasty. */
+  floods?: Record<number, number>;
   /** Who is down there and in which generation, for the camps they pitch. */
   builder?: number;
   generation?: number;
@@ -400,6 +403,7 @@ export class World {
     this.inventory = options.inventory ? JSON.parse(JSON.stringify(options.inventory)) : starterKit();
     this.camps = options.camps ?? [];
     this.works = options.works ?? [];
+    this.floods = options.floods ?? {};
     this.builder = options.builder ?? 0;
     this.generation = options.generation ?? 1;
     this.survival = freshSurvival(this.maxHealth);
@@ -751,6 +755,9 @@ export class World {
 
   private enterLevel(depth: number, from: 'above' | 'stairs' | 'ropeDown' | 'ropeUp' = 'above', at?: Point): void {
     this.level = generateLevel(this.seed, depth, this.life);
+    // A waterfall's flood is tracked from the first time anyone sees it.
+    if (this.level.fall && this.floods[depth] === undefined) this.floods[depth] = 0;
+    flood(this.level, this.floods[depth] ?? 0);
     // By stairs you keep your place (the levels are stacked); by rope you arrive at the
     // landing below, or beside the pit above; a life begins on the stairs from the mansion.
     if (from === 'stairs' && at) this.player = { ...at };
@@ -1419,6 +1426,7 @@ export class World {
       camp.condition -= CONFIG.camp.emptyDamage;
       if (camp.condition <= 0) this.loseCamp(camp, events);
     }
+    this.advanceFloods(events);
     // Torches burn down, a day at a time; ropes rot; barricades take a beating some nights.
     for (const w of [...this.works]) {
       if (w.kind === 'torch') w.condition = Math.max(0, w.condition - CONFIG.works.torchBurn);
@@ -1497,7 +1505,7 @@ export class World {
     const y = Math.floor(this.player.y);
     const here = this.works.filter((w) => w.depth === this.depth && w.x === x && w.y === y);
     if (item.kind === 'torch') {
-      if (here.some((w) => w.kind === 'torch')) return void events.push({ type: 'cantBuild', reason: 'taken' });
+      if (here.some((w) => w.kind === 'torch') || waterAt(this.level, x, y) !== 0) return void events.push({ type: 'cantBuild', reason: 'taken' });
       removeItem(this.inventory, uid);
       events.push({ type: 'workBuilt', work: this.newWork('torch') });
       return;
@@ -1846,6 +1854,7 @@ export class World {
     const taken = this.camps.some((c) => c.depth === this.depth && this.roomAt(c.x, c.y) === room);
     const { stairs, start } = this.level;
     const onSomething =
+      waterAt(this.level, x, y) !== 0 ||
       (x === stairs.x && y === stairs.y) ||
       (Math.abs(x - start.x) <= 1 && Math.abs(y - start.y) <= 1) ||
       onSteps(this.level.down, this.player) ||
@@ -2065,9 +2074,99 @@ export class World {
     return best;
   }
 
+  /** How far the floods have spread, by depth (shared with the dynasty). */
+  floods: Record<number, number>;
+
+  /** The family's dam over the sinkhole on level `depth`, if it holds. */
+  private damAt(depth: number): Work | undefined {
+    return this.works.find((w) => w.kind === 'dam' && w.depth === depth && w.condition > 0);
+  }
+
+  /** Whether water falls in from the level above (no dam up there). */
+  get falling(): boolean {
+    return !!this.level.fall && !this.damAt(this.depth - 1);
+  }
+
+  /** Whether the river here drains down its sinkhole (no dam on it). */
+  get draining(): boolean {
+    return !!this.level.sink && !this.damAt(this.depth);
+  }
+
+  /** The flood on this level, as far as it has spread. */
+  get floodLevel(): number {
+    return this.level.fall ? (this.floods[this.depth] ?? 0) : 0;
+  }
+
+  /** The sinkhole within reach, to dam with planks. */
+  private sinkInReach(): boolean {
+    const { sink } = this.level;
+    return !!sink && !this.damAt(this.depth) && dist(this.player, { x: sink.x + 0.5, y: sink.y + 0.5 }) <= CONFIG.works.reach + 0.9;
+  }
+
+  /** Planks across the sinkhole: the river stops falling, and the flood below drains away. */
+  private buildDam(uid: number, events: WorldEvent[]): void {
+    const sink = this.level.sink!;
+    removeItem(this.inventory, uid);
+    events.push({ type: 'workBuilt', work: this.newWork('dam', { x: sink.x, y: sink.y }) });
+  }
+
+  /**
+   * Each dawn the floods rise a little (or drain, where the sinkhole above is dammed), and
+   * whatever the water reaches is lost: camps swamped, torches drowned, chalk washed off.
+   */
+  private advanceFloods(events: WorldEvent[]): void {
+    for (const key of Object.keys(this.floods)) {
+      const depth = Number(key);
+      const before = this.floods[depth];
+      const step = this.damAt(depth - 1) ? -CONFIG.water.floodPerDawn : CONFIG.water.floodPerDawn;
+      const now = Math.max(0, Math.min(CONFIG.water.floodMax, before + step));
+      this.floods[depth] = now;
+      if (now === before) continue;
+      const level = depth === this.depth ? this.level : generateLevel(this.seed, depth, this.life);
+      if (depth === this.depth) {
+        // Start again from the dry level and let the water in as far as it reaches now.
+        const fresh = generateLevel(this.seed, depth, this.life);
+        level.tiles.set(fresh.tiles);
+        level.water?.set(fresh.water ?? []);
+      }
+      flood(level, now);
+      if (depth === this.depth) {
+        this.refreshShut();
+        // Do not leave the hero standing in deep water.
+        if (!isFloor(level, Math.floor(this.player.x), Math.floor(this.player.y))) this.player = this.nearestFloor(this.player);
+      }
+      if (now < before) continue;
+      const wet = (x: number, y: number) => waterAt(level, x, y) !== 0;
+      for (const camp of [...this.camps]) if (camp.depth === depth && wet(camp.x, camp.y)) this.loseCamp(camp, events);
+      for (const w of [...this.works]) {
+        if (w.depth !== depth || !wet(w.x, w.y)) continue;
+        if (w.kind === 'torch') w.condition = 0;
+        if (w.kind === 'chalk') this.works.splice(this.works.indexOf(w), 1);
+      }
+      events.push({ type: 'floodRose', depth });
+    }
+  }
+
+  /** The nearest floor tile's centre to `p`. */
+  private nearestFloor(p: Point): Point {
+    let best = p;
+    let bestD = Infinity;
+    for (let y = Math.floor(p.y) - 4; y <= Math.floor(p.y) + 4; y++) {
+      for (let x = Math.floor(p.x) - 4; x <= Math.floor(p.x) + 4; x++) {
+        if (!isFloor(this.level, x, y)) continue;
+        const d = dist(p, { x: x + 0.5, y: y + 0.5 });
+        if (d < bestD) {
+          bestD = d;
+          best = { x: x + 0.5, y: y + 0.5 };
+        }
+      }
+    }
+    return best;
+  }
+
   /** Water underfoot or right beside the hero: under a waterfall it runs clean, elsewhere turbid. */
   private waterInReach(): 'clean' | 'turbid' | null {
-    const { fall } = this.level;
+    const fall = this.falling ? this.level.fall : undefined;
     if (fall && dist(this.player, { x: fall.x + 0.5, y: fall.y + 0.5 }) <= 1.7) return 'clean';
     const x = Math.floor(this.player.x);
     const y = Math.floor(this.player.y);
@@ -2080,7 +2179,8 @@ export class World {
     this.roarTimer -= dt;
     if (this.roarTimer > 0) return;
     this.roarTimer = 1.4;
-    const spots = [this.level.sink, this.level.fall].filter((p): p is Point => !!p);
+    const spots = [this.draining ? this.level.sink : undefined, this.falling ? this.level.fall : undefined].filter((p): p is Point => !!p);
+    if (spots.length === 0) return;
     const d = Math.min(...spots.map((p) => dist(this.player, { x: p.x + 0.5, y: p.y + 0.5 })));
     if (d < CONFIG.water.roarReach) events.push({ type: 'roar', near: 1 - d / CONFIG.water.roarReach });
   }
@@ -2221,7 +2321,8 @@ export class World {
       return;
     }
     if (item.kind === 'planks') {
-      if (this.chasmInReach()) this.buildBridge(uid, events);
+      if (this.sinkInReach()) this.buildDam(uid, events);
+      else if (this.chasmInReach()) this.buildBridge(uid, events);
       else this.buildBarricade(uid, events);
       return;
     }
