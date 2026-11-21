@@ -282,6 +282,16 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     ctx.fillText(death.name, p.x, p.y - r - 3);
   }
 
+  // The flights of steps, down and up, as hatched strips once seen.
+  for (const [sw, way] of [[level.down, 'down'], [level.up, 'up']] as const) {
+    sw.steps.forEach((step, i) => {
+      if (!seen(step.x, step.y) && !(way === 'down' && fx.mapStairs)) return;
+      const p = at(step.x, step.y);
+      ctx.fillStyle = way === 'down' ? `rgba(33, 27, 23, ${0.35 + i * 0.2})` : `rgba(33, 27, 23, ${0.75 - i * 0.2})`;
+      ctx.fillRect(p.x + 1, p.y + 1, size - 2, size - 2);
+    });
+  }
+
   // The stairs down, once found (Rune Readers know where they are from the start).
   const { stairs } = level;
   if (seen(stairs.x, stairs.y) || fx.mapStairs) {

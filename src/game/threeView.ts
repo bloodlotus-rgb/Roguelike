@@ -12,14 +12,14 @@
 import * as THREE from 'three';
 import type { Level, Point } from '../core/dungeon';
 import { CONFIG } from '../core/config';
-import { isFloor } from '../core/dungeon';
+import { generateLevel, isFloor, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
 import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
 import { drawChalk, drawFloorDecor, drawProjectile } from './art';
 import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
 import { BRICK_DEPTH, layBricks } from './masonry';
-import { campModel, featureModel, lootModel, outlined, stairsDownModel, stairsUpModel, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
+import { campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
 import { easeInOut, easeOut, swingPhase } from './swing';
 import { Effects } from './threeEffects';
 import { drawHands, inkTexture } from './firstPerson';
@@ -412,8 +412,8 @@ class Cutout {
    * From above the cut-out stands upright, turned toward the camera and stretched so it
    * keeps its drawn proportions; in first person it simply faces the camera.
    */
-  place(pos: Point, camera: THREE.Camera, flip: boolean, mode: CameraMode): void {
-    this.mesh.position.set(pos.x, 0, pos.y);
+  place(pos: Point, camera: THREE.Camera, flip: boolean, mode: CameraMode, height = 0): void {
+    this.mesh.position.set(pos.x, height, pos.y);
     if (mode === 'top') {
       this.mesh.rotation.set(0, Math.atan2(camera.position.x - pos.x, camera.position.z - pos.y), 0);
       this.mesh.scale.set(1, 1 / Math.cos(TOP_TILT), 1);
@@ -575,6 +575,15 @@ export class ThreeView {
   private readonly chalkTextures = new Map<string, THREE.Texture>();
   /** Doors and barricades, rebuilt when their state changes. */
   private doors = new Map<number, { obj: THREE.Object3D; key: string }>();
+  /** Painted masonry for walls below the floor (the stairs' shaft, the level below). */
+  private get paintedWall(): THREE.Material {
+    this.painted ??= inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.wall, bumpMap: this.wallRelief, bumpScale: 3 }), {
+      worldUv: 'box',
+      grime: true,
+    });
+    return this.painted;
+  }
+  private painted: THREE.Material | null = null;
   private readonly woodMaterial = inkMaterial(new THREE.MeshLambertMaterial({ color: 0x9a7448 }), { cut: true, outline: true });
   private readonly projectiles = new Map<number, Cutout>();
   private readonly walks = new Map<number, { walked: number; last: Point }>();
@@ -748,16 +757,13 @@ export class ThreeView {
     const floor = this.tileQuads(level, 0, true);
     const floorMesh = new THREE.Mesh(floor, inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.floor })));
     floorMesh.receiveShadow = true;
+    // The floor is a slab: it shades the level below, which shows only through the holes.
+    floorMesh.castShadow = true;
     this.levelGroup.add(floorMesh);
-    // Stairs down into a shaft cut in the floor, and a flight up where you came in.
-    const down = stairsDownModel(this.mats);
-    down.position.set(level.stairs.x + 0.5, 0, level.stairs.y + 0.5);
-    down.rotation.y = this.stairsFacing(level, level.stairs);
-    this.levelGroup.add(down);
-    const up = outlined(stairsUpModel(this.mats), this.mats);
-    up.position.set(level.start.x + 0.5, 0, level.start.y + 0.5);
-    up.rotation.y = this.stairsFacing(level, level.start);
-    this.levelGroup.add(up);
+    // Real stairs: down into a shaft cut in the floor, and up toward the level above.
+    this.levelGroup.add(this.stairsMesh(level.down, 'down'));
+    this.levelGroup.add(this.stairsMesh(level.up, 'up'));
+    this.levelGroup.add(this.belowMesh(level));
     this.ceiling = new THREE.Mesh(
       this.tileQuads(level, WALL_FIRST, false),
       inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling })),
@@ -836,18 +842,17 @@ export class ThreeView {
     this.levelGroup.add(decor);
     this.buildDebris(level);
     // The pit: a hole of solid ink with a ragged rim.
-    const pitMesh = new THREE.Mesh(new THREE.CircleGeometry(0.46, 20), new THREE.MeshBasicMaterial({ color: 0x000000 }));
-    pitMesh.rotation.x = -Math.PI / 2;
-    pitMesh.position.set(level.pit.x + 0.5, 0.008, level.pit.y + 0.5);
-    this.levelGroup.add(pitMesh);
-    const rim = new THREE.Mesh(
-      new THREE.RingGeometry(0.46, 0.56, 20),
-      inkMaterial(new THREE.MeshLambertMaterial({ color: 0x8a7a62 })),
-    );
-    rim.rotation.x = -Math.PI / 2;
-    rim.position.set(level.pit.x + 0.5, 0.009, level.pit.y + 0.5);
-    rim.receiveShadow = true;
-    this.levelGroup.add(rim);
+    // The pit is a real hole: the edges of the floor slab around it.
+    const slab = new THREE.Group();
+    for (const [dx, dz, w, d] of [[0, -0.5, 1, 0.08], [0, 0.5, 1, 0.08], [-0.5, 0, 0.08, 1], [0.5, 0, 0.08, 1]] as const) {
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), this.mats.stone);
+      edge.position.set(level.pit.x + 0.5 + dx, -0.15, level.pit.y + 0.5 + dz);
+      edge.castShadow = true;
+      edge.receiveShadow = true;
+      slab.add(edge);
+    }
+    this.levelGroup.add(slab);
+
     this.effects.reset();
   }
 
@@ -993,6 +998,97 @@ export class ThreeView {
     }
   }
 
+  /**
+   * A flight of six steps (two per tile). Going down, the steps sink into a shaft walled
+   * below the floor; going up, they rise as a solid flight toward the level above.
+   */
+  private stairsMesh(sw: Stairwell, way: 'down' | 'up'): THREE.Group {
+    const g = new THREE.Group();
+    const across = { x: -sw.dir.y, y: sw.dir.x };
+    const along = (p: number, side = 0) => ({ x: sw.top.x + 0.5 + sw.dir.x * p + across.x * side, z: sw.top.y + 0.5 + sw.dir.y * p + across.y * side });
+    const alongX = sw.dir.x !== 0;
+    const add = (geo: THREE.BufferGeometry, x: number, y: number, z: number, material: THREE.Material = this.mats.stone) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      g.add(mesh);
+    };
+    for (let i = 0; i < 6; i++) {
+      const p = 0.75 + 0.5 * i;
+      // Ground height at the middle of this step, falling (or rising) evenly over three tiles.
+      const t = (p - 0.5) / 3;
+      const top = way === 'down' ? -LEVEL_HEIGHT * (t + 1 / 12) : LEVEL_HEIGHT * (1 - t + 1 / 12);
+      const bottom = way === 'down' ? -LEVEL_HEIGHT : 0;
+      const h = Math.max(0.05, top - bottom);
+      const c = along(p);
+      add(new THREE.BoxGeometry(alongX ? 0.5 : 0.96, h, alongX ? 0.96 : 0.5), c.x, bottom + h / 2, c.z);
+    }
+    if (way === 'down') {
+      // The shaft below the floor: its two sides and the end wall, in dark stone.
+      for (const side of [-1, 1]) {
+        for (let k = 1; k <= 3; k++) {
+          const c = along(k, side);
+          add(new THREE.BoxGeometry(1, LEVEL_HEIGHT, 1), c.x, -LEVEL_HEIGHT / 2, c.z, this.paintedWall);
+        }
+      }
+      const end = along(4);
+      add(new THREE.BoxGeometry(1, LEVEL_HEIGHT, 1), end.x, -LEVEL_HEIGHT / 2, end.z, this.paintedWall);
+    }
+    return outlined(g, this.mats);
+  }
+
+  /**
+   * The level below, as far as it shows through the holes in this floor (the stairs down
+   * and the pit): its floor and walls around them, one storey down, lit only by what
+   * light gets through.
+   */
+  private belowMesh(level: Level): THREE.Group {
+    const g = new THREE.Group();
+    const below = generateLevel(level.seed, level.depth + 1, 0);
+    const holes = [...level.down.steps, level.pit];
+    const near = (x: number, y: number) => holes.some((h) => Math.abs(h.x - x) <= 4 && Math.abs(h.y - y) <= 4);
+    const onLowerSteps = (x: number, y: number) => below.up.steps.some((p) => p.x === x && p.y === y);
+    const positions: number[] = [];
+    const indices: number[] = [];
+    const walls: Array<[number, number]> = [];
+    let n = 0;
+    for (let y = 0; y < below.height; y++) {
+      for (let x = 0; x < below.width; x++) {
+        if (!near(x, y)) continue;
+        if (isFloor(below, x, y)) {
+          if (onLowerSteps(x, y)) continue;
+          positions.push(x, -LEVEL_HEIGHT, y, x + 1, -LEVEL_HEIGHT, y, x + 1, -LEVEL_HEIGHT, y + 1, x, -LEVEL_HEIGHT, y + 1);
+          indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
+          n += 4;
+        } else if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => isFloor(below, x + dx, y + dy))) walls.push([x, y]);
+      }
+    }
+    if (n > 0) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(positions.length).fill(0).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+      geo.setIndex(indices);
+      const floor = new THREE.Mesh(geo, inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.floor })));
+      floor.receiveShadow = true;
+      g.add(floor);
+    }
+    if (walls.length > 0) {
+      const mesh = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(1, LEVEL_HEIGHT, 1),
+        this.paintedWall,
+        walls.length,
+      );
+      const m = new THREE.Matrix4();
+      walls.forEach(([x, y], i) => mesh.setMatrixAt(i, m.makeTranslation(x + 0.5, -LEVEL_HEIGHT / 2, y + 0.5)));
+      mesh.receiveShadow = true;
+      mesh.castShadow = true;
+      g.add(mesh);
+    }
+    return g;
+  }
+
   /** One textured quad per floor tile, at height `y`, facing up (floor) or down (ceiling). */
   private tileQuads(level: Level, y: number, up: boolean): THREE.BufferGeometry {
     const positions: number[] = [];
@@ -1003,8 +1099,11 @@ export class ThreeView {
     for (let ty = 0; ty < level.height; ty++) {
       for (let tx = 0; tx < level.width; tx++) {
         if (!isFloor(level, tx, ty)) continue;
-        // The stairs down open a hole in the floor.
-        if (up && tx === level.stairs.x && ty === level.stairs.y) continue;
+        // The stairs down and the pit open holes in the floor; the stairs up rise through
+        // the ceiling.
+        const hole = (sw: Stairwell) => sw.steps.some((p) => p.x === tx && p.y === ty);
+        if (up && (hole(level.down) || (tx === level.pit.x && ty === level.pit.y))) continue;
+        if (!up && hole(level.up)) continue;
         positions.push(tx, y, ty, tx + 1, y, ty, tx + 1, y, ty + 1, tx, y, ty + 1);
         for (let i = 0; i < 4; i++) normals.push(0, up ? 1 : -1, 0);
         uvs.push(0, 1, 1, 1, 1, 0, 0, 0);
@@ -1074,8 +1173,9 @@ export class ThreeView {
     cutaway.night.value = shadowStep || (world.fx.darkSight && world.survival.light <= 0) ? 1 : 0;
     cutaway.player.value.set(p.x, 0, p.y);
     if (this.mode === 'first') {
-      this.camera.position.set(p.x, EYE, p.y);
-      this.camera.lookAt(p.x + Math.cos(fpAngle), EYE, p.y + Math.sin(fpAngle));
+      const eye = EYE + world.heightAt(p);
+      this.camera.position.set(p.x, eye, p.y);
+      this.camera.lookAt(p.x + Math.cos(fpAngle), eye, p.y + Math.sin(fpAngle));
       return;
     }
     // Distance so that about TOP_TILES fit across the shortest side.
@@ -1083,7 +1183,7 @@ export class ThreeView {
     const across = this.camera.aspect < 1 ? TOP_TILES / this.camera.aspect : TOP_TILES;
     const distance = across / 2 / Math.tan(vfov / 2);
     // Follow smoothly, but never fall more than a couple of tiles behind.
-    const goal = new THREE.Vector3(p.x, 0.5, p.y);
+    const goal = new THREE.Vector3(p.x, 0.5 + world.heightAt(p), p.y);
     if (this.cameraTarget.lengthSq() === 0 || this.cameraTarget.distanceTo(goal) > 2) this.cameraTarget.copy(goal);
     else this.cameraTarget.lerp(goal, 0.2);
     const t = this.cameraTarget;
@@ -1114,10 +1214,10 @@ export class ThreeView {
     const back = this.mode === 'first' ? 0 : 0.35;
     this.light.position.set(
       p.x - Math.cos(this.lightAngle) * back + swayX,
-      height + Math.sin(t * 5.1) * 0.03,
+      height + world.heightAt(p) + Math.sin(t * 5.1) * 0.03,
       p.y - Math.sin(this.lightAngle) * back + swayZ,
     );
-    this.light.target.position.set(p.x + Math.cos(this.lightAngle) * 3, 0.2, p.y + Math.sin(this.lightAngle) * 3);
+    this.light.target.position.set(p.x + Math.cos(this.lightAngle) * 3, 0.2 + world.heightAt(p) * 0.7, p.y + Math.sin(this.lightAngle) * 3);
     this.light.distance = radius + back;
     this.light.angle = world.visionCone;
     this.light.intensity = world.survival.light > 0 && !world.invisible ? 6 * flicker : 0;
@@ -1166,7 +1266,7 @@ export class ThreeView {
       lunge = 0.22 * (1 - easeInOut(back));
     } else if (moved > 0.002) frame = `walk${Math.floor(this.walked / 0.32) % 4}`;
     else frame = `idle${Math.floor(now / 600) % 2}`;
-    hero.place({ x: world.player.x + world.facing.x * lunge, y: world.player.y + world.facing.y * lunge }, this.camera, flip, this.mode);
+    hero.place({ x: world.player.x + world.facing.x * lunge, y: world.player.y + world.facing.y * lunge }, this.camera, flip, this.mode, world.heightAt(world.player));
     hero.setFrame(Math.max(0, this.heroSheetFrames().indexOf(frame)));
     const heroMaterial = hero.mesh.material as THREE.MeshBasicMaterial;
     const night = cutaway.night.value > 0.5;
@@ -1183,7 +1283,7 @@ export class ThreeView {
     const side = flip ? -1 : 1;
     const offset = right.clone().multiplyScalar((anchor.x / 32) * side);
     const up = new THREE.Vector3(0, (-anchor.y / 32) / Math.cos(TOP_TILT), 0);
-    this.flame.position.set(world.player.x, 0, world.player.y).add(offset).add(up);
+    this.flame.position.set(world.player.x, world.heightAt(world.player), world.player.y).add(offset).add(up);
     const s = 0.35 + 0.05 * Math.sin(now / 60);
     this.flame.scale.set(s * 0.66, s, 1);
   }
@@ -1218,7 +1318,7 @@ export class ThreeView {
         this.enemies.set(enemy.id, entry);
       }
       const flip = enemy.facing.x * right.x + enemy.facing.y * right.z < 0;
-      entry.cutout.place(enemy.pos, this.camera, flip, this.mode);
+      entry.cutout.place(enemy.pos, this.camera, flip, this.mode, world.heightAt(enemy.pos));
       entry.cutout.setFrame(ENEMY_FRAMES_INDEX[this.enemyFrame(enemy, now)]);
       // Lit only where the hero sees it; telegraphs and hits turn it red.
       const d = Math.hypot(enemy.pos.x - world.player.x, enemy.pos.y - world.player.y);
@@ -1228,7 +1328,7 @@ export class ThreeView {
       // Eyes in the dark, at the height of the drawn eyes.
       entry.eyes.visible = enemy.watching;
       if (enemy.watching) {
-        entry.eyes.position.set(enemy.pos.x, EYES[enemy.kind].h / 32, enemy.pos.y);
+        entry.eyes.position.set(enemy.pos.x, EYES[enemy.kind].h / 32 + world.heightAt(enemy.pos), enemy.pos.y);
       }
     }
     for (const [id, entry] of this.enemies) {
@@ -1283,13 +1383,6 @@ export class ThreeView {
       this.scene.remove(entry.glint);
       this.items.delete(id);
     }
-  }
-
-  /** Which way a flight of stairs faces: toward the open floor around it. */
-  private stairsFacing(level: Level, p: Point): number {
-    const dirs: Array<[number, number, number]> = [[0, 1, 0], [1, 0, Math.PI / 2], [0, -1, Math.PI], [-1, 0, -Math.PI / 2]];
-    for (const [dx, dy, a] of dirs) if (isFloor(level, p.x + dx, p.y + dy)) return a;
-    return 0;
   }
 
   private syncFeatures(world: World): void {
