@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canStep, floorDistances, generateLevel, Ground, isChasm, isFloor, isVoid } from './dungeon';
+import { canStep, flood, floorDistances, generateLevel, Ground, isChasm, isDeep, isFloor, isVoid, Water, waterAt } from './dungeon';
 
 const seeds = ['estirpe', 'tainted', 'abc', '12345', 'mansion'];
 
@@ -159,5 +159,92 @@ describe('generateLevel', () => {
     expect(chasms).toBeGreaterThan(2);
     expect(bridges).toBeGreaterThan(0);
   });
-});
 
+  it('pools: shallow rims around deep middles, puddles under drips, nothing left lying in water', () => {
+    let deep = 0;
+    let shallow = 0;
+    for (const seed of seeds) {
+      for (let depth = 1; depth <= 6; depth++) {
+        const level = generateLevel(seed, depth);
+        for (let y = 0; y < level.height; y++) {
+          for (let x = 0; x < level.width; x++) {
+            const w = waterAt(level, x, y);
+            if (isDeep(level, x, y)) {
+              deep++;
+              expect(w).toBe(Water.Deep);
+            } else if (w === Water.Shallow) {
+              shallow++;
+              expect(isFloor(level, x, y)).toBe(true);
+            }
+          }
+        }
+        for (const f of level.features) if (f.kind === 'drip') expect(waterAt(level, f.x, f.y)).toBe(Water.Shallow);
+        for (const f of level.features) if (f.kind !== 'drip') expect(waterAt(level, f.x, f.y)).toBe(Water.None);
+      }
+    }
+    expect(deep).toBeGreaterThan(0);
+    expect(shallow).toBeGreaterThan(deep);
+  });
+
+  it('rivers cross the level with fords, and nothing is cut off', () => {
+    let rivers = 0;
+    for (const seed of seeds) {
+      for (let depth = 1; depth <= 6; depth++) {
+        const level = generateLevel(seed, depth);
+        if (!level.river) continue;
+        rivers++;
+        // A river that crosses the whole level has a ford somewhere: shallow all the way across.
+        const fords = level.river.filter((p) => !isDeep(level, p.x, p.y));
+        if (!level.sink) expect(fords.length).toBeGreaterThan(0);
+        const dist = floorDistances(level, level.start);
+        for (let i = 0; i < level.tiles.length; i++) if (level.tiles[i] === 1) expect(dist[i]).not.toBe(-1);
+      }
+    }
+    expect(rivers).toBeGreaterThan(2);
+  });
+
+  it('waterfalls: a river drains down a sinkhole onto a plunge pool below', () => {
+    let falls = 0;
+    for (const seed of [...seeds, 'falls', 'cascade', 'river-deep']) {
+      for (let depth = 1; depth <= 6; depth++) {
+        const level = generateLevel(seed, depth);
+        if (!level.sink) continue;
+        falls++;
+        const below = generateLevel(seed, depth + 1);
+        expect(below.fall).toEqual(level.sink);
+        expect(isDeep(level, level.sink.x, level.sink.y)).toBe(true);
+        expect(isDeep(below, level.sink.x, level.sink.y)).toBe(true);
+        // Shallow water around where it lands, and the pool can be reached.
+        const dist = floorDistances(below, below.start);
+        const around = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => waterAt(below, level.sink!.x + dx, level.sink!.y + dy) === Water.Shallow);
+        expect(around.length).toBeGreaterThan(0);
+        expect(around.some(([dx, dy]) => dist[(level.sink!.y + dy) * below.width + level.sink!.x + dx] !== -1)).toBe(true);
+      }
+    }
+    expect(falls).toBeGreaterThan(0);
+  });
+
+  it('floods spread from the plunge pool, shallow first, deep later, never cutting the way', () => {
+    let checked = 0;
+    for (const seed of [...seeds, 'falls', 'cascade', 'river-deep']) {
+      for (let depth = 2; depth <= 7 && checked < 4; depth++) {
+        const dry = generateLevel(seed, depth);
+        if (!dry.fall) continue;
+        checked++;
+        const count = (l: typeof dry, w: number) => [...(l.water ?? [])].filter((v) => v === w).length;
+        const low = generateLevel(seed, depth);
+        flood(low, 4);
+        expect(count(low, Water.Shallow)).toBeGreaterThan(count(dry, Water.Shallow));
+        expect(count(low, Water.Deep)).toBe(count(dry, Water.Deep));
+        const high = generateLevel(seed, depth);
+        flood(high, 14);
+        expect(count(high, Water.Shallow) + count(high, Water.Deep)).toBeGreaterThan(count(low, Water.Shallow) + count(low, Water.Deep));
+        const dist = floorDistances(high, high.start);
+        for (let i = 0; i < high.tiles.length; i++) if (high.tiles[i] === 1) expect(dist[i]).not.toBe(-1);
+        // The stairs stay dry.
+        for (const p of [...high.up.steps, ...high.down.steps]) expect(waterAt(high, p.x, p.y)).toBe(waterAt(dry, p.x, p.y));
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+});

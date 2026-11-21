@@ -1,4 +1,4 @@
-import { isBridge, isChasm, isFloor, isVoid } from '../core/dungeon';
+import { isBridge, isChasm, isDeep, isFloor, isShallow, isVoid } from '../core/dungeon';
 import type { World } from '../core/world';
 
 const PAPER = '#ece2cb';
@@ -21,7 +21,7 @@ export interface MapView {
 export const MAP_ZOOM = { min: 5, max: 48, start: 22 };
 
 /** Marks of the map, shared by the map and its legend. */
-export type MapMark = 'hero' | 'down' | 'up' | 'camp' | 'fountain' | 'pit' | 'rubble' | 'bridge' | 'chasm' | 'death';
+export type MapMark = 'hero' | 'down' | 'up' | 'camp' | 'fountain' | 'pit' | 'rubble' | 'bridge' | 'chasm' | 'death' | 'shallow' | 'deep' | 'waterfall';
 
 /** Draws one mark centred on (x, y), `r` pixels across from the centre. */
 export function drawMark(ctx: CanvasRenderingContext2D, mark: MapMark, x: number, y: number, r: number, angle = -Math.PI / 2): void {
@@ -115,6 +115,31 @@ export function drawMark(ctx: CanvasRenderingContext2D, mark: MapMark, x: number
       ctx.fillStyle = 'rgba(20, 16, 13, 0.9)';
       ctx.fillRect(x - r, y - r, r * 2, r * 2);
       break;
+    case 'shallow':
+      ctx.fillStyle = PAPER_DARK;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      ctx.fillStyle = 'rgba(125, 147, 163, 0.45)';
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      break;
+    case 'waterfall':
+      ctx.fillStyle = '#7d93a3';
+      ctx.beginPath();
+      ctx.arc(x, y, r * 0.9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = PAPER;
+      ctx.lineWidth = Math.max(1, r / 5);
+      ctx.beginPath();
+      for (const dx of [-0.35, 0, 0.35]) {
+        ctx.moveTo(x + dx * r, y - r * 0.55);
+        ctx.lineTo(x + dx * r, y + r * 0.55);
+      }
+      ctx.stroke();
+      break;
+    case 'deep':
+      ctx.fillStyle = 'rgba(70, 92, 108, 0.85)';
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      break;
     case 'death':
       ctx.strokeStyle = BLOOD;
       ctx.lineWidth = Math.max(1.5, r / 3);
@@ -174,6 +199,11 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
       if (!seen(x, y) || !isFloor(level, x, y)) continue;
       const p = at(x, y);
       ctx.fillRect(p.x, p.y, size + 0.5, size + 0.5);
+      if (isShallow(level, x, y)) {
+        ctx.fillStyle = 'rgba(125, 147, 163, 0.45)';
+        ctx.fillRect(p.x, p.y, size + 0.5, size + 0.5);
+        ctx.fillStyle = PAPER_DARK;
+      }
     }
   }
   // Bridges: planks across the drop.
@@ -205,6 +235,14 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     for (let x = minX - 1; x <= maxX + 1; x++) {
       if (isFloor(level, x, y)) continue;
       // Open air over the level below: drawn as a drop, not a wall.
+      // Deep water: a dark blue to walk around.
+      if (isDeep(level, x, y)) {
+        if (!seen(x, y)) continue;
+        const v = at(x, y);
+        ctx.fillStyle = 'rgba(70, 92, 108, 0.85)';
+        ctx.fillRect(v.x, v.y, size + 0.5, size + 0.5);
+        continue;
+      }
       // A chasm: solid ink, no bottom.
       if (isChasm(level, x, y)) {
         if (!seen(x, y)) continue;
@@ -294,8 +332,16 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     drawMark(ctx, 'fountain', p.x, p.y, markR);
   }
 
-  // The family's camps on this level: known to all, seen or not.
   const landmarks: Landmark[] = [];
+  // Waterfalls, once seen: down a sinkhole here, or in from the level above.
+  for (const p of [level.sink, level.fall]) {
+    if (!p || !seen(p.x, p.y)) continue;
+    const c = at(p.x + 0.5, p.y + 0.5);
+    drawMark(ctx, 'waterfall', c.x, c.y, markR);
+    landmarks.push({ mark: 'waterfall', x: p.x + 0.5, y: p.y + 0.5 });
+  }
+
+  // The family's camps on this level: known to all, seen or not.
   for (const camp of world.camps) {
     if (camp.depth !== world.depth) continue;
     const p = at(camp.x + 0.5, camp.y + 0.5);

@@ -18,6 +18,12 @@ export const CONFIG = {
     /** Chance a plain room is cut by a chasm, and that a chasm which can be walked around still has a bridge. */
     chasmChance: 0.2,
     bridgeChance: 0.4,
+    /** Chance a plain room holds a pool. */
+    poolChance: 0.18,
+    /** Chance a level has an underground river crossing it. */
+    riverChance: 0.35,
+    /** Chance a river drains down a sinkhole and falls to the level below. */
+    waterfallChance: 0.5,
     /** Chance a level has a collapse or two in its corridors. */
     rubbleChance: 0.6,
     /** Widest stretch of chasm a leap carries over, in tiles. */
@@ -97,6 +103,20 @@ export const CONFIG = {
     chalk: 3,
     planks: 5,
     rope: 15,
+  },
+  water: {
+    /** Speed in shallow water, as a share of the usual. */
+    wade: 0.6,
+    /** How far a splash is heard, in tiles. */
+    splashNoise: 4.5,
+    /** How far the roar of a waterfall is heard, in tiles. */
+    roarReach: 10,
+    /** How far a flood reaches at most (tiles from the pool), and how much it rises each dawn and each generation. */
+    floodMax: 16,
+    floodPerDawn: 1,
+    floodPerGeneration: 3,
+    /** How far the shallow water must have spread before the pool's room goes deep. */
+    floodDeepLag: 8,
   },
   works: {
     /** Tiles a torch lights; inside it the lamp rests and horrors hesitate. */

@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import type { Level, Point } from '../core/dungeon';
 import { CONFIG } from '../core/config';
-import { generateLevel, Ground, groundAt, groundHeight, isBridge, isChasm, isFloor, isVoid, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
+import { generateLevel, Ground, groundAt, groundHeight, isBridge, isChasm, isDeep, isFloor, isShallow, isVoid, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
 import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
@@ -80,6 +80,8 @@ const cutaway = {
   reach: { value: 7 },
   /** The look (see `style.ts`): 0 pen on paper, 1 engraving, 2 gothic. */
   style: { value: 0 },
+  /** Seconds, for things that move by themselves (running water). */
+  time: { value: 0 },
 };
 /** Hatch lines per tile at the coarsest level of detail used up close. */
 const HATCH_BASE = 7;
@@ -117,6 +119,10 @@ interface InkOptions {
   outline?: boolean;
   /** Solid ink whatever the light or the side (outline shells). */
   solid?: boolean;
+  /** Running water: streaks of foam drift along the geometry's `flow` attribute. */
+  flow?: boolean;
+  /** Falling water: streaks of foam pour down the surface. */
+  fall?: boolean;
   /**
    * Multiplies the light this surface gets: for the level below, seen through a hole, so a
    * flame a storey up still shows it (only within the flame's reach).
@@ -125,7 +131,7 @@ interface InkOptions {
 }
 
 function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = {}): THREE.MeshLambertMaterial {
-  const { cut = false, worldUv, grime = false, outline = false, solid = false, boost = 1 } = options;
+  const { cut = false, worldUv, grime = false, outline = false, solid = false, boost = 1, flow = false, fall = false } = options;
   const uvCode =
     worldUv === 'box'
       ? `bool inkAlongZ = abs(vInkNormal.x) > 0.5;
@@ -155,6 +161,10 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           vBumpMapUv = inkUv;
         #endif`
     : '';
+  // Each set of options compiles its own program: three.js would otherwise reuse the first
+  // one built for materials that look alike to it (same type, same maps).
+  const cacheKey = `ink:${cut}:${worldUv ?? ''}:${grime}:${outline}:${solid}:${boost}:${flow}:${fall}`;
+  material.customProgramCacheKey = () => cacheKey;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uFade = cutaway.fade;
     shader.uniforms.uPlayer = cutaway.player;
@@ -162,8 +172,13 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
     shader.uniforms.uLineSpacing = cutaway.lineSpacing;
     shader.uniforms.uReach = cutaway.reach;
     shader.uniforms.uStyle = cutaway.style;
+    shader.uniforms.uTime = cutaway.time;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;')
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;' +
+          (flow ? '\nattribute vec2 flow;\nvarying vec2 vFlow;' : ''),
+      )
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
@@ -177,13 +192,14 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
         vInkNormal = normalize(mat3(modelMatrix) * inkBasis * objectNormal);
         vInkLocal = transformed;
         vInkLocalNormal = objectNormal;
+        ${flow ? 'vFlow = flow;' : ''}
         ${uvAssign}`,
       );
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <lights_fragment_begin>', LIGHTS_WITH_INK_SHADOW)
       .replace(
         '#include <common>',
-        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform float uReach;\nuniform float uStyle;\nuniform vec3 uPlayer;\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
+        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform float uReach;\nuniform float uStyle;\nuniform float uTime;\nuniform vec3 uPlayer;' + (flow ? '\nvarying vec2 vFlow;' : '') + '\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
       )
       .replace(
         '#include <map_fragment>',
@@ -278,6 +294,36 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           }
           ink = max(ink, edge * step(0.02, lit));
           outgoingLight = mix(paper, vec3(0.0), ink);
+          ${
+            fall
+              ? `{
+            // Falling water: long streaks of foam pouring down, fast.
+            float along = -vInkPos.y;
+            float across = (vInkPos.x * 1.7 + vInkPos.z * 1.3) * 6.0;
+            float streak = fract(along * 1.7 - uTime * 3.0 + inkNoise(vec2(across, along * 0.3)) * 1.4);
+            float foam = smoothstep(0.0, 0.05, streak) * (1.0 - smoothstep(0.08, 0.3, streak));
+            foam *= smoothstep(0.35, 0.6, inkNoise(vec2(across * 0.7, along * 0.25 - uTime)));
+            outgoingLight = mix(outgoingLight, tint * 0.9, foam * 0.9 * smoothstep(0.02, 0.2, lit));
+          }`
+              : ''
+          }
+          ${
+            flow
+              ? `{
+            // Running water: short streaks of foam drifting downstream, in and out of sight.
+            float speed = length(vFlow);
+            if (speed > 0.01) {
+              vec2 dir = vFlow / speed;
+              float along = dot(vInkPos.xz, dir);
+              float across = dot(vInkPos.xz, vec2(-dir.y, dir.x));
+              float streak = fract(along * 1.3 - uTime * 0.9 + inkNoise(vec2(across * 2.7, along * 0.6)) * 1.7);
+              float foam = smoothstep(0.0, 0.04, streak) * (1.0 - smoothstep(0.06, 0.2, streak));
+              foam *= smoothstep(0.4, 0.7, inkNoise(vec2(across * 1.9, along * 0.45 - uTime * 0.5)));
+              outgoingLight = mix(outgoingLight, tint * 0.85, foam * 0.85 * smoothstep(0.02, 0.2, lit));
+            }
+          }`
+              : ''
+          }
           if (uStyle > 1.5) {
             // Gothic: no drawing. The surface itself, darkened to old stone with a grain
             // of its own, under the flame's real light and falloff, with deep shadows.
@@ -348,7 +394,7 @@ function wallGeometry(level: Level, tiles: Array<[number, number]>, inset = 0): 
     const xm = x + e;
     const zp = y + 1 - e;
     const zm = y + e;
-    const open = (tx: number, ty: number) => isFloor(level, tx, ty) || isChasm(level, tx, ty);
+    const open = (tx: number, ty: number) => isFloor(level, tx, ty) || isChasm(level, tx, ty) || isDeep(level, tx, ty);
     if (open(x + 1, y)) quad([[xp, 0, y + 1], [xp, 0, y], [xp, 1, y], [xp, 1, y + 1]], [1, 0, 0]);
     if (open(x - 1, y)) quad([[xm, 0, y], [xm, 0, y + 1], [xm, 1, y + 1], [xm, 1, y]], [-1, 0, 0]);
     if (open(x, y + 1)) quad([[x, 0, zp], [x + 1, 0, zp], [x + 1, 1, zp], [x, 1, zp]], [0, 0, 1]);
@@ -809,8 +855,10 @@ export class ThreeView {
     this.syncFeatures(world);
     this.syncCamps(world, now);
     this.syncWorks(world, now);
+    this.syncWater(world);
     this.syncDoors(world);
     this.syncProjectiles(world);
+    cutaway.time.value = (now / 1000) % 1000;
     if (this.post) this.post.render(this.renderer, this.scene, this.camera, now);
     else this.renderer.render(this.scene, this.camera);
     this.drawHandsOverlay(world, now, moved > 0.002);
@@ -865,6 +913,10 @@ export class ThreeView {
     this.levelGroup.add(this.stairsMesh(level.up, 'up'));
     this.levelGroup.add(this.belowMesh(level));
     this.levelGroup.add(this.chasmMesh(level));
+    // Water is drawn by syncWater: floods rise and dams close while you are here.
+    this.fallColumn = null;
+    this.waterGroup = null;
+    this.waterKey = '';
     if (level.gallery) this.levelGroup.add(this.railingMesh(level));
     this.ceiling = new THREE.Mesh(
       this.tileQuads(level, WALL_FIRST, false),
@@ -877,9 +929,9 @@ export class ThreeView {
     this.columnTiles = [];
     for (let y = 0; y < level.height; y++) {
       for (let x = 0; x < level.width; x++) {
-        if (isFloor(level, x, y) || isVoid(level, x, y) || isChasm(level, x, y)) continue;
+        if (isFloor(level, x, y) || isVoid(level, x, y) || isChasm(level, x, y) || isDeep(level, x, y)) continue;
         let touches = false;
-        for (let dy = -1; dy <= 1 && !touches; dy++) for (let dx = -1; dx <= 1; dx++) if (isFloor(level, x + dx, y + dy) || isChasm(level, x + dx, y + dy)) touches = true;
+        for (let dy = -1; dy <= 1 && !touches; dy++) for (let dx = -1; dx <= 1; dx++) if (isFloor(level, x + dx, y + dy) || isChasm(level, x + dx, y + dy) || isDeep(level, x + dx, y + dy)) touches = true;
         if (!touches) continue;
         const column = isFloor(level, x - 1, y) && isFloor(level, x + 1, y) && isFloor(level, x, y - 1) && isFloor(level, x, y + 1);
         (column ? this.columnTiles : this.wallTiles).push([x, y]);
@@ -1056,7 +1108,15 @@ export class ThreeView {
       this.columns.computeBoundingSphere();
     }
     if (this.ceiling) this.ceiling.visible = this.mode === 'first';
+    if (this.fallColumn) {
+      // Built one unit tall, from 0.9 down to -0.1: stretched up to the ceiling.
+      this.fallColumn.scale.y = h + 0.1;
+      this.fallColumn.position.y = (h + 0.1) / 2 - 0.1;
+    }
   }
+
+  /** Water falling in from the level above, if any (it reaches up to the ceiling). */
+  private fallColumn: THREE.Mesh | null = null;
 
   /** Lays the bricks for the current wall height, in blocks of the level. */
   private layBricks(height: number): void {
@@ -1177,7 +1237,7 @@ export class ThreeView {
   private belowMesh(level: Level): THREE.Group {
     const g = new THREE.Group();
     const below = generateLevel(level.seed, level.depth + 1, 0);
-    const holes = [...level.down.steps, level.pit];
+    const holes = [...level.down.steps, level.pit, ...(level.sink ? [level.sink] : [])];
     const g0 = level.gallery;
     if (g0) for (let y = g0.y + 1; y < g0.y + g0.h - 1; y++) for (let x = g0.x + 1; x < g0.x + g0.w - 1; x++) holes.push({ x, y });
     const near = (x: number, y: number) => holes.some((h) => Math.abs(h.x - x) <= 4 && Math.abs(h.y - y) <= 4);
@@ -1288,6 +1348,148 @@ export class ThreeView {
     return g;
   }
 
+  /**
+   * Water: a still sheet over the floor where it is shallow, and where it is deep a dark
+   * surface sunk in a stone basin.
+   */
+  private waterGroup: THREE.Group | null = null;
+  private waterKey = '';
+
+  /** Redraws the water when a flood has risen or fallen, or a dam opened or closed. */
+  private syncWater(world: World): void {
+    const key = `${world.depth}:${world.floodLevel}:${world.falling}:${world.draining}`;
+    if (key === this.waterKey || !this.level) return;
+    // The flood changed the level under our feet (floor gone under deep water): redraw it all.
+    const flooded = this.waterKey.startsWith(`${world.depth}:`) && !this.waterKey.startsWith(`${world.depth}:${world.floodLevel}:`);
+    if (flooded) this.buildLevel(world.level);
+    this.waterKey = key;
+    if (this.waterGroup) {
+      this.levelGroup.remove(this.waterGroup);
+      this.waterGroup.traverse((o) => {
+        if (o instanceof THREE.Mesh) o.geometry.dispose();
+      });
+    }
+    this.fallColumn = null;
+    this.waterGroup = this.waterMesh(this.level, world.falling, world.draining);
+    this.levelGroup.add(this.waterGroup);
+    this.applyWallHeight();
+  }
+
+  private waterMesh(level: Level, falling: boolean, draining: boolean): THREE.Group {
+    const g = new THREE.Group();
+    // The river runs downstream along its course; still water does not move.
+    const current = new Map<number, [number, number]>();
+    const course = level.river ?? [];
+    course.forEach((p, i) => {
+      const next = course[Math.min(course.length - 1, i + 1)];
+      const prev = course[Math.max(0, i - 1)];
+      const d = [next.x - prev.x, next.y - prev.y];
+      const l = Math.hypot(d[0], d[1]) || 1;
+      const dir: [number, number] = [d[0] / l, d[1] / l];
+      const axisX = Math.abs(dir[0]) >= Math.abs(dir[1]);
+      for (let k = -3; k <= 3; k++) {
+        const q = axisX ? { x: p.x, y: p.y + k } : { x: p.x + k, y: p.y };
+        current.set(q.y * level.width + q.x, dir);
+      }
+    });
+    const sheet = (test: (x: number, y: number) => boolean, height: number) => {
+      const positions: number[] = [];
+      const flows: number[] = [];
+      const indices: number[] = [];
+      let n = 0;
+      for (let y = 0; y < level.height; y++) {
+        for (let x = 0; x < level.width; x++) {
+          if (!test(x, y)) continue;
+          positions.push(x, height, y, x + 1, height, y, x + 1, height, y + 1, x, height, y + 1);
+          const f = current.get(y * level.width + x) ?? [0, 0];
+          for (let i = 0; i < 4; i++) flows.push(f[0], f[1]);
+          indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
+          n += 4;
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(positions.length).fill(0).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+      geo.setAttribute('flow', new THREE.Float32BufferAttribute(flows, 2));
+      geo.setIndex(indices);
+      return { geo, n };
+    };
+    const shallow = sheet((x, y) => isShallow(level, x, y) && !isBridge(level, x, y), 0.035);
+    if (shallow.n > 0) {
+      const mesh = new THREE.Mesh(
+        shallow.geo,
+        inkMaterial(new THREE.MeshLambertMaterial({ color: 0x8aa0ad, transparent: true, opacity: 0.55, depthWrite: false }), { flow: true }),
+      );
+      mesh.receiveShadow = true;
+      g.add(mesh);
+    }
+    const sink = level.sink;
+    const isSink = (x: number, y: number) => !!sink && sink.x === x && sink.y === y;
+    const deepSheet = sheet((x, y) => isDeep(level, x, y) && !isSink(x, y), -0.16);
+    if (deepSheet.n === 0) return g;
+    const surface = new THREE.Mesh(deepSheet.geo, inkMaterial(new THREE.MeshLambertMaterial({ color: 0x5d7480 }), { flow: true }));
+    surface.receiveShadow = true;
+    g.add(surface);
+    // The basin's lip: stone from the floor down to the water.
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const indices: number[] = [];
+    let n = 0;
+    for (let y = 0; y < level.height; y++) {
+      for (let x = 0; x < level.width; x++) {
+        if (!isDeep(level, x, y)) continue;
+        // The sinkhole is a shaft of rock down to the level below.
+        const shaft = isSink(x, y);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          if (!shaft && isDeep(level, x + dx, y + dy)) continue;
+          const ex = dx === 1 ? x + 1 : dx === -1 ? x : null;
+          const ez = dy === 1 ? y + 1 : dy === -1 ? y : null;
+          const a = ex !== null ? { x: ex, z: y } : { x, z: ez! };
+          const b = ex !== null ? { x: ex, z: y + 1 } : { x: x + 1, z: ez! };
+          const top = shaft && isDeep(level, x + dx, y + dy) ? -0.16 : 0;
+          const bottom = shaft ? -LEVEL_HEIGHT : -0.16;
+          positions.push(a.x, top, a.z, b.x, top, b.z, b.x, bottom, b.z, a.x, bottom, a.z);
+          for (let i = 0; i < 4; i++) normals.push(-dx, 0, -dy);
+          if (dx === 1 || dy === -1) indices.push(n, n + 2, n + 1, n, n + 3, n + 2);
+          else indices.push(n, n + 1, n + 2, n, n + 2, n + 3);
+          n += 4;
+        }
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+    geo.setIndex(indices);
+    const lip = new THREE.Mesh(geo, inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling, side: THREE.DoubleSide }), { worldUv: 'box' }));
+    lip.receiveShadow = true;
+    g.add(lip);
+    // Falling water: down the sinkhole to the level below, and in from the ceiling above.
+    const column = (p: { x: number; y: number }, top: number, bottom: number) => {
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.26, 0.36, top - bottom, 16, 1, true),
+        inkMaterial(new THREE.MeshLambertMaterial({ color: 0x7d93a3, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false }), {
+          fall: true,
+          cut: true,
+        }),
+      );
+      mesh.position.set(p.x + 0.5, (top + bottom) / 2, p.y + 0.5);
+      g.add(mesh);
+      return mesh;
+    };
+    if (sink && draining) column(sink, -0.1, -LEVEL_HEIGHT - 0.2);
+    if (sink && !draining) {
+      // The family's dam: planks laid across the sinkhole.
+      const dam = outlined(bridgeModel(this.mats, false, sink.x * 7 + sink.y), this.mats);
+      dam.position.set(sink.x + 0.5, -0.04, sink.y + 0.5);
+      g.add(dam);
+    }
+    // From the ceiling, whatever its height in this view (see applyWallHeight).
+    if (level.fall && falling) this.fallColumn = column(level.fall, 0.9, -0.1);
+    return g;
+  }
+
   /** A tile of bridge, turned to run between its two banks. */
   private bridgeAt(level: Level, x: number, y: number, old: boolean): THREE.Group {
     const obj = outlined(bridgeModel(this.mats, old, x * 31 + y), this.mats);
@@ -1307,8 +1509,8 @@ export class ThreeView {
     let n = 0;
     for (let ty = 0; ty < level.height; ty++) {
       for (let tx = 0; tx < level.width; tx++) {
-        // The ceiling runs on over chasms; the floor stops at their edge.
-        if (!isFloor(level, tx, ty) && (up || !isChasm(level, tx, ty))) continue;
+        // The ceiling runs on over chasms and deep water; the floor stops at their edge.
+        if (!isFloor(level, tx, ty) && (up || !(isChasm(level, tx, ty) || isDeep(level, tx, ty)))) continue;
         // The stairs down and the pit open holes in the floor; the stairs up rise through
         // the ceiling.
         const hole = (sw: Stairwell) => sw.steps.some((p) => p.x === tx && p.y === ty);

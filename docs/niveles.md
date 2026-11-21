@@ -113,3 +113,36 @@ Para romper la monotonía de la generación (lo charlamos hace tiempo): **piezas
 - **El saqueador salta**: esquivando hacia un abismo de una casilla, lo cruza de un salto. **[Supuesto]** Es parte de su pasiva (Ojo de rata) y solo vale para una casilla.
 - **Derrumbes**: algunos pasillos rectos están tapados por piedras. Siempre hay otro camino, así que un derrumbe es un rodeo o un **atajo para cavar**: se despeja con el botón de acción, quieto unos seis segundos, gastando hambre y sed como al pelear. **Hace ruido**: cada golpe despierta a los horrores a unas nueve casillas, y si uno llega al lado se corta el trabajo. Lo despejado queda despejado para siempre en la estirpe.
 - **[Supuesto]** Quedan para más adelante: techos que se caen abriendo pozos nuevos, puentes que se rompen solos y caer al abismo.
+
+## N3 implementada
+
+- **Agua poca y profunda**: cada casilla puede tener agua baja (se camina) o profunda (se rodea, como un borde).
+  - El agua baja frena al héroe y a los horrores.
+  - Cada paso en el agua baja salpica y despierta a lo que esté cerca, a unas 4 casillas.
+  - Los **Rastreros no entran al agua**: esperan en la orilla. El agua sirve de refugio.
+- **Pozas y charcos**: algunas salas tienen una poza, con orilla baja y centro profundo. Si el centro profundo cortaría el paso, queda bajo. Donde gotea se junta un charco.
+- **Ríos**: algunos niveles los cruza un río de lado a lado, que corta roca y salas por igual.
+  - Tiene un cauce profundo de una o dos casillas entre orillas bajas por las que se vadea.
+  - Donde el río aislaría algo hay un **vado** (agua baja de lado a lado); a veces hay uno más.
+  - La corriente se dibuja con espuma que corre aguas abajo.
+- **Cascadas**: la mitad de los ríos no llegan al otro lado. Se meten por un **sumidero** y caen al nivel de abajo.
+  - Abajo hay una sala con una **poza** donde cae el agua.
+  - El agua de la cascada es **limpia**: junto con las fuentes, es la única. Las pozas, los ríos y los charcos dan agua turbia.
+  - El estruendo se oye a unas 10 casillas, más fuerte cuanto más cerca.
+  - En el mapa tiene marca propia.
+- **Inundaciones**: la poza bajo una cascada **crece**.
+  - Sube cada amanecer y más entre generaciones.
+  - El agua baja avanza por el piso desde la poza, nunca sobre escaleras ni puentes.
+  - Cuando subió mucho, la sala de la poza se vuelve profunda, sin cortar nunca el camino.
+  - Lo que alcanza el agua se pierde: los **campamentos** se inundan, las **antorchas** se ahogan y la **tiza** se borra.
+  - No se puede acampar ni plantar una antorcha en el agua.
+- **Tapar el sumidero**: con **tablas** junto al sumidero se hace un dique.
+  - El río deja de caer: abajo no hay cascada, ni agua limpia, ni estruendo.
+  - La inundación de abajo **baja** cada amanecer y entre generaciones.
+  - El dique se gasta con los años y hay que rehacerlo.
+- **[Supuesto]** Para más adelante:
+  - Nadar, como pasiva de alguna clase.
+  - Que el agua apague lo que cae en ella.
+  - Que lo que llevás se moje.
+  - Que el río te arrastre.
+  - Abrir desagües o romper presas.
