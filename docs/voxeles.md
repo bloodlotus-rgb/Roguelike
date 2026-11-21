@@ -120,3 +120,22 @@ casilla bajo un balcón: roca [-∞, 0] · aire [0, 2.6] · losa [2.6, 2.9] · a
 - **Dibujo**: el héroe, su llama, la cámara y los horrores se ubican a la altura de su cuerpo.
 - **Pendiente para la V4**: los horrores todavía buscan camino en 2D. Donde el mapa los deja pasar pero un borde no (el costado de una escalera), se frenan contra el borde.
 - **Todavía no se puede caer de verdad a otro nivel**: los huecos al nivel de abajo (pozo, galería) siguen siendo bordes que no se cruzan. Eso llega con el edificio (Ed1), cuando el mundo sea un solo espacio.
+
+## V4 implementada
+
+- **Caminos sobre las superficies** (`src/core/paths.ts`):
+  - cada lugar donde se puede estar parado es un nodo, y una casilla puede tener varios (un piso y un balcón encima);
+  - dos lugares vecinos se unen si se pasa caminando: subir hasta 0,45 y bajar hasta 1 m, medido en el borde que comparten. Así la escalera y la rampa unen sus escalones solas, y una terraza se baja de un salto pero se sube solo por su rampa;
+  - los horrores persiguen y deambulan con mapas de distancia sobre ese grafo. Ya no se frenan contra el costado de una escalera ni contra el frente de una terraza: dan la vuelta por la rampa.
+- **Vista en 3D**:
+  - una línea recta por los vóxeles, que tapan lo sólido y las puertas cerradas;
+  - el mapa se revela desde los ojos del héroe (1,5 sobre sus pies): un piso se ve si se ve su superficie (o el agua que lo cubre), una pared si se ve su cara;
+  - los horrores ven al héroe de ojos a pecho, y entre ellos igual;
+  - desde un balcón se ve la sala de abajo; desde abajo no se ve el piso de una cornisa alta, pero sí su frente.
+  - Desde el mismo lugar se revela casi lo mismo que antes (+1,6 %), con diferencias chicas en los bordes.
+- **Golpes en altura**: un golpe alcanza hasta 1,2 m arriba o abajo. Una terraza está al alcance; una cornisa alta no, ni para el héroe ni para los horrores. Los proyectiles siguen en 2D.
+- **Costo**: una actualización del mundo con 113 horrores alerta pasa de 0,9 a 1,6 ms. Revelar y recalcular los caminos cuesta cerca de 1 ms cuando el héroe cambia de casilla.
+- **Pendiente**:
+  - la luz que rebota (el sombreado de la luz indirecta) sigue calculándose en 2D;
+  - los proyectiles van en 2D;
+  - la luz directa ya era 3D (sombras reales).

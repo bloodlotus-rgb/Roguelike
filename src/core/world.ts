@@ -1,11 +1,11 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { doorwayPartner, flood, floorDistances, isPassable, generateLevel, goldPile, isChasm, isFloor, isSeeThrough, isShallow, waterAt, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { doorwayPartner, flood, isPassable, generateLevel, goldPile, isChasm, isFloor, isSeeThrough, isShallow, waterAt, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
 import { addItem, enlarged, ITEMS, removeItem, removeStack, starterKit, type Inventory, type ItemKind, type Packed } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
-import { hasLineOfSight, visibleTiles } from './geometry';
+import { clearSight, EYE_HEIGHT, Surfaces, visibleTiles3D } from './paths';
 import { bodyBlocked, fallHarm, moveBody, settle, type Fall } from './bodies';
 import { levelVoxels, type Voxels } from './voxels';
 import { Rng } from './rng';
@@ -66,6 +66,9 @@ export const COMBAT = {
 } as const;
 
 export type EnemyState = 'idle' | 'chase' | 'windup' | 'recover' | 'stunned' | 'flee' | 'dead';
+
+/** How far up or down a blow reaches. */
+const REACH_Z = 1.2;
 
 export interface Enemy {
   id: number;
@@ -635,6 +638,30 @@ export class World {
   }
 
   private voxLevel: Level | null = null;
+  private surf: Surfaces | null = null;
+
+  /** Where one can stand, and the ways between (over the voxels, kept with them). */
+  get surfaces(): Surfaces {
+    const v = this.voxels;
+    if (!this.surf || this.surf.voxels !== v) this.surf = new Surfaces(v, this.level);
+    return this.surf;
+  }
+
+  /** Distances over the surfaces to a tile's floor (its lowest surface). */
+  private distancesToTile(t: Point): Int32Array {
+    const s = this.surfaces;
+    return s.distancesTo(s.nodesOf(t.y * this.level.width + t.x)[0] ?? -1);
+  }
+
+  /** Whether one body sees another: from eyes to chest, through the voxels. */
+  private sightBetween(a: Point, az: number, b: Point, bz: number): boolean {
+    return clearSight(this.voxels, this.level, a, az + 1.2, b, bz + 1.0);
+  }
+
+  /** Close enough in height to strike (a terrace is; a ledge far above is not). */
+  private withinReachZ(az: number, bz: number): boolean {
+    return Math.abs(az - bz) <= REACH_Z;
+  }
 
   /** The level's shape was changed from outside (tests, tools): build its voxels again. */
   reshaped(): void {
@@ -849,7 +876,7 @@ export class World {
     this.level.items.push(...mem.drops.map((i) => ({ ...i })));
     this.enemies = mem.enemies.map(({ roaming, ...e }) => {
       const room = this.level.rooms[e.roamRoom];
-      const roamField = roaming && room ? floorDistances(this.level, { x: room.x + Math.floor(room.w / 2), y: room.y + Math.floor(room.h / 2) }) : null;
+      const roamField = roaming && room ? this.distancesToTile({ x: room.x + Math.floor(room.w / 2), y: room.y + Math.floor(room.h / 2) }) : null;
       return { ...e, pos: { ...e.pos }, z: e.z ?? this.groundZ(e.pos), fall: undefined, def: ENEMIES[e.kind], roamField };
     });
   }
@@ -1192,7 +1219,7 @@ export class World {
       const to = { x: enemy.pos.x - this.player.x, y: enemy.pos.y - this.player.y };
       if (length(to) > step.range + enemy.def.radius) continue;
       if (angleBetween(this.facing, to) > step.arc / 2) continue;
-      if (!hasLineOfSight(this.level, this.player, enemy.pos)) continue;
+      if (!this.withinReachZ(this.playerZ, enemy.z) || !this.sightBetween(this.player, this.playerZ, enemy.pos, enemy.z)) continue;
       this.damageEnemy(enemy, weapon.damage * step.damage, step.knockback * (1 + (this.fx.knockback ?? 0)), events);
       if (enemy.health <= 0) continue;
       if (this.fx.bleed) {
@@ -2696,7 +2723,7 @@ export class World {
     const { width } = this.level;
     // In line of sight and lit, and either ahead of the hero or right next to them.
     this.visibleNow = new Set(
-      visibleTiles(this.level, this.player, radius).filter((index) => {
+      visibleTiles3D(this.voxels, this.level, this.player, this.playerZ + EYE_HEIGHT, this.playerZ, radius).filter((index) => {
         const to = { x: (index % width) + 0.5 - this.player.x, y: Math.floor(index / width) + 0.5 - this.player.y };
         const d = length(to);
         if (d <= COMBAT.nearSight + 0.5) return true;
@@ -2745,7 +2772,7 @@ export class World {
     const toPlayer = { x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y };
     // Ember Pupils: every pair of eyes shows, looking or not.
     if (!this.fx.allEyes && !enemy.alerted && angleBetween(enemy.facing, toPlayer) > COMBAT.viewCone) return false;
-    return hasLineOfSight(this.level, enemy.pos, this.player);
+    return this.sightBetween(enemy.pos, enemy.z, this.player, this.playerZ);
   }
 
   private burn(enemy: Enemy, dt: number, events: WorldEvent[]): void {
@@ -2779,7 +2806,7 @@ export class World {
     const glow = this.lightRadius * COMBAT.glow;
     const hearing = this.running ? COMBAT.run.hearing * Math.max(0.2, 1 + (this.fx.runNoise ?? 0)) : COMBAT.hearing;
     const inView = enemy.alerted || d <= Math.max(hearing, glow) || angleBetween(enemy.facing, toPlayer) <= COMBAT.viewCone;
-    const sees = inView && d <= range * (enemy.alerted ? 1.6 : 1) && hasLineOfSight(this.level, enemy.pos, this.player);
+    const sees = inView && d <= range * (enemy.alerted ? 1.6 : 1) && this.sightBetween(enemy.pos, enemy.z, this.player, this.playerZ);
     if (sees) {
       if (!enemy.alerted) this.alertNearby(enemy);
       enemy.alerted = true;
@@ -2800,7 +2827,7 @@ export class World {
         continue;
       }
       if (dist(other.pos, source.pos) > COMBAT.alertRadius * Math.max(0.2, 1 + (this.fx.alertRadius ?? 0))) continue;
-      if (!hasLineOfSight(this.level, other.pos, source.pos)) continue;
+      if (!this.sightBetween(other.pos, other.z, source.pos, source.z)) continue;
       other.alerted = true;
       other.forgetTimer = 0;
     }
@@ -2845,7 +2872,8 @@ export class World {
           return;
         }
         enemy.facing = toPlayer;
-        const sees = hasLineOfSight(this.level, enemy.pos, this.player);
+        const sees = this.sightBetween(enemy.pos, enemy.z, this.player, this.playerZ);
+        const reach = this.withinReachZ(enemy.z, this.playerZ);
         if (def.ranged) {
           if (d < 2.3) {
             enemy.state = 'flee';
@@ -2859,7 +2887,7 @@ export class World {
           this.chaseStep(enemy, dt, d, sees);
           return;
         }
-        if (d <= def.range + 0.1 && sees) {
+        if (d <= def.range + 0.1 && sees && reach) {
           this.beginWindup(enemy, toPlayer, events);
           return;
         }
@@ -2885,7 +2913,7 @@ export class World {
     const def = enemy.def;
     const to = { x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y };
     const arc = def.kind === 'husk' ? Math.PI / 1.5 : Math.PI / 2.4;
-    if (length(to) > def.range + 0.35 || angleBetween(enemy.strikeDir, to) > arc) return;
+    if (length(to) > def.range + 0.35 || angleBetween(enemy.strikeDir, to) > arc || !this.withinReachZ(enemy.z, this.playerZ)) return;
     if (this.invulnerableTimer > 0) return;
     if (def.parryable && this.parryTimer > 0) {
       enemy.state = 'stunned';
@@ -2955,9 +2983,9 @@ export class World {
       const r = rooms[next];
       const center = { x: r.x + Math.floor(r.w / 2), y: r.y + Math.floor(r.h / 2) };
       enemy.roamRoom = next;
-      enemy.roamField = floorDistances(this.level, center);
+      enemy.roamField = this.distancesToTile(center);
     }
-    const dir = this.fieldDirection(enemy.roamField, enemy.pos);
+    const dir = this.surfaces.directionFrom(enemy.roamField, enemy.pos, enemy.z);
     if (!dir) {
       enemy.room = enemy.roamRoom;
       enemy.roamField = null;
@@ -2983,7 +3011,7 @@ export class World {
         dir = { x: dir.x + perp.x * enemy.flank * 0.8, y: dir.y + perp.y * enemy.flank * 0.8 };
       }
     } else {
-      dir = (this.flow && this.fieldDirection(this.flow, enemy.pos)) ?? { x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y };
+      dir = (this.flow && this.surfaces.directionFrom(this.flow, enemy.pos, enemy.z)) ?? { x: this.player.x - enemy.pos.x, y: this.player.y - enemy.pos.y };
     }
     this.step(enemy, normalize(dir), speed * dt);
   }
@@ -2998,37 +3026,21 @@ export class World {
     enemy.pos = next;
   }
 
-  /** Distances to the player over the floor, recomputed when the player changes tile. */
+  /**
+   * Distances to the player over the surfaces, recomputed when the player stands somewhere
+   * else (another tile, or another surface of it), or a door opened or shut.
+   */
   private updateFlow(): void {
-    const tile = Math.floor(this.player.y) * this.level.width + Math.floor(this.player.x);
-    if (tile === this.flowTile && this.flow) return;
-    this.flowTile = tile;
-    this.flow = floorDistances(this.level, { x: Math.floor(this.player.x), y: Math.floor(this.player.y) });
+    const surfaces = this.surfaces;
+    const node = surfaces.nodeAt(this.player, this.playerZ);
+    const key = node * 1000 + (this.level.closed?.size ?? 0);
+    if (key === this.flowTile && this.flow && this.flowSurfaces === surfaces) return;
+    this.flowTile = key;
+    this.flowSurfaces = surfaces;
+    this.flow = surfaces.distancesTo(node);
   }
 
-  /** Direction toward the neighbor tile closer to the field's origin, or null when already there. */
-  private fieldDirection(field: Int32Array, pos: Point): Point | null {
-    const { width } = this.level;
-    const x = Math.floor(pos.x);
-    const y = Math.floor(pos.y);
-    const here = field[y * width + x];
-    if (here <= 0) return null;
-    let best: Point | null = null;
-    let bestValue = here;
-    for (const [dx, dy] of [
-      [1, 0],
-      [-1, 0],
-      [0, 1],
-      [0, -1],
-    ]) {
-      const value = field[(y + dy) * width + (x + dx)];
-      if (value >= 0 && value < bestValue) {
-        bestValue = value;
-        best = { x: x + dx + 0.5 - pos.x, y: y + dy + 0.5 - pos.y };
-      }
-    }
-    return best;
-  }
+  private flowSurfaces: Surfaces | null = null;
 
   /** Keeps horrors from stacking on each other or on the player. */
   private separate(): void {
