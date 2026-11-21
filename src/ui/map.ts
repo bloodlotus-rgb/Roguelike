@@ -1,4 +1,4 @@
-import { isFloor } from '../core/dungeon';
+import { isFloor, isVoid } from '../core/dungeon';
 import type { World } from '../core/world';
 
 const PAPER = '#ece2cb';
@@ -78,6 +78,14 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
   for (let y = minY - 1; y <= maxY + 1; y++) {
     for (let x = minX - 1; x <= maxX + 1; x++) {
       if (isFloor(level, x, y)) continue;
+      // Open air over the level below: drawn as a drop, not a wall.
+      if (isVoid(level, x, y)) {
+        if (!seen(x, y)) continue;
+        const v = at(x, y);
+        ctx.fillStyle = 'rgba(33, 27, 23, 0.55)';
+        ctx.fillRect(v.x, v.y, size + 0.5, size + 0.5);
+        continue;
+      }
       const touches = [
         [1, 0],
         [-1, 0],

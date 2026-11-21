@@ -5,6 +5,8 @@ import { Rng } from './rng';
 export const Tile = {
   Wall: 0,
   Floor: 1,
+  /** Open air over the level below: you see and light across it, but nobody walks on it. */
+  Void: 2,
 } as const;
 export type Tile = (typeof Tile)[keyof typeof Tile];
 
@@ -105,6 +107,11 @@ export interface Level {
   up: Stairwell;
   /** A hole down to the next level; a rope tied here is a shortcut. */
   pit: Point;
+  /**
+   * A double-height room: its walkway runs along the walls, its middle is open air over a
+   * hall of the level below. The rectangle is the room's; the void is its inside.
+   */
+  gallery: Room | null;
   /** Where a rope from the level above comes down. */
   landing: Point;
   /** Tiles shut right now (closed doors, barricades): floor, but nothing gets through. */
@@ -120,9 +127,20 @@ export function isFloor(level: Level, x: number, y: number): boolean {
   return tileAt(level, x, y) === Tile.Floor;
 }
 
-/** Floor that can be crossed and seen through right now (not behind a shut door). */
+/** Floor that can be crossed right now (not behind a shut door, not open air). */
 export function isPassable(level: Level, x: number, y: number): boolean {
   return isFloor(level, x, y) && !level.closed?.has(y * level.width + x);
+}
+
+/** Whether sight and light get across a tile: floor or open air, not shut. */
+export function isSeeThrough(level: Level, x: number, y: number): boolean {
+  const t = tileAt(level, x, y);
+  return (t === Tile.Floor || t === Tile.Void) && !level.closed?.has(y * level.width + x);
+}
+
+/** Open air over the level below (a gallery's void). */
+export function isVoid(level: Level, x: number, y: number): boolean {
+  return tileAt(level, x, y) === Tile.Void;
 }
 
 function center(room: Room): Point {
@@ -310,6 +328,8 @@ function generateLayout(seed: string, depth: number): Level {
   const arrival = arrivalRoom(up);
   const rooms: Room[] = [arrival];
   if (landing) rooms.push(landingRoom(landing));
+  // Under a gallery above, a hall as big as it.
+  if (above?.gallery) rooms.push({ ...above.gallery, shape: 'rect' });
   const upBlock = stairBlock(up).map((b) => b.p);
   const touchesStairs = (r: Room) => upBlock.some((p) => p.x >= r.x - 2 && p.x < r.x + r.w + 2 && p.y >= r.y - 2 && p.y < r.y + r.h + 2);
 
@@ -339,7 +359,7 @@ function generateLayout(seed: string, depth: number): Level {
   };
   const order = rooms
     .map((room, index) => ({ room, index }))
-    .filter(({ room, index }) => index > (landing ? 1 : 0) && room.shape === 'rect')
+    .filter(({ room, index }) => index > (landing ? 1 : 0) + (above?.gallery ? 1 : 0) && room.shape === 'rect')
     .sort((a, b) => Math.hypot(center(b.room).x - up.bottom.x, center(b.room).y - up.bottom.y) - Math.hypot(center(a.room).x - up.bottom.x, center(a.room).y - up.bottom.y));
   let down: Stairwell | null = null;
   for (const { room } of order) {
@@ -415,6 +435,7 @@ function generateLayout(seed: string, depth: number): Level {
     doors: [],
     pit: { x: 0, y: 0 },
     landing: landing ?? { ...up.bottom },
+    gallery: null,
   };
 
   // Stairwells are cut last, so no corridor breaks them; any room a stairwell cut off is
@@ -451,6 +472,31 @@ function generateLayout(seed: string, depth: number): Level {
     break;
   }
   if (level.pit.x === 0 && level.pit.y === 0) level.pit = { ...centers[rooms.length - 1] };
+
+  // Now and then a big plain room becomes a gallery over a hall below.
+  const galleryRng = Rng.derive(seed, 'gallery', depth);
+  if (galleryRng.chance(CONFIG.level.galleryChance)) {
+    const blocked = [...upBlock, ...downBlock, level.pit, level.landing];
+    // Never one of the rooms this level owes to the one above.
+    const forced = 1 + (landing ? 1 : 0) + (above?.gallery ? 1 : 0);
+    const candidates = rooms.filter(
+      (r, i) =>
+        i >= forced &&
+        r.shape === 'rect' &&
+        r.w >= 7 &&
+        r.h >= 6 &&
+        !blocked.some((p) => p.x >= r.x - 1 && p.x <= r.x + r.w && p.y >= r.y - 1 && p.y <= r.y + r.h) &&
+        !overlaps(r, nextArrival, 1) &&
+        !overlaps(r, landingRoom(level.pit), 1),
+    );
+    if (candidates.length > 0) {
+      const room = galleryRng.pick(candidates);
+      level.gallery = { ...room };
+      for (let y = room.y + 1; y < room.y + room.h - 1; y++) {
+        for (let x = room.x + 1; x < room.x + room.w - 1; x++) tiles[y * width + x] = Tile.Void;
+      }
+    }
+  }
 
   // Fountains and drips are geography: the same in every life.
   const taken = new Set<string>();

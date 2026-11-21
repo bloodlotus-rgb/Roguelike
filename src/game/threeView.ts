@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import type { Level, Point } from '../core/dungeon';
 import { CONFIG } from '../core/config';
-import { generateLevel, isFloor, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
+import { generateLevel, isFloor, isVoid, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
 import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
@@ -105,10 +105,15 @@ interface InkOptions {
   outline?: boolean;
   /** Solid ink whatever the light or the side (outline shells). */
   solid?: boolean;
+  /**
+   * Multiplies the light this surface gets: for the level below, seen through a hole, so a
+   * flame a storey up still shows it (only within the flame's reach).
+   */
+  boost?: number;
 }
 
 function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = {}): THREE.MeshLambertMaterial {
-  const { cut = false, worldUv, grime = false, outline = false, solid = false } = options;
+  const { cut = false, worldUv, grime = false, outline = false, solid = false, boost = 1 } = options;
   const uvCode =
     worldUv === 'box'
       ? `bool inkAlongZ = abs(vInkNormal.x) > 0.5;
@@ -193,7 +198,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           // Lambert multiplies by the paper's color and divides by pi; undo both to get the
           // light alone, so 1.0 means fully lit.
           vec3 lightRgb = irradiance / max(diffuseColor.rgb, vec3(0.02)) * 3.14159;
-          float lit = dot(lightRgb, vec3(0.3333));
+          float lit = dot(lightRgb, vec3(0.3333)) * ${boost.toFixed(2)};
           // The flame's tint without its strength: the paper keeps one tone, ink does the rest.
           vec3 tint = lightRgb / max(max(lightRgb.r, max(lightRgb.g, lightRgb.b)), 1e-4);
           vec3 paper = diffuseColor.rgb * tint;
@@ -584,6 +589,16 @@ export class ThreeView {
     return this.painted;
   }
   private painted: THREE.Material | null = null;
+  /** The same, for the level below, lit through the holes. */
+  private get belowWall(): THREE.Material {
+    this.paintedBelow ??= inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.wall, bumpMap: this.wallRelief, bumpScale: 3 }), {
+      worldUv: 'box',
+      grime: true,
+      boost: 4,
+    });
+    return this.paintedBelow;
+  }
+  private paintedBelow: THREE.Material | null = null;
   private readonly woodMaterial = inkMaterial(new THREE.MeshLambertMaterial({ color: 0x9a7448 }), { cut: true, outline: true });
   private readonly projectiles = new Map<number, Cutout>();
   private readonly walks = new Map<number, { walked: number; last: Point }>();
@@ -764,6 +779,7 @@ export class ThreeView {
     this.levelGroup.add(this.stairsMesh(level.down, 'down'));
     this.levelGroup.add(this.stairsMesh(level.up, 'up'));
     this.levelGroup.add(this.belowMesh(level));
+    if (level.gallery) this.levelGroup.add(this.railingMesh(level));
     this.ceiling = new THREE.Mesh(
       this.tileQuads(level, WALL_FIRST, false),
       inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.ceiling })),
@@ -775,7 +791,7 @@ export class ThreeView {
     this.columnTiles = [];
     for (let y = 0; y < level.height; y++) {
       for (let x = 0; x < level.width; x++) {
-        if (isFloor(level, x, y)) continue;
+        if (isFloor(level, x, y) || isVoid(level, x, y)) continue;
         let touches = false;
         for (let dy = -1; dy <= 1 && !touches; dy++) for (let dx = -1; dx <= 1; dx++) if (isFloor(level, x + dx, y + dy)) touches = true;
         if (!touches) continue;
@@ -1038,6 +1054,35 @@ export class ThreeView {
     return outlined(g, this.mats);
   }
 
+  /** A wooden railing along the edge of a gallery's walkway, over the void. */
+  private railingMesh(level: Level): THREE.Group {
+    const g = new THREE.Group();
+    const add = (w: number, h: number, d: number, x: number, y: number, z: number) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), this.mats.wood);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      g.add(mesh);
+    };
+    for (let y = 0; y < level.height; y++) {
+      for (let x = 0; x < level.width; x++) {
+        if (!isVoid(level, x, y)) continue;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          if (!isFloor(level, x + dx, y + dy)) continue;
+          // The rail runs along the shared edge, on the walkway side.
+          const ex = x + 0.5 + dx * 0.46;
+          const ez = y + 0.5 + dy * 0.46;
+          const alongX = dy !== 0;
+          add(alongX ? 1 : 0.06, 0.06, alongX ? 0.06 : 1, ex, 0.62, ez);
+          add(0.07, 0.62, 0.07, ex - (alongX ? 0.45 : 0), 0.31, ez - (alongX ? 0 : 0.45));
+          // The edge of the floor slab.
+          add(alongX ? 1 : 0.08, 0.3, alongX ? 0.08 : 1, x + 0.5 + dx * 0.54, -0.15, y + 0.5 + dy * 0.54);
+        }
+      }
+    }
+    return outlined(g, this.mats);
+  }
+
   /**
    * The level below, as far as it shows through the holes in this floor (the stairs down
    * and the pit): its floor and walls around them, one storey down, lit only by what
@@ -1047,6 +1092,8 @@ export class ThreeView {
     const g = new THREE.Group();
     const below = generateLevel(level.seed, level.depth + 1, 0);
     const holes = [...level.down.steps, level.pit];
+    const g0 = level.gallery;
+    if (g0) for (let y = g0.y + 1; y < g0.y + g0.h - 1; y++) for (let x = g0.x + 1; x < g0.x + g0.w - 1; x++) holes.push({ x, y });
     const near = (x: number, y: number) => holes.some((h) => Math.abs(h.x - x) <= 4 && Math.abs(h.y - y) <= 4);
     const onLowerSteps = (x: number, y: number) => below.up.steps.some((p) => p.x === x && p.y === y);
     const positions: number[] = [];
@@ -1070,14 +1117,14 @@ export class ThreeView {
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(positions.length).fill(0).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
       geo.setIndex(indices);
-      const floor = new THREE.Mesh(geo, inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.floor })));
+      const floor = new THREE.Mesh(geo, inkMaterial(new THREE.MeshLambertMaterial({ map: this.textures.floor }), { boost: 4 }));
       floor.receiveShadow = true;
       g.add(floor);
     }
     if (walls.length > 0) {
       const mesh = new THREE.InstancedMesh(
         new THREE.BoxGeometry(1, LEVEL_HEIGHT, 1),
-        this.paintedWall,
+        this.belowWall,
         walls.length,
       );
       const m = new THREE.Matrix4();

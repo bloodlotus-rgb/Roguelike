@@ -1,7 +1,7 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { floorDistances, generateLevel, goldPile, isFloor, isPassable, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { floorDistances, generateLevel, goldPile, isFloor, isSeeThrough, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
 import { addItem, ITEMS, removeItem, starterKit, type Inventory, type ItemKind } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
@@ -2289,7 +2289,7 @@ export class World {
     this.projectiles = this.projectiles.filter((p) => {
       p.ttl -= dt;
       p.pos = { x: p.pos.x + p.vel.x * dt, y: p.pos.y + p.vel.y * dt };
-      if (p.ttl <= 0 || !isPassable(this.level, Math.floor(p.pos.x), Math.floor(p.pos.y))) return false;
+      if (p.ttl <= 0 || !isSeeThrough(this.level, Math.floor(p.pos.x), Math.floor(p.pos.y))) return false;
       if (dist(p.pos, this.player) > COMBAT.projectile.radius + CONFIG.player.radius) return true;
       if (this.invulnerableTimer > 0) return true;
       // Steady Hand: spit cannot reach you as a blow begins.

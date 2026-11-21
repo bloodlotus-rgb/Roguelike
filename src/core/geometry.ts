@@ -1,4 +1,4 @@
-import { isPassable, type Level, type Point } from './dungeon';
+import { isPassable, isSeeThrough, type Level, type Point } from './dungeon';
 
 /**
  * Moves a circle of `radius` (in tiles) by `dx`, `dy`, sliding along walls.
@@ -56,7 +56,7 @@ export function visibleTiles(level: Level, origin: Point, radius: number): numbe
       if (x < 0 || y < 0 || x >= width || y >= height) return false;
       if ((x - ox) ** 2 + (y - oy) ** 2 > radiusSq) return false;
       seen.add(y * width + x);
-      return isPassable(level, x, y);
+      return isSeeThrough(level, x, y);
     });
   }
   return [...seen];
@@ -68,7 +68,7 @@ export function hasLineOfSight(level: Level, a: Point, b: Point): boolean {
   const x1 = Math.floor(b.x);
   const y1 = Math.floor(b.y);
   castRay(Math.floor(a.x), Math.floor(a.y), x1, y1, (x, y) => {
-    if (!isPassable(level, x, y)) {
+    if (!isSeeThrough(level, x, y)) {
       clear = false;
       return false;
     }
@@ -145,7 +145,7 @@ export function castWallRay(level: Level, origin: Point, angle: number, maxDista
     if (distance >= maxDistance) {
       return { enter: maxDistance, exit: maxDistance, tileX: tx, tileY: ty, horizontal, hit: false };
     }
-    if (!isPassable(level, tx, ty)) {
+    if (!isSeeThrough(level, tx, ty)) {
       return { enter: distance, exit: Math.min(sideX, sideY), tileX: tx, tileY: ty, horizontal, hit: true };
     }
   }
