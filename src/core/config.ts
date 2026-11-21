@@ -14,6 +14,8 @@ export const CONFIG = {
     extraConnections: 12,
     /** Horrors per level, as a multiple of the base budget (hordes in the bigger levels). */
     hordeScale: 5,
+    /** Locations drawn by hand set into each level (see locations.ts). */
+    places: { min: 3, max: 6 },
     /** Chance a level has a gallery (a double-height room over a hall below). */
     galleryChance: 0.5,
     /** Share of passages that are winding natural tunnels instead of straight corridors. */

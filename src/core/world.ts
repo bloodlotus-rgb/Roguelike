@@ -137,6 +137,7 @@ export type WorldEvent =
   | { type: 'doorHit'; pos: Point; broke: boolean }
   | { type: 'unlocked'; depth: number }
   | { type: 'campPacked' }
+  | { type: 'placeEntered'; id: string }
   | { type: 'dig' }
   | { type: 'splash' }
   | { type: 'roar'; near: number }
@@ -207,6 +208,7 @@ export type Interaction =
   | 'force'
   | 'pick'
   | 'bash'
+  | 'outpost'
   | null;
 
 /** Counters behind the acquired traits. */
@@ -885,6 +887,7 @@ export class World {
     this.rally *= Math.exp(-dt / COMBAT.rallyFade);
     if (fx.mapPath) this.path.add(Math.floor(this.player.y) * this.level.width + Math.floor(this.player.x));
     this.wade(events);
+    this.noticePlace(events);
     this.roar(dt, events);
 
     this.pickUp(events);
@@ -1477,6 +1480,37 @@ export class World {
       }
     }
     events.push({ type: 'dawn' });
+  }
+
+  /** A camp of old within reach (in some locations) that nobody of the family has lit yet. */
+  get outpostInReach(): Point | null {
+    if (this.campInReach) return null;
+    return (
+      this.level.outposts.find(
+        (p) => dist(this.player, { x: p.x + 0.5, y: p.y + 0.5 }) <= CONFIG.camp.reach && !this.camps.some((c) => c.depth === this.depth && c.x === p.x && c.y === p.y),
+      ) ?? null
+    );
+  }
+
+  /**
+   * Lights a camp of old again: it becomes a family camp, with no kit spent. Not with
+   * horrors near.
+   */
+  relightOutpost(): WorldEvent[] {
+    const p = this.outpostInReach;
+    if (!p) return [];
+    if (this.inDanger) return [{ type: 'cantBuild', reason: 'danger' }];
+    const camp: CampSite = {
+      id: Math.max(0, ...this.camps.map((c) => c.id)) + 1,
+      depth: this.depth,
+      x: p.x,
+      y: p.y,
+      built: this.generation,
+      builder: this.builder,
+      condition: 100,
+    };
+    this.camps.push(camp);
+    return [{ type: 'campBuilt', camp }];
   }
 
   /**
@@ -2337,6 +2371,17 @@ export class World {
     if (d < CONFIG.water.roarReach) events.push({ type: 'roar', near: 1 - d / CONFIG.water.roarReach });
   }
 
+  /** The location the hero stands in, to say its name on the way in. */
+  private placeHere: string | null = null;
+  private noticePlace(events: WorldEvent[]): void {
+    const { x, y } = this.player;
+    const place = this.level.places.find((p) => x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h);
+    const id = place?.id ?? null;
+    if (id === this.placeHere) return;
+    this.placeHere = id;
+    if (id) events.push({ type: 'placeEntered', id });
+  }
+
   /** Each step into shallow water splashes, and horrors close by hear it. */
   private wetTile = -1;
   private wade(events: WorldEvent[]): void {
@@ -2359,6 +2404,7 @@ export class World {
     if (this.ropeHere('down')) return 'ropeDown';
     if (this.ropeHere('up')) return 'ropeUp';
     if (this.campInReach) return 'camp';
+    if (this.outpostInReach) return 'outpost';
     if (this.torchToRefill) return 'torch';
     const door = this.doorInReach();
     if (door) {

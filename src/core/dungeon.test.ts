@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LOCATIONS } from './locations';
 import { canStep, doorwayPartner, flood, floorDistances, generateLevel, Ground, isChasm, isDeep, isFloor, isVoid, Water, waterAt } from './dungeon';
 
 const seeds = ['estirpe', 'tainted', 'abc', '12345', 'mansion'];
@@ -296,5 +297,34 @@ describe('generateLevel', () => {
     }
     expect(sealedStairs).toBeGreaterThan(5);
     expect(sealedPits).toBeGreaterThan(3);
+  });
+
+  it('locations are set in as drawn, whole, and every walkable cell of them can be reached', () => {
+    let placed = 0;
+    const kinds = new Set<string>();
+    for (const seed of seeds) {
+      for (let depth = 1; depth <= 4; depth++) {
+        const level = generateLevel(seed, depth);
+        const closed = new Set<number>();
+        const dist = floorDistances({ ...level, closed }, level.start);
+        for (const p of level.places) {
+          placed++;
+          kinds.add(p.id);
+          const plan = LOCATIONS.find((d) => d.id === p.id)!.plan;
+          for (let y = 0; y < p.h; y++) {
+            for (let x = 0; x < p.w; x++) {
+              const c = plan[y][x];
+              const i = (p.y + y) * level.width + p.x + x;
+              // Rock stays rock: no corridor was cut through.
+              if (c === '#') expect(level.tiles[i]).toBe(0);
+              else if (c === 'W') expect(isDeep(level, p.x + x, p.y + y)).toBe(true);
+              else expect(dist[i]).not.toBe(-1);
+            }
+          }
+        }
+      }
+    }
+    expect(placed).toBeGreaterThan(40);
+    expect(kinds.size).toBe(LOCATIONS.length);
   });
 });

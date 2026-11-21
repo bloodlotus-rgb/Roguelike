@@ -1248,6 +1248,34 @@ describe('closed ways down', () => {
   });
 });
 
+describe('outposts', () => {
+  it('a camp of old is lit again without a kit, and becomes the family’s', () => {
+    let found: { w: World; camps: import('./dynasty').CampSite[] } | null = null;
+    for (const seed of ['estirpe', 'tainted', 'abc', '12345', 'mansion', 'outposts']) {
+      for (let depth = 1; depth <= 4 && !found; depth++) {
+        const camps: import('./dynasty').CampSite[] = [];
+        const w = new World(seed, 'headsman', 0, depth, { camps });
+        if (w.level.outposts.length > 0) found = { w, camps };
+      }
+      if (found) break;
+    }
+    expect(found).not.toBeNull();
+    const { w, camps } = found!;
+    w.enemies = [];
+    const p = w.level.outposts[0];
+    const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dy]) => isFloor(w.level, p.x + dx, p.y + dy))!;
+    w.player = { x: p.x + side[0] + 0.5, y: p.y + side[1] + 0.5 };
+    const kits = w.inventory.items.filter((i) => i.kind === 'campKit').length;
+    w.update(0.02, NO_INPUT);
+    expect(w.interaction).toBe('outpost');
+    const events = w.relightOutpost();
+    expect(events.some((e) => e.type === 'campBuilt')).toBe(true);
+    expect(camps).toHaveLength(1);
+    expect(w.inventory.items.filter((i) => i.kind === 'campKit').length).toBe(kits);
+    expect(w.interaction).toBe('camp');
+  });
+});
+
 describe('collapses', () => {
   it('some corridors are blocked by stones that can be dug out, loudly, for the whole family', () => {
     let world: World | null = null;

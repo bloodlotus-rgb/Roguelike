@@ -50,3 +50,35 @@
 - **Solo el Saqueador abre cerraduras con ganzúas**: unos 10 segundos, con poco ruido (se oye a 3 casillas).
 - **Las otras clases rompen la puerta a golpes**: cada golpe que la alcanza le saca vida y hace mucho ruido, hasta que cede. El Verdugo tarda unos 9 golpes.
 - Las **puertas trabadas** y la **reja del pozo** se siguen forzando, con cualquier clase.
+
+## A3 implementada: locaciones dibujadas a mano
+
+- **Formato** (`src/core/locations.ts`): cada locación es un **plano de texto**, una letra por casilla, visto desde arriba.
+  - `#` roca o pared (si está suelta adentro, es una columna)
+  - `.` piso
+  - `+` conector, en pares en el borde
+  - `~` agua baja, `W` agua profunda
+  - `F` fuente, `d` gotera
+  - `k` cofre, `r` restos
+  - `O` fogón viejo (puesto)
+  - Cada locación lleva además nombre (es/en), profundidades donde aparece, peso y si es única.
+  - Un test valida cada plano: rectangular, cerrado, con conectores de 2 y todo alcanzable desde ellos.
+- **Inserción**:
+  - El generador pone de **3 a 6 locaciones por nivel**, antes que las salas, y las une **solo por sus conectores**: de cada uno sale un pasillo corto y los pasillos se encuentran afuera.
+  - **Ningún pasillo atraviesa una locación**. Si algo queda aislado, se cava un rodeo por la roca (nunca a través de una locación ni de una escalera).
+  - Pozos, abismos, terrazas, ríos y escaleras no se meten en las locaciones.
+- **Contenido**:
+  - El agua, las fuentes y las goteras son geografía.
+  - Los cofres y restos están siempre en su lugar y se revisan de nuevo en cada vida.
+- **Puestos**: el **fogón viejo** se enciende sin kit y pasa a ser un campamento de la familia.
+- **Al entrar** a una locación aparece su nombre. En el mapa, el nombre va encima una vez vista, y los fogones viejos tienen marca.
+- **Primera tanda (5)**:
+  - **Campamento abandonado** (puesto);
+  - **Cocina** (puesto, con fuente);
+  - **Aljibe** (pozo profundo y agua limpia);
+  - **Cisterna de columnas** (sala inundada con columnas);
+  - **Galería de nichos** (pasillo largo con restos en los nichos).
+- **Pendiente**:
+  - La **grilla 3D en capas**: plantas con varias alturas, balcones y locaciones de varios niveles (⇅). Por ahora el plano es de una sola capa y las alturas salen del tamaño del espacio.
+  - Arreglar la distancia entre niveles apilados.
+  - Las **piezas** (A4), para que las locaciones tengan arcos, altares, cadenas, braseros…
