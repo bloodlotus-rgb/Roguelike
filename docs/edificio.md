@@ -103,9 +103,14 @@ Dos piezas vecinas encajan si sus aberturas coinciden.
 
 **Piezas de un solo piso**: pasillos (recto, codo, T, cruce, con 2 de ancho), salas, salones de 2 pisos de alto, puentes sobre un abismo y **locaciones** hechas a mano (las de hoy, con su caja redondeada a celdas).
 
-**Relleno procedural**:
-- lo que queda entre piezas es roca;
-- los túneles y cuevas que unen aberturas sueltas se cavan por la roca;
+**Piezas procedurales** (decidido): además del catálogo (conectores y unas 100 piezas diseñadas a mano), el plan genera piezas por reglas con la semilla:
+- salas de formas raras, cuevas, galerías y pasillos con recovecos;
+- con aberturas como las demás, así que encajan en el jenga;
+- enriquecen la variedad sin diseñar todo a mano.
+
+**Relleno procedural** (decidido): los espacios muertos que deja el jenga se llenan por procedimiento:
+- cuevas, cámaras chicas y grietas en la roca que sobra entre piezas;
+- túneles que unen aberturas sueltas;
 - las catástrofes cortan a través de todo, menos de las losas de zona.
 
 ## El gran procedimiento (en orden)
