@@ -1221,3 +1221,38 @@ body.booting #hud {
 .screen .camp-item-acts .paper-button:disabled {
   opacity: 0.35;
 }
+
+/* Visual style picker (pause screen) */
+
+.style-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0;
+  font-style: italic;
+}
+
+.style-options {
+  display: flex;
+  gap: 6px;
+}
+
+.style-option {
+  font: inherit;
+  font-style: normal;
+  font-size: 14px;
+  padding: 6px 12px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.style-option.chosen {
+  color: var(--paper);
+  background: var(--ink);
+  border-color: var(--paper);
+  box-shadow: 0 0 0 2px var(--ink);
+}
