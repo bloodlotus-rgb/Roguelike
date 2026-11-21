@@ -975,11 +975,14 @@ function generateLayout(seed: string, depth: number): Level {
   const fountains = placeSpots(level, Rng.derive(seed, 'fountains', depth), taken, rngCount(Rng.derive(seed, 'fountains-n', depth), CONFIG.features.fountain));
   const features: Feature[] = fountains.map(([x, y]) => ({ id: 0, kind: 'fountain' as const, x, y }));
   const dripRng = Rng.derive(seed, 'drips', depth);
-  for (const [x, y] of placeSpots(level, dripRng, taken, rngCount(dripRng, CONFIG.features.drip))) {
+  // Drips fall on the low floor, where their puddle can gather.
+  for (const [x, y] of placeSpots(level, dripRng, taken, rngCount(dripRng, CONFIG.features.drip), (x, y) => groundAt(level, x, y) === Ground.Low)) {
     features.push({ id: 0, kind: 'drip', x, y });
     // Where it drips, a puddle gathers.
     for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      if (isFloor(level, x + dx, y + dy) && groundAt(level, x + dx, y + dy) === Ground.Low && (dx === 0 || dripRng.chance(0.6))) {
+      // Never over a fountain or the stairs.
+      const kept = (dx !== 0 || dy !== 0) && taken.has(`${x + dx},${y + dy}`);
+      if (!kept && isFloor(level, x + dx, y + dy) && groundAt(level, x + dx, y + dy) === Ground.Low && (dx === 0 || dripRng.chance(0.6))) {
         level.water[(y + dy) * width + x + dx] = Water.Shallow;
       }
     }
@@ -1088,7 +1091,7 @@ function rngCount(rng: Rng, range: { min: number; max: number }): number {
 }
 
 /** Free floor tiles inside rooms, never on the start, the stairs or each other. */
-function placeSpots(level: Level, rng: Rng, taken: Set<string>, count: number): Array<[number, number]> {
+function placeSpots(level: Level, rng: Rng, taken: Set<string>, count: number, ok: (x: number, y: number) => boolean = () => true): Array<[number, number]> {
   const spots: Array<[number, number]> = [];
   for (let i = 0; i < count; i++) {
     for (let attempt = 0; attempt < 30; attempt++) {
@@ -1096,7 +1099,7 @@ function placeSpots(level: Level, rng: Rng, taken: Set<string>, count: number): 
       const x = rng.int(room.x, room.x + room.w - 1);
       const y = rng.int(room.y, room.y + room.h - 1);
       const key = `${x},${y}`;
-      if (taken.has(key) || !isFloor(level, x, y) || waterAt(level, x, y) !== Water.None) continue;
+      if (taken.has(key) || !isFloor(level, x, y) || waterAt(level, x, y) !== Water.None || !ok(x, y)) continue;
       taken.add(key);
       spots.push([x, y]);
       break;
