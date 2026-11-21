@@ -21,6 +21,7 @@ import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures
 import { InkPost } from './inkPost';
 import { BRICK_DEPTH, FLAG_TOP, layBricks, layFlagstones, type Brick } from './masonry';
 import { styleIndex } from './style';
+import { BounceLight, type LightSource } from './bounce';
 import { onSettings, qualityProfile, settings } from '../settings/settings';
 import { bridgeModel, rubbleModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
 import { easeInOut, easeOut, swingPhase } from './swing';
@@ -83,6 +84,10 @@ const cutaway = {
   style: { value: 0 },
   /** Seconds, for things that move by themselves (running water). */
   time: { value: 0 },
+  /** Light bounced off walls and floor (see bounce.ts): one value per tile, and how much of it. */
+  bounce: { value: new THREE.DataTexture(new Uint8Array(1), 1, 1, THREE.RedFormat, THREE.UnsignedByteType) as THREE.Texture },
+  bounceSize: { value: new THREE.Vector2(1, 1) },
+  bounceGain: { value: 0 },
 };
 /** Hatch lines per tile at the coarsest level of detail used up close. */
 const HATCH_BASE = 7;
@@ -201,6 +206,9 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
     shader.uniforms.uReach = cutaway.reach;
     shader.uniforms.uStyle = cutaway.style;
     shader.uniforms.uTime = cutaway.time;
+    shader.uniforms.uBounce = cutaway.bounce;
+    shader.uniforms.uBounceSize = cutaway.bounceSize;
+    shader.uniforms.uBounceGain = cutaway.bounceGain;
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
@@ -229,7 +237,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
       .replace('#include <lights_fragment_begin>', LIGHTS_WITH_INK_SHADOW)
       .replace(
         '#include <common>',
-        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform float uReach;\nuniform float uStyle;\nuniform float uTime;\nuniform vec3 uPlayer;' + (flow ? '\nvarying vec2 vFlow;' : '') + '\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
+        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform float uReach;\nuniform float uStyle;\nuniform float uTime;\nuniform sampler2D uBounce;\nuniform vec2 uBounceSize;\nuniform float uBounceGain;\nuniform vec3 uPlayer;' + (flow ? '\nvarying vec2 vFlow;' : '') + '\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
       )
       .replace(
         '#include <map_fragment>',
@@ -269,8 +277,24 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           // The last stretch of the reach fades out gently, as hatching closing into ink.
           float edgeFade = 1.0 - smoothstep(uReach * 0.6, uReach, distance(vInkPos.xz, uPlayer.xz));
           lit *= edgeFade * edgeFade * (3.0 - 2.0 * edgeFade);
+          // Light thrown back by walls and floor: past the reach, around corners, into shadow.
+          float inkBounce = 0.0;
+          float inkDirect = lit;
+          ${
+            boost === 1
+              ? `{
+            vec3 bn = normalize(vInkNormal);
+            inkBounce = texture2D(uBounce, (vInkPos.xz + bn.xz * 0.45) / uBounceSize).r * uBounceGain;
+            // It only lifts what is darker than itself: a faint, hatched light, never a lamp.
+            lit = max(lit, inkBounce);
+          }`
+              : ''
+          }
           // The flame's tint without its strength: the paper keeps one tone, ink does the rest.
-          vec3 tint = lightRgb / max(max(lightRgb.r, max(lightRgb.g, lightRgb.b)), 1e-4);
+          float inkLightMax = max(lightRgb.r, max(lightRgb.g, lightRgb.b));
+          vec3 tint = lightRgb / max(inkLightMax, 1e-4);
+          // Where only bounced light arrives, it keeps the flame's warmth.
+          if (inkLightMax < 1e-3 && inkBounce > 0.004) tint = vec3(1.0, 0.86, 0.68);
           vec3 paper = diffuseColor.rgb * tint;
           vec3 n = normalize(vInkNormal);
           vec2 hp = abs(n.y) > 0.5 ? vInkPos.xz : vec2(abs(n.x) > 0.5 ? vInkPos.z : vInkPos.x, vInkPos.y);
@@ -285,7 +309,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           float tone = clamp(1.0 - lit * 1.5 + wobble * 0.08, 0.0, 1.0);
           // Cast shadows inside the light are solid ink with a short hatched rim: the
           // light fading with distance is drawn with lines, what blocks it with a brush.
-          float shadowed = 1.0 - smoothstep(0.25, 0.75, inkShadow + wobble * 0.25);
+          float shadowed = (1.0 - smoothstep(0.25, 0.75, inkShadow + wobble * 0.25)) * (1.0 - smoothstep(0.04, 0.22, inkBounce));
           float rim = smoothstep(0.08, 0.35, shadowed) * (1.0 - smoothstep(0.65, 0.92, shadowed));
           tone = max(tone, mix(tone, 0.6, rim));
           // Five steps of tone: four passes of fine lines, each at its own angle, coming in one
@@ -366,7 +390,8 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
             float grain = inkNoise(vInkPos.xz * 4.3 + vInkPos.y * 3.7) * 0.55 + inkNoise(vInkPos.xz * 19.0 + vInkPos.y * 13.0) * 0.45;
             // The drawn texture only hints at joints and stains; the stone's own grain does the rest.
             vec3 stone = mix(vec3(0.075, 0.07, 0.068), vec3(0.5, 0.47, 0.43), mix(0.62, g, 0.45)) * (0.6 + 0.8 * grain);
-            float shade = lit * mix(1.0, 0.12, smoothstep(0.25, 0.8, shadowed));
+            // Gothic is darker: the bounced light is only a faint fill.
+            float shade = max(inkDirect, inkBounce * 0.5) * mix(1.0, 0.12, smoothstep(0.25, 0.8, shadowed));
             vec3 flame = mix(vec3(1.0), tint, 0.55);
             outgoingLight = stone * flame * pow(clamp(shade, 0.0, 1.6), 1.35) * 1.45;
             outgoingLight *= 1.0 - edge * 0.5 * step(0.02, lit);
@@ -935,6 +960,7 @@ export class ThreeView {
     this.syncDoors(world);
     this.syncProjectiles(world);
     cutaway.time.value = (now / 1000) % 1000;
+    this.updateBounce(world, now);
     if (this.post && qualityProfile().post) this.post.render(this.renderer, this.scene, this.camera, now);
     else this.renderer.render(this.scene, this.camera);
     this.drawHandsOverlay(world, now, moved > 0.002);
@@ -942,8 +968,42 @@ export class ThreeView {
 
   // Level -----------------------------------------------------------------------
 
+  private bounce: BounceLight | null = null;
+  private bounceAt = 0;
+  private bounceTile = -1;
+  /** Burning torches near the hero, from the last sync of the works. */
+  private torchSpots: Array<{ x: number; y: number; d: number; h: number }> = [];
+
+  /**
+   * Works out the bounced light a few times a second, and at once when the hero steps onto
+   * another tile. Off at the lowest quality.
+   */
+  private updateBounce(world: World, now: number): void {
+    const quality = settings().quality;
+    cutaway.bounceGain.value = quality === 'low' || !this.bounce ? 0 : quality === 'ultra' ? 0.42 : 0.36;
+    if (!this.bounce || cutaway.bounceGain.value === 0) return;
+    const tile = Math.floor(world.player.y) * world.level.width + Math.floor(world.player.x);
+    if (tile === this.bounceTile && now - this.bounceAt < 200) return;
+    this.bounceTile = tile;
+    this.bounceAt = now;
+    const sources: LightSource[] = [];
+    const radius = world.lightRadius;
+    if (radius > 0.3) {
+      sources.push({ x: world.player.x, y: world.player.y, radius: radius + 0.5, power: 1, dir: this.lightAngle, cone: COMBAT.visionCone * 1.15, sees: world.visibleNow });
+    }
+    for (const t of this.torchSpots) if (t.d < 18) sources.push({ x: t.x, y: t.y, radius: CONFIG.works.torchRadius + 1, power: 0.8 });
+    const camp = world.campInReach;
+    if (camp && world.campfire) sources.push({ x: camp.x + 0.5, y: camp.y + 0.5, radius: 4, power: 0.9 });
+    this.bounce.update(world.player, sources);
+  }
+
   private buildLevel(level: Level): void {
     this.level = level;
+    this.bounce?.dispose();
+    this.bounce = new BounceLight(level);
+    this.bounceTile = -1;
+    cutaway.bounce.value = this.bounce.texture;
+    cutaway.bounceSize.value.set(level.width, level.height);
     this.scene.remove(this.levelGroup);
     this.levelGroup.traverse((o) => {
       if (o instanceof THREE.Mesh) o.geometry.dispose();
@@ -2119,6 +2179,7 @@ export class ThreeView {
     }
     // The nearest burning torches get a real light.
     lit.sort((a, b) => a.d - b.d);
+    this.torchSpots = lit;
     this.torchLights.forEach((light, i) => {
       const torch = lit[i];
       if (!torch || torch.d > 14) {
