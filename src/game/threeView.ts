@@ -231,12 +231,14 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           float shadowed = 1.0 - smoothstep(0.25, 0.75, inkShadow + wobble * 0.25);
           float rim = smoothstep(0.08, 0.35, shadowed) * (1.0 - smoothstep(0.65, 0.92, shadowed));
           tone = max(tone, mix(tone, 0.6, rim));
-          // Each pass comes in thin, then all of them thicken together until they close into
-          // solid ink: no step between the last lines and the dark.
-          float closing = smoothstep(0.62, 0.98, tone) * 0.42;
-          float w1 = smoothstep(0.18, 0.24, tone) * 0.08 + closing;
-          float w2 = smoothstep(0.4, 0.46, tone) * 0.09 + closing;
-          float w3 = smoothstep(0.58, 0.64, tone) * 0.1 + closing;
+          // Five steps of tone: four passes of fine lines, each at its own angle, coming in one
+          // after another; then all of them thicken together until they close into solid
+          // ink, with no step between the last lines and the dark.
+          float closing = smoothstep(0.68, 0.985, tone) * 0.44;
+          float w1 = smoothstep(0.1, 0.16, tone) * 0.055 + closing;
+          float w2 = smoothstep(0.27, 0.33, tone) * 0.055 + closing;
+          float w3 = smoothstep(0.43, 0.49, tone) * 0.06 + closing;
+          float w4 = smoothstep(0.57, 0.63, tone) * 0.06 + closing;
           // Like a hand on paper, lines keep about the same spacing on the page wherever
           // they are: a near surface takes up more of the page and so gets more lines, a far
           // one fewer. Density changes in steps of two, the new lines growing in between the
@@ -254,6 +256,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
             inkPen(pw.x + pw.y, pw.x - pw.y, freq, grow, w1, 0.0, lift),
             inkPen(pw.x - pw.y, pw.x + pw.y, freq, grow, w2, 17.0, lift));
           ink = max(ink, inkPen(pw.x * 1.3, pw.y, freq, grow, w3, 41.0, lift * 0.5));
+          ink = max(ink, inkPen(pw.y * 1.15 + pw.x * 0.3, pw.x, freq, grow, w4, 73.0, lift * 0.3));
           ink = max(ink, step(0.985, tone));
           ink = max(ink, smoothstep(0.82, 0.92, shadowed));
           float edge = 0.0;
@@ -663,7 +666,7 @@ export class ThreeView {
     // A real flame: light falls with the square of the distance (decay 2).
     this.light = new THREE.SpotLight(0xffd6a0, FLAME_POWER, 8, COMBAT.visionCone, 0.06, 2);
     this.light.castShadow = true;
-    this.light.shadow.mapSize.set(1024, 1024);
+    this.light.shadow.mapSize.set(2048, 2048);
     this.light.shadow.bias = -0.0008;
     this.light.shadow.camera.near = 0.1;
     this.scene.add(this.light);
@@ -1233,10 +1236,11 @@ export class ThreeView {
     const portrait = w < h;
     // First person renders a little below full resolution, which keeps it light and soft.
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const ratio = this.mode === 'first' ? Math.min(dpr, (portrait ? 520 : 960) / w) : dpr;
+    const ratio = this.mode === 'first' ? Math.min(dpr, (portrait ? 760 : 1400) / w) : dpr;
     this.renderer.setPixelRatio(ratio);
     // Hatch lines about 6 CSS pixels apart, whatever the screen.
-    cutaway.lineSpacing.value = 6 * ratio;
+    // Fine lines, about four and a half CSS pixels apart.
+    cutaway.lineSpacing.value = 4.5 * ratio;
     this.renderer.setSize(w, h, true);
     this.renderer.domElement.classList.toggle('pixelated', false);
     this.hands.width = Math.round(w * (this.mode === 'first' ? ratio : 0.5));

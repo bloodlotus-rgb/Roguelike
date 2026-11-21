@@ -37,6 +37,26 @@ float noise(vec2 p) {
   vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
+/** Smooths jagged edges (a light FXAA): blends along the edge, never across it. */
+vec3 smoothEdges(vec2 uv, vec2 px) {
+  const vec3 lumaW = vec3(0.299, 0.587, 0.114);
+  vec3 m = texture2D(tColor, uv).rgb;
+  float nw = dot(texture2D(tColor, uv + vec2(-1.0, -1.0) * px).rgb, lumaW);
+  float ne = dot(texture2D(tColor, uv + vec2(1.0, -1.0) * px).rgb, lumaW);
+  float sw = dot(texture2D(tColor, uv + vec2(-1.0, 1.0) * px).rgb, lumaW);
+  float se = dot(texture2D(tColor, uv + vec2(1.0, 1.0) * px).rgb, lumaW);
+  float lm = dot(m, lumaW);
+  float lo = min(lm, min(min(nw, ne), min(sw, se)));
+  float hi = max(lm, max(max(nw, ne), max(sw, se)));
+  vec2 dir = vec2(-((nw + ne) - (sw + se)), (nw + sw) - (ne + se));
+  float reduce = max((nw + ne + sw + se) * 0.03125, 1.0 / 128.0);
+  dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + reduce), -8.0, 8.0) * px;
+  vec3 a = 0.5 * (texture2D(tColor, uv + dir * (1.0 / 3.0 - 0.5)).rgb + texture2D(tColor, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+  vec3 b = a * 0.5 + 0.25 * (texture2D(tColor, uv - dir * 0.5).rgb + texture2D(tColor, uv + dir * 0.5).rgb);
+  float lb = dot(b, lumaW);
+  return (lb < lo || lb > hi) ? a : b;
+}
+
 float linearDepth(vec2 uv) {
   float z = texture2D(tDepth, uv).x * 2.0 - 1.0;
   return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear));
@@ -48,7 +68,7 @@ void main() {
   // wanders smoothly across the page and snaps to whole pixels, so lines stay crisp.
   vec2 drift = vec2(noise(vUv * 5.0 + uFrame * 1.7), noise(vUv * 5.0 + uFrame * 1.7 + 9.0)) - 0.5;
   vec2 uv = (floor(vUv * uResolution + drift * 2.2) + 0.5) / uResolution;
-  vec4 color = texture2D(tColor, uv);
+  vec4 color = vec4(smoothEdges(uv, px), 1.0);
 
   // Outlines where depth jumps, relative to the distance, so far and near read alike.
   float d = linearDepth(uv);
@@ -88,9 +108,9 @@ export class InkPost {
     this.target = new THREE.WebGLRenderTarget(1, 1, {
       depthTexture: new THREE.DepthTexture(1, 1),
       depthBuffer: true,
-      // Read pixel for pixel: no blur from the boil's shifts.
-      minFilter: THREE.NearestFilter,
-      magFilter: THREE.NearestFilter,
+      // The boil reads whole pixels (no blur); the smoothing of edges reads in between.
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
     });
     this.material = new THREE.ShaderMaterial({
       vertexShader: vertex,
