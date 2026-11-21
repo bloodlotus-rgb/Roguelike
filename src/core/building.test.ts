@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BODY, fallHarm, moveBody, settle, type Fall } from './bodies';
-import { Building, floorZ, STOREY } from './building';
+import { Building, dropBelow, floorZ, STOREY } from './building';
+import { MAX_DEPTH, ZONE_SLAB } from './plan';
 import { isChasm, type Point } from './dungeon';
 import { Surfaces } from './paths';
 
@@ -92,5 +93,30 @@ describe('the building: storeys in one space', () => {
       }
     }
     expect(BODY.maxDrop).toBeLessThan(STOREY);
+  });
+
+  it("between zones, a slab of rock more: crossed only by the zone's well and its pit", () => {
+    expect(dropBelow(3)).toBe(STOREY);
+    expect(dropBelow(4)).toBe(STOREY + ZONE_SLAB);
+    const level = building.levelAt(4);
+    const v = building.view(4);
+    const slab = -1 - ZONE_SLAB / 2;
+    let open = 0;
+    for (let y = 0; y < level.height; y++) {
+      for (let x = 0; x < level.width; x++) {
+        if (!v.solidAt(x + 0.5, y + 0.5, slab)) open++;
+      }
+    }
+    // Only the nine tiles of the well (bar its steps) and the pit.
+    expect(open).toBeGreaterThan(0);
+    expect(open).toBeLessThanOrEqual(10);
+    // The well down out of the zone goes down the full drop, to the floor of the next zone.
+    const exit = { x: level.down.bottom.x + 0.5, y: level.down.bottom.y + 0.5 };
+    expect(v.surfaces(Math.floor(exit.x), Math.floor(exit.y))).toContain(-dropBelow(4));
+  });
+
+  it('under the deepest storey there is nothing', () => {
+    const b = new Building('ashen-crypt-417', 1);
+    expect(b.band(MAX_DEPTH + 1, 10, 10)).toEqual([{ bottom: -1, top: 5, mat: 1 }]);
   });
 });

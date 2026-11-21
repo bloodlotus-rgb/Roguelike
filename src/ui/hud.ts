@@ -6,6 +6,7 @@ import type { Interaction } from '../core/world';
 import { BackpackUi } from './backpack';
 import { drawMap, drawMark, MAP_ZOOM, type MapExtras, type MapMark, type MapView } from './map';
 import { getLang, onLangChange, setLang, t, type StringKey } from '../i18n/i18n';
+import { placeOf, planOf, zoneName } from '../core/plan';
 
 type Meter = 'health' | 'hunger' | 'thirst' | 'light';
 const METERS: Meter[] = ['health', 'hunger', 'thirst', 'light'];
@@ -244,9 +245,18 @@ export class Hud {
     this.dodgeButton.classList.toggle('cooling', !ready);
   }
 
-  setDepth(depth: number): void {
+  setDepth(depth: number, seed = this.seed): void {
     this.depth = depth;
+    this.seed = seed;
     this.renderDepth();
+  }
+
+  private seed = '';
+
+  /** Where a storey is: its zone (era and number) and which storey of the zone. */
+  private placeLabel(depth: number): string {
+    if (!this.seed) return `${t('depth')} ${depth}`;
+    return `${zoneName(planOf(this.seed), depth, getLang())} · ${t('storey', { n: placeOf(planOf(this.seed), depth).storey })}`;
   }
 
   /** The action button changes with what is at hand: stairs, a fountain, something to search. */
@@ -463,7 +473,7 @@ export class Hud {
 
   private renderMap(): void {
     if (!this.mapWorld) return;
-    this.mapTitle.textContent = t('mapTitle', { depth: this.mapWorld.depth });
+    this.mapTitle.textContent = this.placeLabel(this.mapWorld.depth);
     if (this.mapFollow) {
       this.mapView.cx = this.mapWorld.player.x;
       this.mapView.cy = this.mapWorld.player.y;
@@ -480,6 +490,6 @@ export class Hud {
   }
 
   private renderDepth(): void {
-    this.depthLabel.textContent = `${t('depth')} ${this.depth}`;
+    this.depthLabel.textContent = this.placeLabel(this.depth);
   }
 }

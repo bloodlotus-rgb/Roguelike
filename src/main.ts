@@ -20,6 +20,7 @@ import { traitName } from './ui/traitText';
 import './ui/styles.css';
 import { SettingsScreen } from './ui/settingsScreen';
 import { LOCATIONS } from './core/locations';
+import { planOf, zoneIndex, zoneName } from './core/plan';
 import { actionFor, settings } from './settings/settings';
 
 /** A readable random seed, e.g. "ashen-crypt-417". Seeds are chosen outside game logic. */
@@ -75,6 +76,8 @@ class Session implements SceneHost {
   private readonly mansion: MansionUi;
   /** Up at the mansion: the dungeon waits. */
   private atMansion = false;
+  /** The depth the HUD last showed, to tell when a new zone is entered. */
+  private shownDepth = 1;
 
   private readonly controls: Controls;
   private readonly hud: Hud;
@@ -453,7 +456,8 @@ class Session implements SceneHost {
     this.controls.reset();
     this.lineage.hide();
     this.hud.showClassSelect(false);
-    this.hud.setDepth(world.depth);
+    this.hud.setDepth(world.depth, world.seed);
+    this.shownDepth = world.depth;
     this.hud.setSurvival(world.survival, world.maxHealth);
     await this.applyView();
     if (this.engine === 'three') {
@@ -567,7 +571,10 @@ class Session implements SceneHost {
 
   /** After walking the stairs (or a rope) to another level. */
   private levelChanged(): void {
-    this.hud.setDepth(this.world.depth);
+    // Into another zone: its name, as a place is announced.
+    if (zoneIndex(this.world.depth) !== zoneIndex(this.shownDepth)) this.hud.toastText(t('zoneEntered', { zone: zoneName(planOf(this.world.seed), this.world.depth, getLang()) }), true);
+    this.shownDepth = this.world.depth;
+    this.hud.setDepth(this.world.depth, this.world.seed);
     this.hud.setInteraction(null);
     this.classic?.restart();
     this.persist();
@@ -588,7 +595,7 @@ class Session implements SceneHost {
   private leaveMansion(): void {
     this.atMansion = false;
     this.world.returnFromSurface();
-    this.hud.setDepth(this.world.depth);
+    this.hud.setDepth(this.world.depth, this.world.seed);
     this.hud.setPlaying(true);
     this.paused = false;
     this.controls.reset();

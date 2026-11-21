@@ -2146,24 +2146,36 @@ export class ThreeView {
       this.syncRopes(world);
     }
     // An iron grate stuck over the pit, until someone forces it.
-    const grateKey = `${world.depth}:${!!world.lockAt(world.level.pit.x, world.level.pit.y)}`;
+    // The locked grate over the mouth of a zone's well, until it is opened.
+    const gate = world.level.locks.find((l) => l.gate);
+    const gateShut = !!gate && !!world.lockAt(gate.x, gate.y);
+    const grateKey = `${world.depth}:${!!world.lockAt(world.level.pit.x, world.level.pit.y)}:${gateShut}`;
     if (grateKey !== this.grateKey) {
       this.grateKey = grateKey;
       if (this.grate) this.scene.remove(this.grate);
       this.grate = null;
-      const { pit } = world.level;
-      if (world.lockAt(pit.x, pit.y)) {
+      const { pit, down } = world.level;
+      const grate = (size: number, x: number, z: number) => {
         const g = new THREE.Group();
-        for (let i = 0; i < 5; i++) {
+        const bars = size * 5;
+        for (let i = 0; i < bars; i++) {
           for (const along of [true, false]) {
-            const bar = new THREE.Mesh(new THREE.BoxGeometry(along ? 1.04 : 0.05, 0.05, along ? 0.05 : 1.04), this.mats.metal);
-            bar.position.set(along ? 0 : -0.4 + i * 0.2, 0.03, along ? -0.4 + i * 0.2 : 0);
+            const bar = new THREE.Mesh(new THREE.BoxGeometry(along ? size + 0.04 : 0.05, 0.05, along ? 0.05 : size + 0.04), this.mats.metal);
+            const at = -size / 2 + 0.1 + i * 0.2;
+            bar.position.set(along ? 0 : at, 0.03, along ? at : 0);
             bar.castShadow = true;
             g.add(bar);
           }
         }
-        g.position.set(pit.x + 0.5, 0, pit.y + 0.5);
-        this.grate = outlined(g, this.mats);
+        g.position.set(x, 0, z);
+        return g;
+      };
+      const all = new THREE.Group();
+      if (world.lockAt(pit.x, pit.y)) all.add(grate(1, pit.x + 0.5, pit.y + 0.5));
+      // Over the three by three tiles of the well, centred on its newel.
+      if (gateShut) all.add(grate(3, down.top.x + 2 * down.dir.x + 0.5, down.top.y + 2 * down.dir.y + 0.5));
+      if (all.children.length > 0) {
+        this.grate = outlined(all, this.mats);
         this.scene.add(this.grate);
       }
     }
