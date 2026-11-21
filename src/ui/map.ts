@@ -1,4 +1,4 @@
-import { isFloor } from '../core/dungeon';
+import { isFloor, isVoid } from '../core/dungeon';
 import type { World } from '../core/world';
 
 const PAPER = '#ece2cb';
@@ -78,6 +78,14 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
   for (let y = minY - 1; y <= maxY + 1; y++) {
     for (let x = minX - 1; x <= maxX + 1; x++) {
       if (isFloor(level, x, y)) continue;
+      // Open air over the level below: drawn as a drop, not a wall.
+      if (isVoid(level, x, y)) {
+        if (!seen(x, y)) continue;
+        const v = at(x, y);
+        ctx.fillStyle = 'rgba(33, 27, 23, 0.55)';
+        ctx.fillRect(v.x, v.y, size + 0.5, size + 0.5);
+        continue;
+      }
       const touches = [
         [1, 0],
         [-1, 0],
@@ -280,6 +288,16 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     ctx.font = `italic ${Math.max(10, Math.min(14, size * 0.7))}px Georgia, serif`;
     ctx.textAlign = 'center';
     ctx.fillText(death.name, p.x, p.y - r - 3);
+  }
+
+  // The flights of steps, down and up, as hatched strips once seen.
+  for (const [sw, way] of [[level.down, 'down'], [level.up, 'up']] as const) {
+    sw.steps.forEach((step, i) => {
+      if (!seen(step.x, step.y) && !(way === 'down' && fx.mapStairs)) return;
+      const p = at(step.x, step.y);
+      ctx.fillStyle = way === 'down' ? `rgba(33, 27, 23, ${0.35 + i * 0.2})` : `rgba(33, 27, 23, ${0.75 - i * 0.2})`;
+      ctx.fillRect(p.x + 1, p.y + 1, size - 2, size - 2);
+    });
   }
 
   // The stairs down, once found (Rune Readers know where they are from the start).

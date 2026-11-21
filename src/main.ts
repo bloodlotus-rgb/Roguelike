@@ -273,6 +273,8 @@ class Session implements SceneHost {
       else if (e.type === 'cantUse') {
         this.hud.toast(e.reason === 'danger' ? 'toast_danger' : e.reason === 'camp' ? 'toast_onlyCamp' : 'toast_empty');
       } else if (e.type === 'nightfall') this.hud.toastText(t('toast_nightfall'), true);
+      else if (e.type === 'levelChanged') this.levelChanged();
+      else if (e.type === 'toMansion') this.enterMansion();
       else if (e.type === 'dawn') this.hud.toast('toast_dawn');
       else if (e.type === 'cantBuild') this.hud.toast(`toast_cantBuild_${e.reason}` as StringKey);
       else if (e.type === 'campBuilt' && this.memberId !== null) {
@@ -507,17 +509,10 @@ class Session implements SceneHost {
   private act(): void {
     if (!this.playing || this.world.dead) return;
     const interaction = this.world.interaction;
-    if (interaction === 'stairs') this.descend();
-    else if (interaction === 'up') this.climb();
-    else if (interaction === 'ropeDown' || interaction === 'ropeUp') {
+    if (interaction === 'ropeDown' || interaction === 'ropeUp') {
       this.world.climbRope();
-      this.hud.setDepth(this.world.depth);
-      this.hud.setInteraction(null);
-      this.controls.reset();
-      this.classic?.restart();
-      this.persist();
-    }
-    else if (interaction === 'camp') {
+      this.levelChanged();
+    } else if (interaction === 'camp') {
       // The camp is a pause by the fire.
       this.paused = true;
       this.controls.reset();
@@ -526,15 +521,10 @@ class Session implements SceneHost {
     } else this.world.interact();
   }
 
-  /** Up the stairs: to the level above, or out to the mansion from depth 1. */
-  private climb(): void {
-    if (this.world.ascend() === 'mansion') {
-      this.enterMansion();
-      return;
-    }
+  /** After walking the stairs (or a rope) to another level. */
+  private levelChanged(): void {
     this.hud.setDepth(this.world.depth);
     this.hud.setInteraction(null);
-    this.controls.reset();
     this.classic?.restart();
     this.persist();
   }
@@ -560,16 +550,6 @@ class Session implements SceneHost {
     this.controls.reset();
     this.persist();
     this.showHint();
-  }
-
-  private descend(): void {
-    if (!this.world.atStairs || this.world.dead) return;
-    this.world.descend();
-    this.hud.setDepth(this.world.depth);
-    this.hud.setInteraction(null);
-    this.controls.reset();
-    this.classic?.restart();
-    this.persist();
   }
 
   private setPaused(paused: boolean): void {

@@ -9,6 +9,8 @@ export const CONFIG = {
     roomMinSize: 4,
     roomMaxSize: 10,
     extraConnections: 3,
+    /** Chance a level has a gallery (a double-height room over a hall below). */
+    galleryChance: 0.5,
   },
   items: {
     ration: { min: 2, max: 3 },

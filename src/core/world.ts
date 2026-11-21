@@ -1,7 +1,7 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { floorDistances, generateLevel, goldPile, isFloor, isPassable, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { floorDistances, generateLevel, goldPile, isFloor, isSeeThrough, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
 import { addItem, ITEMS, removeItem, starterKit, type Inventory, type ItemKind } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
@@ -121,6 +121,8 @@ export type WorldEvent =
   | { type: 'channel'; kind: ItemKind; seconds: number }
   | { type: 'interrupted' }
   | { type: 'nightfall' }
+  | { type: 'levelChanged'; depth: number; way: 'down' | 'up' }
+  | { type: 'toMansion' }
   | { type: 'dawn' }
   | { type: 'campBuilt'; camp: CampSite }
   | { type: 'cantBuild'; reason: 'danger' | 'corridor' | 'taken' }
@@ -172,8 +174,6 @@ type Command = { type: 'interact' } | { type: 'use'; uid: number; sign?: ChalkSi
 
 /** What the hero can do where they stand. */
 export type Interaction =
-  | 'stairs'
-  | 'up'
   | 'ropeDown'
   | 'ropeUp'
   | 'camp'
@@ -551,10 +551,20 @@ export class World {
     return this.invisibleTimer > 0;
   }
 
-  /** True when the player stands close enough to the stairs to go down. */
+  /** On the steps of the stairs down (walking on takes you to the level below). */
   get atStairs(): boolean {
-    const { stairs } = this.level;
-    return dist(this.player, { x: stairs.x + 0.5, y: stairs.y + 0.5 }) <= CONFIG.player.stairsDistance;
+    return onSteps(this.level.down, this.player);
+  }
+
+  /**
+   * Height of the ground at a point, relative to this level's floor: down the stairs it
+   * drops to the floor below, up the stairs from below it rises to the floor above.
+   */
+  heightAt(p: Point): number {
+    const { down, up } = this.level;
+    if (onSteps(down, p)) return -LEVEL_HEIGHT * Math.min(1, Math.max(0, (stairProgress(down, p) - 0.5) / 3));
+    if (onSteps(up, p)) return LEVEL_HEIGHT * (1 - Math.min(1, Math.max(0, (stairProgress(up, p) - 0.5) / 3)));
+    return 0;
   }
 
   /** The special can be used right now. */
@@ -581,27 +591,79 @@ export class World {
     return this.cls.passive.kind === 'ratEye' ? this.cls.passive.itemSight : 0;
   }
 
-  /** Goes one level down, keeping the survival meters and the special charge. */
+  /** Goes one level down by the stairs, keeping the survival meters and the special charge. */
   descend(): void {
-    this.leaveLevel();
-    this.enterLevel(this.level.depth + 1);
+    this.changeLevel('down', this.pointOn(this.level.down, 3.1));
   }
 
-  /** Whether the hero stands by the way up (where they came in). */
+  /** On the steps of the stairs up (walking up takes you to the level above, or out). */
   get atUpStairs(): boolean {
-    const { start } = this.level;
-    return dist(this.player, { x: start.x + 0.5, y: start.y + 0.5 }) <= CONFIG.player.stairsDistance;
+    return onSteps(this.level.up, this.player);
   }
 
   /**
-   * Climbs to the level above, arriving by its stairs down. From depth 1 the way up leads
-   * out to the mansion: the world stays at depth 1, and the session takes over.
+   * Climbs to the level above by the stairs. From depth 1 the stairs lead out to the
+   * mansion: the world stays at depth 1, and the session takes over.
    */
   ascend(): 'mansion' | 'climbed' {
     if (this.depth <= 1) return 'mansion';
-    this.leaveLevel();
-    this.enterLevel(this.level.depth - 1, 'below');
+    this.changeLevel('up', this.pointOn(this.level.up, 0.9));
     return 'climbed';
+  }
+
+  /** A point on a stairwell's centre line, `progress` tiles down from its top tile. */
+  private pointOn(sw: Stairwell, progress: number): Point {
+    return { x: sw.top.x + 0.5 + sw.dir.x * progress, y: sw.top.y + 0.5 + sw.dir.y * progress };
+  }
+
+  /** Horrors on your heels: they come down (or up) the stairs after you, a moment later. */
+  private followers: Array<{ enemy: Omit<Enemy, 'def' | 'roamField'>; timer: number }> = [];
+
+  /**
+   * Walks from one level to the next by the stairs: the hero keeps their place (the
+   * levels are stacked), and horrors hunting close behind follow.
+   */
+  private changeLevel(way: 'down' | 'up', at: Point): void {
+    const chasers = this.enemies.filter((e) => e.state !== 'dead' && e.alerted && dist(e.pos, this.player) < 9);
+    this.enemies = this.enemies.filter((e) => !chasers.includes(e));
+    this.leaveLevel();
+    this.enterLevel(this.depth + (way === 'down' ? 1 : -1), 'stairs', at);
+    this.followers = chasers.map(({ def: _def, roamField: _field, ...enemy }, i) => ({ enemy: { ...enemy, pos: { ...enemy.pos } }, timer: 1.5 + i * 0.8 }));
+    this.followWay = way;
+  }
+
+  private followWay: 'down' | 'up' = 'down';
+
+  /** Followers step off the stairs one by one. */
+  private updateFollowers(dt: number): void {
+    if (this.followers.length === 0) return;
+    for (const f of this.followers) f.timer -= dt;
+    const ready = this.followers.filter((f) => f.timer <= 0);
+    this.followers = this.followers.filter((f) => f.timer > 0);
+    for (const f of ready) {
+      // Down the stairs they arrive by the steps from above; up, by the steps going down.
+      const pos = this.followWay === 'down' ? this.pointOn(this.level.up, 2.2) : this.pointOn(this.level.down, 1.5);
+      this.enemies.push({ ...f.enemy, pos, def: ENEMIES[f.enemy.kind], roamField: null, alerted: true, state: 'chase', forgetTimer: 0 });
+    }
+  }
+
+  /**
+   * Walking on the stairs: near the foot of the last step down, or the top of the first step
+   * up (the end walls stop you just short of them), the level changes.
+   */
+  private checkStairs(events: WorldEvent[]): void {
+    const { down, up } = this.level;
+    if (onSteps(down, this.player) && stairProgress(down, this.player) > 3.0) {
+      this.changeLevel('down', { ...this.player });
+      events.push({ type: 'levelChanged', depth: this.depth, way: 'down' });
+    } else if (onSteps(up, this.player) && stairProgress(up, this.player) < 1.0) {
+      if (this.depth <= 1) {
+        events.push({ type: 'toMansion' });
+        return;
+      }
+      this.changeLevel('up', { ...this.player });
+      events.push({ type: 'levelChanged', depth: this.depth, way: 'up' });
+    }
   }
 
   /** A night at the mansion: safe sleep, a full belly, full waterskins; below, the night passes. */
@@ -634,9 +696,10 @@ export class World {
     return 'bought';
   }
 
-  /** Back from the mansion: in by the way down, where every life begins. */
+  /** Back from the mansion: on the stairs down into depth 1, where every life begins. */
   returnFromSurface(): void {
-    this.player = { x: this.level.start.x + 0.5, y: this.level.start.y + 0.5 };
+    this.player = this.pointOn(this.level.up, 1.6);
+    this.facing = { ...this.level.up.dir };
     this.lastViewTile = -1;
   }
 
@@ -674,12 +737,19 @@ export class World {
     });
   }
 
-  private enterLevel(depth: number, from: 'above' | 'below' | 'ropeDown' | 'ropeUp' = 'above'): void {
+  private enterLevel(depth: number, from: 'above' | 'stairs' | 'ropeDown' | 'ropeUp' = 'above', at?: Point): void {
     this.level = generateLevel(this.seed, depth, this.life);
-    // By rope you arrive at the landing below, or beside the pit above.
-    const arrival =
-      from === 'below' ? this.level.stairs : from === 'ropeDown' ? this.level.landing : from === 'ropeUp' ? this.besidePit() : this.level.start;
-    this.player = { x: arrival.x + 0.5, y: arrival.y + 0.5 };
+    // By stairs you keep your place (the levels are stacked); by rope you arrive at the
+    // landing below, or beside the pit above; a life begins on the stairs from the mansion.
+    if (from === 'stairs' && at) this.player = { ...at };
+    else if (from === 'above') {
+      this.player = this.pointOn(this.level.up, 1.6);
+      this.facing = { ...this.level.up.dir };
+    } else {
+      const arrival = from === 'ropeDown' ? this.level.landing : this.besidePit();
+      this.player = { x: arrival.x + 0.5, y: arrival.y + 0.5 };
+    }
+    this.followers = [];
     // The dynasty's map: whatever any ancestor saw here is already known.
     this.explored = unpackTiles(this.exploredByDepth[depth], this.level.width * this.level.height);
     this.visibleNow.clear();
@@ -727,6 +797,9 @@ export class World {
     this.movePlayer(dt, input);
     const walked = dist(from, this.player);
     if (walked > 0) this.spend(this.cls.costs.walk, walked);
+    this.checkStairs(events);
+    if (events.some((e) => e.type === 'toMansion')) return events;
+    this.updateFollowers(dt);
     this.updateChannel(dt, input, events);
     this.updateAction(dt, events);
 
@@ -1596,7 +1669,11 @@ export class World {
     const taken = this.camps.some((c) => c.depth === this.depth && this.roomAt(c.x, c.y) === room);
     const { stairs, start } = this.level;
     const onSomething =
-      (x === stairs.x && y === stairs.y) || (Math.abs(x - start.x) <= 1 && Math.abs(y - start.y) <= 1) || this.level.features.some((f) => f.x === x && f.y === y);
+      (x === stairs.x && y === stairs.y) ||
+      (Math.abs(x - start.x) <= 1 && Math.abs(y - start.y) <= 1) ||
+      onSteps(this.level.down, this.player) ||
+      onSteps(this.level.up, this.player) ||
+      this.level.features.some((f) => f.x === x && f.y === y);
     if (taken || onSomething) return void events.push({ type: 'cantBuild', reason: 'taken' });
     removeItem(this.inventory, uid);
     const camp: CampSite = {
@@ -1813,8 +1890,6 @@ export class World {
 
   /** What the action button does here. */
   get interaction(): Interaction {
-    if (this.atStairs) return 'stairs';
-    if (this.atUpStairs) return 'up';
     if (this.ropeHere('down')) return 'ropeDown';
     if (this.ropeHere('up')) return 'ropeUp';
     if (this.campInReach) return 'camp';
@@ -2214,7 +2289,7 @@ export class World {
     this.projectiles = this.projectiles.filter((p) => {
       p.ttl -= dt;
       p.pos = { x: p.pos.x + p.vel.x * dt, y: p.pos.y + p.vel.y * dt };
-      if (p.ttl <= 0 || !isPassable(this.level, Math.floor(p.pos.x), Math.floor(p.pos.y))) return false;
+      if (p.ttl <= 0 || !isSeeThrough(this.level, Math.floor(p.pos.x), Math.floor(p.pos.y))) return false;
       if (dist(p.pos, this.player) > COMBAT.projectile.radius + CONFIG.player.radius) return true;
       if (this.invulnerableTimer > 0) return true;
       // Steady Hand: spit cannot reach you as a blow begins.

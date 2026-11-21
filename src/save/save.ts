@@ -5,7 +5,12 @@ import type { WorldSnapshot } from '../core/world';
  * What is kept between sessions: the dynasty, and the life being played if there is one.
  * There is a single save and it is overwritten continuously: nothing can be undone.
  */
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
+/**
+ * Saves older than this cannot be brought forward: version 5 stacked the levels in one
+ * space, so every level changed shape. Older dynasties are set aside and a new one begins.
+ */
+const OLDEST_READABLE = 5;
 
 export interface CurrentLife {
   memberId: number;
@@ -67,7 +72,7 @@ export function migrate(raw: unknown): SaveData | null {
   if (!isObject(raw) || typeof raw.version !== 'number') return null;
   let data = raw;
   let version = raw.version;
-  if (version > SAVE_VERSION) return null;
+  if (version > SAVE_VERSION || version < OLDEST_READABLE) return null;
   while (version < SAVE_VERSION) {
     const step = MIGRATIONS[version];
     if (!step) return null;

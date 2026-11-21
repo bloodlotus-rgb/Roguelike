@@ -189,22 +189,3 @@ export function lootModel(kind: LootKind, m: ModelMaterials): Parts {
   }
   return g;
 }
-
-/** Stairs down: steps descending into a dark shaft cut in the floor (facing +z). */
-export function stairsDownModel(m: ModelMaterials): Parts {
-  const g = new THREE.Group();
-  // The shaft: dark below the floor, the steps going down toward the far end.
-  part(g, box(0.96, 0.02, 0.96), m.ink, 0, -0.62, 0);
-  for (let i = 0; i < 5; i++) part(g, box(0.86, 0.06, 0.2), m.stone, 0, -0.04 - i * 0.12, 0.38 - i * 0.19);
-  for (const x of [-0.47, 0.47]) part(g, box(0.04, 0.6, 0.96), m.ink, x, -0.3, 0);
-  part(g, box(0.96, 0.6, 0.04), m.ink, 0, -0.3, -0.47);
-  return g;
-}
-
-/** Stairs up: a short flight of steps rising toward the way out. */
-export function stairsUpModel(m: ModelMaterials): Parts {
-  const g = new THREE.Group();
-  for (let i = 0; i < 5; i++) part(g, box(0.7, 0.12 * (i + 1), 0.16), m.stone, 0, 0.06 * (i + 1), 0.32 - i * 0.16);
-  part(g, box(0.06, 0.7, 0.85), m.wood, -0.38, 0.35, 0);
-  return g;
-}

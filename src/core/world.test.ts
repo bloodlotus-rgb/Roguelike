@@ -11,8 +11,30 @@ const input = (partial: Partial<ControlInput> = {}): ControlInput => ({ ...NO_IN
 const move = (x: number, y: number) => input({ move: { x, y } });
 
 /** A world with no horrors except the ones a test places next to the player. */
+/** A free spot in the arrival room, away from the stairs: where a camp can go. */
+function campSpot(world: World): { x: number; y: number } {
+  const room = world.level.rooms[0];
+  const { start } = world.level;
+  for (let y = room.y; y < room.y + room.h; y++) {
+    for (let x = room.x; x < room.x + room.w; x++) {
+      if (!isFloor(world.level, x, y) || (Math.abs(x - start.x) <= 2 && Math.abs(y - start.y) <= 2)) continue;
+      const p = { x: x + 0.5, y: y + 0.5 };
+      if (world.level.up.steps.some((s) => s.x === x && s.y === y)) continue;
+      return p;
+    }
+  }
+  return world.player;
+}
+
+/** Steps a hero off the stairs from above into the arrival room. */
+function intoRoom(world: World): World {
+  const { up } = world.level;
+  world.player = { x: up.bottom.x + 0.5 + up.dir.x * 2, y: up.bottom.y + 0.5 + up.dir.y * 2 };
+  return world;
+}
+
 function arena(classId: ClassId = 'headsman'): World {
-  const world = new World('estirpe', classId);
+  const world = intoRoom(new World('estirpe', classId));
   world.enemies = [];
   world.update(0.016, NO_INPUT);
   return world;
@@ -735,7 +757,7 @@ describe('camps and nights', () => {
   /** A world with a camp pitched in the first room, the hero at it. */
   function camped(): World {
     const world = arena();
-    world.player = { x: world.player.x + 2, y: world.player.y };
+    world.player = campSpot(world);
     const kit = world.inventory.items.find((i) => i.kind === 'campKit')!;
     world.useItem(kit.uid);
     const events = run(world, 0.05);
@@ -747,7 +769,7 @@ describe('camps and nights', () => {
     const camps: import('./dynasty').CampSite[] = [];
     const world = new World('estirpe', 'headsman', 0, 1, { camps, builder: 3, generation: 2 });
     world.enemies = [];
-    world.player = { x: world.player.x + 2, y: world.player.y };
+    world.player = campSpot(world);
     const kit = world.inventory.items.find((i) => i.kind === 'campKit')!;
     world.useItem(kit.uid);
     run(world, 0.05);
@@ -803,7 +825,7 @@ describe('camps and nights', () => {
     for (let life = 0; life < 30 && !attacked; life++) {
       const world = new World('estirpe-' + life, 'plunderer', life, 1);
       world.enemies = [];
-      world.player = { x: world.player.x + 2, y: world.player.y };
+      world.player = campSpot(world);
       const kit = world.inventory.items.find((i) => i.kind === 'campKit')!;
       world.useItem(kit.uid);
       run(world, 0.05);
@@ -856,7 +878,7 @@ describe('climbing and the mansion', () => {
     expect(world.atStairs).toBe(true);
     // And the way up from depth 1 is the mansion.
     world.returnFromSurface();
-    expect(world.interaction).toBe('up');
+    expect(world.atUpStairs).toBe(true);
     expect(world.ascend()).toBe('mansion');
   });
 
@@ -908,7 +930,7 @@ describe('works', () => {
     expect(works[0].condition).toBeLessThan(100);
     world.returnFromSurface();
     world.player = { x: works[0].x + 0.5, y: works[0].y + 0.5 };
-    expect(world.interaction === 'torch' || world.interaction === 'up').toBe(true);
+    expect(world.interaction).toBe('torch');
   });
 
   it('chalk leaves a sign facing where you look, and runs out', () => {
@@ -1006,6 +1028,45 @@ describe('pits and ropes', () => {
     const world = arena();
     const { pit } = world.level;
     expect(world.level.closed?.has(pit.y * world.level.width + pit.x)).toBe(true);
+  });
+});
+
+describe('stairs you walk', () => {
+  it('walking down the steps takes you to the level below, in the same place; up brings you back', () => {
+    const world = arena();
+    const { down } = world.level;
+    world.player = { x: down.top.x + 0.5, y: down.top.y + 0.5 };
+    const dirMove = move(down.dir.x, down.dir.y);
+    let events: WorldEvent[] = [];
+    for (let i = 0; i < 200 && world.depth === 1; i++) events.push(...world.update(0.02, dirMove));
+    expect(world.depth).toBe(2);
+    expect(events.some((e) => e.type === 'levelChanged')).toBe(true);
+    expect(world.heightAt(world.player)).toBeGreaterThan(0);
+    // Back up the same steps.
+    const back = move(-down.dir.x, -down.dir.y);
+    for (let i = 0; i < 200 && world.depth === 2; i++) world.update(0.02, back);
+    expect(world.depth).toBe(1);
+    expect(world.heightAt(world.player)).toBeLessThan(0);
+  });
+
+  it('a hunting horror close behind follows you down the stairs', () => {
+    const world = arena();
+    const { down } = world.level;
+    world.player = { x: down.top.x + 0.5, y: down.top.y + 0.5 };
+    const hunter = place(world, 'crawler', -down.dir.x * 2 || 0.5, -down.dir.y * 2 || 0.5);
+    hunter.alerted = true;
+    world.descend();
+    expect(world.depth).toBe(2);
+    run(world, 3);
+    expect(world.enemies.some((e) => e.kind === 'crawler' && e.alerted && e.id === hunter.id)).toBe(true);
+  });
+
+  it('from depth 1 the stairs up lead out to the mansion', () => {
+    const world = new World('estirpe', 'headsman');
+    world.enemies = [];
+    const { up } = world.level;
+    const events = run(world, 2, move(-up.dir.x, -up.dir.y));
+    expect(events).toContainEqual({ type: 'toMansion' });
   });
 });
 
