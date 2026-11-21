@@ -138,6 +138,7 @@ export class CampUi {
         const acts = actionsFor(item, world);
         if (acts.length === 0) return '';
         const extra: string[] = [];
+        if ((item.count ?? 1) > 1) extra.push(`×${item.count}`);
         if (item.kind === 'waterskin') extra.push(t('sips', { n: item.charges ?? 0 }) + (item.turbid ? ` · ${t('turbid')}` : ''));
         if (item.kind === 'mushroom' && item.poison && world.knowsMushrooms) extra.push(t('poisonous'));
         return `<li class="camp-item">

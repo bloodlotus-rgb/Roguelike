@@ -651,7 +651,7 @@ describe('fixes from play', () => {
 describe('body and backpack', () => {
   it('starts each life with a starter kit and no gold', () => {
     const world = arena();
-    expect(world.inventory.items.map((i) => i.kind).sort()).toEqual(['campKit', 'firewood', 'marchRation', 'oil', 'ration', 'ration', 'waterskin']);
+    expect(world.inventory.items.map((i) => `${i.kind}×${i.count ?? 1}`).sort()).toEqual(['campKit×1', 'firewood×1', 'marchRation×1', 'oil×1', 'ration×2', 'waterskin×1']);
     expect(world.gold).toBe(0);
   });
 
@@ -694,7 +694,10 @@ describe('body and backpack', () => {
     world.update(0.02, NO_INPUT);
     expect(world.gold).toBe(12);
     // Fill the pack, then a ration has nowhere to go.
-    while (world.inventory.items.length < 20 && addItem(world.inventory, 'oil')) {}
+    while (addItem(world.inventory, 'planks')) {}
+    while (addItem(world.inventory, 'chalk')) {}
+    // Fill the piles of rations too.
+    while (world.inventory.items.some((i) => i.kind === 'ration' && (i.count ?? 1) < 4)) addItem(world.inventory, 'ration');
     world.level.items.push({ id: 7002, kind: 'ration', ...at });
     const events = run(world, 0.1);
     expect(events.filter((e) => e.type === 'noRoom').length).toBe(1);

@@ -2,7 +2,7 @@ import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, qui
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
 import { flood, floorDistances, generateLevel, goldPile, groundHeight, isChasm, isFloor, isSeeThrough, isShallow, waterAt, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
-import { addItem, ITEMS, removeItem, starterKit, type Inventory, type ItemKind } from './inventory';
+import { addItem, enlarged, ITEMS, removeItem, removeStack, starterKit, type Inventory, type ItemKind } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
 import { blocked, hasLineOfSight, moveWithCollision, visibleTiles } from './geometry';
@@ -400,7 +400,7 @@ export class World {
     this.traits = [...(options.traits ?? [])];
     this.fx = combineEffects(this.traits);
     this.exploredByDepth = options.explored ?? {};
-    this.inventory = options.inventory ? JSON.parse(JSON.stringify(options.inventory)) : starterKit();
+    this.inventory = options.inventory ? enlarged(JSON.parse(JSON.stringify(options.inventory))) : starterKit();
     this.camps = options.camps ?? [];
     this.works = options.works ?? [];
     this.floods = options.floods ?? {};
@@ -698,9 +698,9 @@ export class World {
     return events;
   }
 
-  /** Leaves an item behind for good (at the mansion there is no floor to drop it on). */
+  /** Leaves an item (a whole pile) behind for good (at the mansion there is no floor to drop it on). */
   discardItem(uid: number): void {
-    removeItem(this.inventory, uid);
+    removeStack(this.inventory, uid);
   }
 
   /** Buys from the mansion's shop with the hero's gold. */
