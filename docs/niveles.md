@@ -1,6 +1,6 @@
 # Una mazmorra tridimensional y viva (propuesta v1)
 
-> Estado: **propuesta para conversar**. Lo marcado **[Propuesta]** es mío; las **Preguntas** del final definen el alcance.
+> Estado: **aprobado**. Se implementa en cuatro etapas (N1 a N4), todas antes de los jefes.
 
 ## La idea
 
@@ -77,11 +77,19 @@ Para romper la monotonía de la generación (lo charlamos hace tiempo): **piezas
 - **N3 · Agua**: agua poca y profunda, nadar, ríos, cascadas entre niveles, inundaciones que avanzan y se pueden desviar.
 - **N4 · Vida y lugares**: corrientes de aire, sonidos de abajo, fauna menor, hongos, corrupción que avanza, lugares únicos armados a mano.
 
-## Preguntas
+## Decisiones
 
-1. **Partidas guardadas**: cambiar la generación cambia la forma de todos los niveles. Lo explorado, los campamentos y las obras de tu partida actual quedarían en lugares que ya no existen. ¿Arrancamos de cero (abandonar la estirpe), o lo cuento en el juego como **"un temblor reacomodó la mazmorra"** (se conservan la familia y la crónica, pero se pierden el mapa, los campamentos y las obras)?
-2. **Orden**: ¿esto va antes o después de los jefes (Etapa B)? Mi recomendación: **antes**, al menos N1 y N2, porque los jefes viven en esos niveles y conviene que la forma de la mazmorra esté resuelta.
-3. **Agua profunda**: ¿nadar es posible (con su costo y la lámpara apagada) o el agua profunda es un obstáculo que solo se rodea o se cruza con puente?
-4. **Caídas**: ¿caer por un pozo o saltar a un nivel inferior sin soga es posible (con daño, quizás mortal en caídas largas)?
-5. **Horrores entre niveles**: ¿te siguen por las escaleras y pueden subir desde abajo?
-6. **Corrupción que avanza**: ¿te interesa ya, o queda para cuando lleguen los jefes?
+1. **De cero**: las partidas guardadas anteriores no se migran; se arranca una estirpe nueva.
+2. **Orden**: N1, N2, N3 y N4, todas antes de los jefes.
+3. **Agua profunda**: se rodea. **[Supuesto]** Más adelante, nadar puede ser la pasiva de alguna clase.
+4. **Barrancos**: **[Supuesto]** saltar barrancos (abismos angostos) puede ser la pasiva de una clase; lo resolvemos en N2.
+5. **Horrores entre niveles**: te siguen por las escaleras, y suben o bajan si te ven, te oyen o ven tu luz.
+6. **Corrupción**: queda para los jefes.
+
+## Cómo se arma la escalera (N1)
+
+- Una escalera es un **tramo de tres escalones** con una casilla de entrada arriba y una de salida abajo, encerrado entre paredes: un pozo de escalera de 3 × 5 casillas.
+- En el **nivel de arriba** se entra por la casilla alta y se baja por los escalones; la casilla de abajo es pared.
+- En el **nivel de abajo** el mismo tramo sube desde la casilla baja, que da a la sala de llegada; la casilla alta es pared.
+- Bajar o subir es caminar: al pasar el último escalón cambiás de nivel sin cortes.
+- Desde la profundidad 1, la escalera de subida lleva a la mansión.
