@@ -619,9 +619,13 @@ class Session implements SceneHost {
   }
 }
 
+const params = new URL(window.location.href).searchParams;
+// `?jenga=view&zone=N`: a look at how a zone of the building is put together (development).
+const jengaView = params.get('jenga') === 'view';
+if (jengaView) void import('./ui/jengaView').then((m) => m.showJenga(params.get('seed') || 'estirpe', Number(params.get('zone') || 0)));
 document.body.classList.add('booting');
 const session = new Session();
-void session.boot();
+if (!jengaView) void session.boot();
 // `?debug=1` exposes the session for manual testing from the browser console.
 if (new URL(window.location.href).searchParams.has('debug')) {
   (window as unknown as { estirpe: Session }).estirpe = session;
