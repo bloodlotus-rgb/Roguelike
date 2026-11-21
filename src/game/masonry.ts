@@ -159,3 +159,54 @@ export function layBricks(level: Level, height: number, skip: (x: number, y: num
   }
   return bricks;
 }
+
+/** How far flagstones stand above the floor's bed, and their thickness. */
+export const FLAG_TOP = 0.03;
+const FLAG_THICK = 0.1;
+const FLAG_GAP = 0.05;
+
+/**
+ * The paving of the floor: each tile laid with one, two, three or four flagstones of
+ * uneven size, a little sunk or tilted here and there, with joints between them. `paved`
+ * says which tiles are paved, `ground` their height. Pure layout, like the bricks.
+ */
+export function layFlagstones(level: Level, paved: (x: number, y: number) => boolean, ground: (x: number, y: number) => number): Brick[] {
+  const stones: Brick[] = [];
+  for (let ty = 0; ty < level.height; ty++) {
+    for (let tx = 0; tx < level.width; tx++) {
+      if (!paved(tx, ty)) continue;
+      const rng = Rng.derive(level.seed, 'flags', level.depth, tx, ty);
+      // Rectangles within the tile, in tile units: [x0, y0, x1, y1].
+      const cut = rng.range(0.35, 0.65);
+      const cut2 = rng.range(0.35, 0.65);
+      const pattern = rng.int(0, 5);
+      let parts: Array<[number, number, number, number]>;
+      if (pattern === 0) parts = [[0, 0, 1, 1]];
+      else if (pattern === 1) parts = [[0, 0, cut, 1], [cut, 0, 1, 1]];
+      else if (pattern === 2) parts = [[0, 0, 1, cut], [0, cut, 1, 1]];
+      else if (pattern === 3) parts = [[0, 0, cut, cut2], [cut, 0, 1, cut2], [0, cut2, cut, 1], [cut, cut2, 1, 1]];
+      else if (pattern === 4) parts = [[0, 0, cut, 1], [cut, 0, 1, cut2], [cut, cut2, 1, 1]];
+      else parts = [[0, 0, 1, cut], [0, cut, cut2, 1], [cut2, cut, 1, 1]];
+      const base = ground(tx, ty);
+      for (const [x0, y0, x1, y1] of parts) {
+        const sx = x1 - x0 - FLAG_GAP;
+        const sz = y1 - y0 - FLAG_GAP;
+        if (sx < 0.1 || sz < 0.1) continue;
+        // Most lie level; some have sunk a little, a few are tipped.
+        const sink = rng.chance(0.2) ? rng.range(0.008, 0.025) : rng.range(0, 0.006);
+        stones.push({
+          x: tx + (x0 + x1) / 2,
+          y: base + FLAG_TOP - sink - FLAG_THICK / 2,
+          z: ty + (y0 + y1) / 2,
+          sx,
+          sy: FLAG_THICK,
+          sz,
+          yaw: rng.range(-0.025, 0.025),
+          roll: rng.chance(0.15) ? rng.range(-0.03, 0.03) : 0,
+          tone: rng.range(0.82, 1.08),
+        });
+      }
+    }
+  }
+  return stones;
+}

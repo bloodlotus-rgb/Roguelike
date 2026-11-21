@@ -19,8 +19,9 @@ import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
 import { drawChalk, drawFloorDecor, drawProjectile } from './art';
 import { SPAN_X, SPAN_Y, stoneColor, wallColor, wallRelief } from './inkTextures3d';
 import { InkPost } from './inkPost';
-import { BRICK_DEPTH, layBricks } from './masonry';
+import { BRICK_DEPTH, FLAG_TOP, layBricks, layFlagstones, type Brick } from './masonry';
 import { styleIndex } from './style';
+import { BounceLight, type LightSource } from './bounce';
 import { onSettings, qualityProfile, settings } from '../settings/settings';
 import { bridgeModel, rubbleModel, campModel, featureModel, lootModel, outlined, torchModel, TORCH_FLAME, type ModelMaterials } from './models3d';
 import { easeInOut, easeOut, swingPhase } from './swing';
@@ -83,6 +84,10 @@ const cutaway = {
   style: { value: 0 },
   /** Seconds, for things that move by themselves (running water). */
   time: { value: 0 },
+  /** Light bounced off walls and floor (see bounce.ts): one value per tile, and how much of it. */
+  bounce: { value: new THREE.DataTexture(new Uint8Array(1), 1, 1, THREE.RedFormat, THREE.UnsignedByteType) as THREE.Texture },
+  bounceSize: { value: new THREE.Vector2(1, 1) },
+  bounceGain: { value: 0 },
 };
 /** Hatch lines per tile at the coarsest level of detail used up close. */
 const HATCH_BASE = 7;
@@ -125,6 +130,11 @@ interface InkOptions {
   /** Falling water: streaks of foam pour down the surface. */
   fall?: boolean;
   /**
+   * Worn stone: corners and edges chipped by a fractal noise of the world (more so at the
+   * corners), and the faces pitted. The strength is how deep the wear bites (0 to ~0.25).
+   */
+  erode?: number;
+  /**
    * Multiplies the light this surface gets: for the level below, seen through a hole, so a
    * flame a storey up still shows it (only within the flame's reach).
    */
@@ -132,7 +142,7 @@ interface InkOptions {
 }
 
 function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = {}): THREE.MeshLambertMaterial {
-  const { cut = false, worldUv, grime = false, outline = false, solid = false, boost = 1, flow = false, fall = false } = options;
+  const { cut = false, worldUv, grime = false, outline = false, solid = false, boost = 1, flow = false, fall = false, erode = 0 } = options;
   const uvCode =
     worldUv === 'box'
       ? `bool inkAlongZ = abs(vInkNormal.x) > 0.5;
@@ -164,7 +174,29 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
     : '';
   // Each set of options compiles its own program: three.js would otherwise reuse the first
   // one built for materials that look alike to it (same type, same maps).
-  const cacheKey = `ink:${cut}:${worldUv ?? ''}:${grime}:${outline}:${solid}:${boost}:${flow}:${fall}`;
+  const cacheKey = `ink:${cut}:${worldUv ?? ''}:${grime}:${outline}:${solid}:${boost}:${flow}:${fall}:${erode}`;
+  // The wear is the same everywhere for a given stone: keyed to where it is in the world.
+  const erodeCode = erode
+    ? `{
+        vec4 inkW0 = vec4(transformed, 1.0);
+        #ifdef USE_INSTANCING
+          inkW0 = instanceMatrix * inkW0;
+        #endif
+        vec3 wp = (modelMatrix * inkW0).xyz;
+        float n = inkNoise(wp.xz * 5.3 + wp.y * 3.1) * 0.55 + inkNoise(wp.xz * 13.7 - wp.y * 7.3) * 0.3 + inkNoise(wp.zx * 31.0 + wp.y * 17.0) * 0.15;
+        ${
+          worldUv === 'column'
+            ? `float edgeness = 0.35 + smoothstep(0.38, 0.5, abs(transformed.y));
+        float bite = ${erode.toFixed(3)} * edgeness * smoothstep(0.35, 0.85, n);
+        transformed.xz *= 1.0 - bite;`
+            : `vec3 a = abs(transformed) * 2.0;
+        vec3 e = smoothstep(0.8, 1.0, a);
+        float edgeness = 0.2 + e.x * e.y + e.y * e.z + e.x * e.z + e.x * e.y * e.z;
+        float bite = ${erode.toFixed(3)} * edgeness * smoothstep(0.3, 0.85, n);
+        transformed *= 1.0 - bite;`
+        }
+      }`
+    : '';
   material.customProgramCacheKey = () => cacheKey;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uFade = cutaway.fade;
@@ -174,15 +206,20 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
     shader.uniforms.uReach = cutaway.reach;
     shader.uniforms.uStyle = cutaway.style;
     shader.uniforms.uTime = cutaway.time;
+    shader.uniforms.uBounce = cutaway.bounce;
+    shader.uniforms.uBounceSize = cutaway.bounceSize;
+    shader.uniforms.uBounceGain = cutaway.bounceGain;
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
         '#include <common>\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;' +
-          (flow ? '\nattribute vec2 flow;\nvarying vec2 vFlow;' : ''),
+          (flow ? '\nattribute vec2 flow;\nvarying vec2 vFlow;' : '') +
+          (erode ? INK_NOISE_BASIC : ''),
       )
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
+        ${erodeCode}
         vec4 inkWorld = vec4(transformed, 1.0);
         mat3 inkBasis = mat3(1.0);
         #ifdef USE_INSTANCING
@@ -200,14 +237,19 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
       .replace('#include <lights_fragment_begin>', LIGHTS_WITH_INK_SHADOW)
       .replace(
         '#include <common>',
-        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform float uReach;\nuniform float uStyle;\nuniform float uTime;\nuniform vec3 uPlayer;' + (flow ? '\nvarying vec2 vFlow;' : '') + '\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
+        '#include <common>\n' + INK_NOISE + '\nuniform float uFade;\nuniform float uNight;\nuniform float uLineSpacing;\nuniform float uReach;\nuniform float uStyle;\nuniform float uTime;\nuniform sampler2D uBounce;\nuniform vec2 uBounceSize;\nuniform float uBounceGain;\nuniform vec3 uPlayer;' + (flow ? '\nvarying vec2 vFlow;' : '') + '\nvarying vec3 vInkPos;\nvarying vec3 vInkNormal;\nvarying vec3 vInkLocal;\nvarying vec3 vInkLocalNormal;',
       )
       .replace(
         '#include <map_fragment>',
-        grime
-          ? `#include <map_fragment>
-        diffuseColor.rgb *= 1.0 - 0.45 * smoothstep(0.7, 0.0, vInkPos.y);`
-          : '#include <map_fragment>',
+        `#include <map_fragment>
+        ${grime ? 'diffuseColor.rgb *= 1.0 - 0.45 * smoothstep(0.7, 0.0, vInkPos.y);' : ''}
+        ${
+          erode
+            ? `// Pits and pores in the worn stone: dark spots the hatching picks up.
+        float inkPit = inkNoise(vInkPos.xz * 11.0 + vInkPos.y * 9.0) * 0.6 + inkNoise(vInkPos.zy * 23.0 + vInkPos.x * 5.0) * 0.4;
+        diffuseColor.rgb *= 1.0 - 0.5 * smoothstep(0.6, 0.82, inkPit);`
+            : ''
+        }`,
       )
       .replace(
         '#include <clipping_planes_fragment>',
@@ -235,8 +277,24 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           // The last stretch of the reach fades out gently, as hatching closing into ink.
           float edgeFade = 1.0 - smoothstep(uReach * 0.6, uReach, distance(vInkPos.xz, uPlayer.xz));
           lit *= edgeFade * edgeFade * (3.0 - 2.0 * edgeFade);
+          // Light thrown back by walls and floor: past the reach, around corners, into shadow.
+          float inkBounce = 0.0;
+          float inkDirect = lit;
+          ${
+            boost === 1
+              ? `{
+            vec3 bn = normalize(vInkNormal);
+            inkBounce = texture2D(uBounce, (vInkPos.xz + bn.xz * 0.45) / uBounceSize).r * uBounceGain;
+            // It only lifts what is darker than itself: a faint, hatched light, never a lamp.
+            lit = max(lit, inkBounce);
+          }`
+              : ''
+          }
           // The flame's tint without its strength: the paper keeps one tone, ink does the rest.
-          vec3 tint = lightRgb / max(max(lightRgb.r, max(lightRgb.g, lightRgb.b)), 1e-4);
+          float inkLightMax = max(lightRgb.r, max(lightRgb.g, lightRgb.b));
+          vec3 tint = lightRgb / max(inkLightMax, 1e-4);
+          // Where only bounced light arrives, it keeps the flame's warmth.
+          if (inkLightMax < 1e-3 && inkBounce > 0.004) tint = vec3(1.0, 0.86, 0.68);
           vec3 paper = diffuseColor.rgb * tint;
           vec3 n = normalize(vInkNormal);
           vec2 hp = abs(n.y) > 0.5 ? vInkPos.xz : vec2(abs(n.x) > 0.5 ? vInkPos.z : vInkPos.x, vInkPos.y);
@@ -251,7 +309,7 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
           float tone = clamp(1.0 - lit * 1.5 + wobble * 0.08, 0.0, 1.0);
           // Cast shadows inside the light are solid ink with a short hatched rim: the
           // light fading with distance is drawn with lines, what blocks it with a brush.
-          float shadowed = 1.0 - smoothstep(0.25, 0.75, inkShadow + wobble * 0.25);
+          float shadowed = (1.0 - smoothstep(0.25, 0.75, inkShadow + wobble * 0.25)) * (1.0 - smoothstep(0.04, 0.22, inkBounce));
           float rim = smoothstep(0.08, 0.35, shadowed) * (1.0 - smoothstep(0.65, 0.92, shadowed));
           tone = max(tone, mix(tone, 0.6, rim));
           // Five steps of tone: four passes of fine lines, each at its own angle, coming in one
@@ -332,7 +390,8 @@ function inkMaterial(material: THREE.MeshLambertMaterial, options: InkOptions = 
             float grain = inkNoise(vInkPos.xz * 4.3 + vInkPos.y * 3.7) * 0.55 + inkNoise(vInkPos.xz * 19.0 + vInkPos.y * 13.0) * 0.45;
             // The drawn texture only hints at joints and stains; the stone's own grain does the rest.
             vec3 stone = mix(vec3(0.075, 0.07, 0.068), vec3(0.5, 0.47, 0.43), mix(0.62, g, 0.45)) * (0.6 + 0.8 * grain);
-            float shade = lit * mix(1.0, 0.12, smoothstep(0.25, 0.8, shadowed));
+            // Gothic is darker: the bounced light is only a faint fill.
+            float shade = max(inkDirect, inkBounce * 0.5) * mix(1.0, 0.12, smoothstep(0.25, 0.8, shadowed));
             vec3 flame = mix(vec3(1.0), tint, 0.55);
             outgoingLight = stone * flame * pow(clamp(shade, 0.0, 1.6), 1.35) * 1.45;
             outgoingLight *= 1.0 - edge * 0.5 * step(0.02, lit);
@@ -436,6 +495,36 @@ function hullMaterial(): THREE.MeshLambertMaterial {
 }
 
 /** Smooth value noise, for edges of ink that wander like a brush. */
+/** Stones of a wall or floor as one instanced mesh: each its own size, turn and tone. */
+function stoneMesh(geometry: THREE.BufferGeometry, material: THREE.Material, list: Brick[]): THREE.InstancedMesh {
+  const mesh = new THREE.InstancedMesh(geometry, material, list.length);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const e = new THREE.Euler();
+  const p = new THREE.Vector3();
+  const sc = new THREE.Vector3();
+  const color = new THREE.Color();
+  list.forEach((b, i) => {
+    e.set(0, b.yaw, b.roll);
+    m.compose(p.set(b.x, b.y, b.z), q.setFromEuler(e), sc.set(b.sx, b.sy, b.sz));
+    mesh.setMatrixAt(i, m);
+    mesh.setColorAt(i, color.setScalar(b.tone));
+  });
+  mesh.receiveShadow = true;
+  mesh.computeBoundingSphere();
+  return mesh;
+}
+
+/** Value noise alone (the vertex shader needs it for worn stone). */
+const INK_NOISE_BASIC = `
+float inkHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float inkNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(inkHash(i), inkHash(i + vec2(1.0, 0.0)), u.x), mix(inkHash(i + vec2(0.0, 1.0)), inkHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}`;
+
 const INK_NOISE = `
 float inkHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float inkNoise(vec2 p) {
@@ -871,6 +960,7 @@ export class ThreeView {
     this.syncDoors(world);
     this.syncProjectiles(world);
     cutaway.time.value = (now / 1000) % 1000;
+    this.updateBounce(world, now);
     if (this.post && qualityProfile().post) this.post.render(this.renderer, this.scene, this.camera, now);
     else this.renderer.render(this.scene, this.camera);
     this.drawHandsOverlay(world, now, moved > 0.002);
@@ -878,8 +968,42 @@ export class ThreeView {
 
   // Level -----------------------------------------------------------------------
 
+  private bounce: BounceLight | null = null;
+  private bounceAt = 0;
+  private bounceTile = -1;
+  /** Burning torches near the hero, from the last sync of the works. */
+  private torchSpots: Array<{ x: number; y: number; d: number; h: number }> = [];
+
+  /**
+   * Works out the bounced light a few times a second, and at once when the hero steps onto
+   * another tile. Off at the lowest quality.
+   */
+  private updateBounce(world: World, now: number): void {
+    const quality = settings().quality;
+    cutaway.bounceGain.value = quality === 'low' || !this.bounce ? 0 : quality === 'ultra' ? 0.42 : 0.36;
+    if (!this.bounce || cutaway.bounceGain.value === 0) return;
+    const tile = Math.floor(world.player.y) * world.level.width + Math.floor(world.player.x);
+    if (tile === this.bounceTile && now - this.bounceAt < 200) return;
+    this.bounceTile = tile;
+    this.bounceAt = now;
+    const sources: LightSource[] = [];
+    const radius = world.lightRadius;
+    if (radius > 0.3) {
+      sources.push({ x: world.player.x, y: world.player.y, radius: radius + 0.5, power: 1, dir: this.lightAngle, cone: COMBAT.visionCone * 1.15, sees: world.visibleNow });
+    }
+    for (const t of this.torchSpots) if (t.d < 18) sources.push({ x: t.x, y: t.y, radius: CONFIG.works.torchRadius + 1, power: 0.8 });
+    const camp = world.campInReach;
+    if (camp && world.campfire) sources.push({ x: camp.x + 0.5, y: camp.y + 0.5, radius: 4, power: 0.9 });
+    this.bounce.update(world.player, sources);
+  }
+
   private buildLevel(level: Level): void {
     this.level = level;
+    this.bounce?.dispose();
+    this.bounce = new BounceLight(level);
+    this.bounceTile = -1;
+    cutaway.bounce.value = this.bounce.texture;
+    cutaway.bounceSize.value.set(level.width, level.height);
     this.scene.remove(this.levelGroup);
     this.levelGroup.traverse((o) => {
       if (o instanceof THREE.Mesh) o.geometry.dispose();
@@ -920,6 +1044,7 @@ export class ThreeView {
     // The floor is a slab: it shades the level below, which shows only through the holes.
     floorMesh.castShadow = true;
     this.levelGroup.add(floorMesh);
+    this.layPaving(level);
     // Real stairs: down into a shaft cut in the floor, and up toward the level above.
     this.levelGroup.add(this.stairsMesh(level.down, 'down'));
     this.levelGroup.add(this.stairsMesh(level.up, 'up'));
@@ -966,19 +1091,21 @@ export class ThreeView {
           cut: true,
           grime: true,
         });
-    this.brickMaterial = inkMaterial(new THREE.MeshLambertMaterial({ map: this.stone }), {
+    // Flat shading, so the chipped corners catch the light facet by facet.
+    this.brickMaterial = inkMaterial(new THREE.MeshLambertMaterial({ map: this.stone, flatShading: true }), {
       cut: true,
       worldUv: 'box',
       grime: true,
       outline: true,
+      erode: 0.16,
     });
     const top = inkMaterial(
       new THREE.MeshLambertMaterial({ map: this.textures.ceiling, side: THREE.DoubleSide, shadowSide: THREE.BackSide }),
       { cut: true, worldUv: 'box' },
     );
     const shaft = inkMaterial(
-      new THREE.MeshLambertMaterial({ map: this.textures.wall, bumpMap: this.wallRelief, bumpScale: 3 }),
-      { cut: true, worldUv: 'column', grime: true },
+      new THREE.MeshLambertMaterial({ map: this.textures.wall, bumpMap: this.wallRelief, bumpScale: 3, flatShading: true }),
+      { cut: true, worldUv: 'column', grime: true, erode: 0.12 },
     );
     // One mesh with only the faces that look onto a floor, so no inner faces exist.
     this.walls = new THREE.Mesh(wallGeometry(level, this.wallTiles, FLAT_WALLS ? 0 : BRICK_DEPTH), [side, top]);
@@ -986,7 +1113,7 @@ export class ThreeView {
     this.walls.receiveShadow = true;
     this.levelGroup.add(this.walls);
     // Lone wall tiles inside halls are round columns.
-    this.columns = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.33, 0.36, 1, 18), [shaft, top, top], this.columnTiles.length);
+    this.columns = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.33, 0.36, 1, 18, 6), [shaft, top, top], this.columnTiles.length);
     this.columns.castShadow = true;
     this.columns.receiveShadow = true;
     this.levelGroup.add(this.columns);
@@ -1003,7 +1130,7 @@ export class ThreeView {
       inkMaterial(new THREE.MeshLambertMaterial({ map: decorTexture, transparent: true, depthWrite: false })),
     );
     decor.rotation.x = -Math.PI / 2;
-    decor.position.set(level.width / 2, 0.004, level.height / 2);
+    decor.position.set(level.width / 2, 0.004 + (this.paved ? FLAG_TOP : 0), level.height / 2);
     decor.receiveShadow = true;
     this.levelGroup.add(decor);
     this.buildDebris(level);
@@ -1149,28 +1276,53 @@ export class ThreeView {
       if (!list) chunks.set(key, (list = []));
       list.push(b);
     }
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const e = new THREE.Euler();
-    const p = new THREE.Vector3();
-    const sc = new THREE.Vector3();
-    const color = new THREE.Color();
+    // More vertices to wear away the better the quality.
+    const seg = { low: 1, medium: 1, high: 2, ultra: 3 }[settings().quality];
+    const geometry = new THREE.BoxGeometry(1, 1, 1, seg + 1, seg, seg);
     for (const list of chunks.values()) {
-      const mesh = new THREE.InstancedMesh(geometry, this.brickMaterial, list.length);
-      list.forEach((b, i) => {
-        e.set(0, b.yaw, b.roll);
-        m.compose(p.set(b.x, b.y, b.z), q.setFromEuler(e), sc.set(b.sx, b.sy, b.sz));
-        mesh.setMatrixAt(i, m);
-        mesh.setColorAt(i, color.setScalar(b.tone));
-      });
+      const mesh = stoneMesh(geometry, this.brickMaterial, list);
       mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.computeBoundingSphere();
       this.bricks.push(mesh);
       this.levelGroup.add(mesh);
     }
   }
+
+  /**
+   * The paving: flagstones with real volume on every flat tile of floor (not on ramps,
+   * steps, holes or bridges), worn like the bricks. Left out at the lowest quality.
+   */
+  private layPaving(level: Level): void {
+    const quality = settings().quality;
+    this.paved = quality !== 'low';
+    if (!this.paved) return;
+    const steps = new Set([...level.up.steps, ...level.down.steps].map((p) => p.y * level.width + p.x));
+    const paved = (x: number, y: number) =>
+      isFloor(level, x, y) &&
+      groundAt(level, x, y) !== Ground.Ramp &&
+      !steps.has(y * level.width + x) &&
+      !(x === level.pit.x && y === level.pit.y) &&
+      !isBridge(level, x, y);
+    const stones = layFlagstones(level, paved, (x, y) => groundHeight(level, { x: x + 0.5, y: y + 0.5 }));
+    const material = inkMaterial(new THREE.MeshLambertMaterial({ map: this.stone, flatShading: true, color: 0xd8cdb4 }), {
+      worldUv: 'box',
+      outline: true,
+      erode: 0.14,
+    });
+    const seg = { low: 1, medium: 1, high: 2, ultra: 3 }[quality];
+    const geometry = new THREE.BoxGeometry(1, 1, 1, seg, 1, seg);
+    const CHUNK = 12;
+    const chunks = new Map<number, Brick[]>();
+    for (const b of stones) {
+      const key = Math.floor(b.z / CHUNK) * 1000 + Math.floor(b.x / CHUNK);
+      let list = chunks.get(key);
+      if (!list) chunks.set(key, (list = []));
+      list.push(b);
+    }
+    for (const list of chunks.values()) this.levelGroup.add(stoneMesh(geometry, material, list));
+  }
+
+  /** Whether this level is paved with flagstones (things on the floor sit on top of them). */
+  private paved = false;
 
   /**
    * A flight of six steps (two per tile). Going down, the steps sink into a shaft walled
@@ -1427,7 +1579,7 @@ export class ThreeView {
       geo.setIndex(indices);
       return { geo, n };
     };
-    const shallow = sheet((x, y) => isShallow(level, x, y) && !isBridge(level, x, y), 0.035);
+    const shallow = sheet((x, y) => isShallow(level, x, y) && !isBridge(level, x, y), 0.035 + (this.paved ? FLAG_TOP : 0));
     if (shallow.n > 0) {
       const mesh = new THREE.Mesh(
         shallow.geo,
@@ -2005,7 +2157,7 @@ export class ThreeView {
             inkMaterial(new THREE.MeshLambertMaterial({ map: this.chalkTextures.get(w.sign ?? 'arrow')!, transparent: true, depthWrite: false })),
           );
           decal.rotation.set(-Math.PI / 2, 0, -(w.angle ?? 0));
-          decal.position.set(w.x + 0.5, 0.006 + this.groundAt(w.x, w.y), w.y + 0.5);
+          decal.position.set(w.x + 0.5, 0.006 + (this.paved ? FLAG_TOP : 0) + this.groundAt(w.x, w.y), w.y + 0.5);
           decal.receiveShadow = true;
           entry = { obj: decal, key };
         }
@@ -2027,6 +2179,7 @@ export class ThreeView {
     }
     // The nearest burning torches get a real light.
     lit.sort((a, b) => a.d - b.d);
+    this.torchSpots = lit;
     this.torchLights.forEach((light, i) => {
       const torch = lit[i];
       if (!torch || torch.d > 14) {
