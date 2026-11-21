@@ -139,6 +139,10 @@ export class Effects {
           // In first person the camera is inside the hero: the red vignette says it instead.
           if (mode === 'top') this.splatter(world.player, 7, BLOOD, 0.9);
           break;
+        case 'fell':
+          this.heroFlashUntil = now + 140;
+          this.shake = Math.max(this.shake, 0.14);
+          break;
         case 'parry':
           if (mode === 'top') this.spark(world.player);
           this.shake = Math.max(this.shake, 0.05);

@@ -101,3 +101,22 @@ casilla bajo un balcón: roca [-∞, 0] · aire [0, 2.6] · losa [2.6, 2.9] · a
   - los costados de las rampas tenían agujeros que dejaban ver el negro: ahora son de piedra;
   - el techo bajo de la escalera de subida abría una casilla de pared en el extremo de la escalera (V1).
 - **Pendiente para la V3**: héroe y horrores siguen moviéndose sobre la grilla de siempre; la V3 los pasa a los vóxeles.
+
+## V3 implementada
+
+- **Cuerpos con altura** (`src/core/bodies.ts`): el héroe y los horrores tienen una altura (`z`) y están parados sobre la superficie de los vóxeles que tienen debajo.
+- **Caminar**:
+  - se suben solos los escalones de hasta 0,45;
+  - lo sólido entre las rodillas y la cabeza es pared: una terraza vista desde abajo, un techo bajo (el cuerpo mide 1,6);
+  - no se camina más allá de un borde de más de 1 m: una terraza (0,7) se baja de un salto; un abismo, un pozo o un hueco no.
+- **Escaleras y rampas son vóxeles**: tramos de piedra con el tope inclinado que se caminan como una pendiente. Ya no hay una regla aparte para la altura en la escalera ni para las terrazas.
+- **Caídas**:
+  - donde no hay nada cerca debajo, el cuerpo cae con gravedad (y mientras cae sigue para donde iba);
+  - hasta 2,5 m no hace daño; más alto, 12 de vida por metro;
+  - caer fuera del nivel (un abismo) es la muerte. Hay una causa de muerte nueva, "en una caída", para la crónica.
+  - Con un golpe, sonido y temblor de cámara al aterrizar.
+- **Lo que no cambia** (pero ahora sale de los vóxeles): los horrores tampoco cruzan bordes altos; el salto del Saqueador sobre un abismo angosto sigue igual (en el aire no necesita piso).
+- **Seguridad**: un cuerpo puesto a mano adentro del piso (al volver de la mansión, al sacarlo de una inundación) sube a su superficie.
+- **Dibujo**: el héroe, su llama, la cámara y los horrores se ubican a la altura de su cuerpo.
+- **Pendiente para la V4**: los horrores todavía buscan camino en 2D. Donde el mapa los deja pasar pero un borde no (el costado de una escalera), se frenan contra el borde.
+- **Todavía no se puede caer de verdad a otro nivel**: los huecos al nivel de abajo (pozo, galería) siguen siendo bordes que no se cruzan. Eso llega con el edificio (Ed1), cuando el mundo sea un solo espacio.

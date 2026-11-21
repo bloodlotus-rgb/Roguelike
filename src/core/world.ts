@@ -1,11 +1,13 @@
 import { ATTRIBUTE_IDS, critChance, damageMultiplier, maxHealth, parryBonus, quicknessFactor, stealthSight, type Attributes } from './attributes';
 import { CLASSES, type ClassDef, type ClassId, type ComboStep, type SpecialDef } from './classes';
 import { CONFIG } from './config';
-import { doorwayPartner, flood, floorDistances, isPassable, generateLevel, goldPile, groundHeight, isChasm, isFloor, isSeeThrough, isShallow, waterAt, LEVEL_HEIGHT, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
+import { doorwayPartner, flood, floorDistances, isPassable, generateLevel, goldPile, isChasm, isFloor, isSeeThrough, isShallow, waterAt, onSteps, stairProgress, type Stairwell, type Feature, type Level, type LevelItem, type LootKind, type Point } from './dungeon';
 import { addItem, enlarged, ITEMS, removeItem, removeStack, starterKit, type Inventory, type ItemKind, type Packed } from './inventory';
 import type { Cost } from './classes';
 import { ENEMIES, spawnEnemies, type EnemyDef, type EnemyKind } from './enemies';
-import { blocked, hasLineOfSight, moveWithCollision, visibleTiles } from './geometry';
+import { hasLineOfSight, visibleTiles } from './geometry';
+import { bodyBlocked, fallHarm, moveBody, settle, type Fall } from './bodies';
+import { levelVoxels, type Voxels } from './voxels';
 import { Rng } from './rng';
 import { covers, packTiles, unpackTiles, type CampSite, type ChalkSign, type DeathCause, type Work } from './dynasty';
 import { freshSurvival, isDead, lightRadius, tickSurvival, type Survival } from './survival';
@@ -99,6 +101,9 @@ export interface Enemy {
   /** Seconds of bleeding left (Bloody trait). */
   bleed: number;
   bleedTick: number;
+  /** Height it stands at (the voxels' ground under it), and its fall if it is falling. */
+  z: number;
+  fall?: Fall;
 }
 
 export interface Projectile {
@@ -131,6 +136,8 @@ export type WorldEvent =
   | { type: 'campBuilt'; camp: CampSite }
   | { type: 'cantBuild'; reason: 'danger' | 'corridor' | 'taken' }
   | { type: 'leap' }
+  /** The hero landed from a fall that hurt. */
+  | { type: 'fell'; height: number }
   | { type: 'digging'; seconds: number }
   | { type: 'forcing'; seconds: number }
   | { type: 'picking'; seconds: number }
@@ -263,6 +270,8 @@ export interface WorldSnapshot {
   depth: number;
   traits: string[];
   player: Point;
+  /** Height the hero stands at (older saves: the ground there). */
+  playerZ?: number;
   facing: Point;
   survival: Survival;
   taken: number[];
@@ -433,6 +442,7 @@ export class World {
   static restore(snapshot: WorldSnapshot, options: Omit<LifeOptions, 'traits' | 'inventory'> = {}): World {
     const world = new World(snapshot.seed, snapshot.classId, snapshot.life, snapshot.depth, { ...options, traits: snapshot.traits });
     world.player = { ...snapshot.player };
+    world.body = { z: snapshot.playerZ ?? world.groundZ(world.player), vz: 0, from: null };
     world.facing = { ...snapshot.facing };
     world.survival = { ...snapshot.survival };
     world.applyLevel({ taken: snapshot.taken, searched: snapshot.searched ?? [], drops: snapshot.drops, enemies: snapshot.enemies, doors: snapshot.doors });
@@ -485,6 +495,7 @@ export class World {
       depth: this.depth,
       traits: [...this.traits],
       player: { ...this.player },
+      playerZ: this.body.z,
       facing: { ...this.facing },
       survival: { ...this.survival },
       taken: here.taken,
@@ -592,16 +603,84 @@ export class World {
   }
 
   /**
-   * Height of the ground at a point, relative to this level's floor: down the stairs it
-   * drops to the floor below, up the stairs from below it rises to the floor above.
+   * Height of the ground at a point, relative to this level's floor (the highest surface
+   * there): down the stairs it drops toward the floor below, up them it rises.
    */
   heightAt(p: Point): number {
-    const { down, up } = this.level;
-    const ground = groundHeight(this.level, p);
-    if (ground > 0) return ground;
-    if (onSteps(down, p)) return -LEVEL_HEIGHT * Math.min(1, Math.max(0, (stairProgress(down, p) - 0.5) / 3));
-    if (onSteps(up, p)) return LEVEL_HEIGHT * (1 - Math.min(1, Math.max(0, (stairProgress(up, p) - 0.5) / 3)));
-    return 0;
+    return this.groundZ(p);
+  }
+
+  /** The hero's body: the height it stands at, and its fall if it is falling. */
+  private body: Fall = { z: 0, vz: 0, from: null };
+
+  get playerZ(): number {
+    return this.body.z;
+  }
+
+  private vox: Voxels | null = null;
+  private voxKey = '';
+
+  /**
+   * The level in voxels, as bodies walk it. Rebuilt when its shape changes: another level,
+   * a flood risen or fallen, a bridge laid.
+   */
+  get voxels(): Voxels {
+    const key = `${this.depth}:${this.floods[this.depth] ?? 0}:${this.level.bridges.length}`;
+    if (!this.vox || key !== this.voxKey || this.voxLevel !== this.level) {
+      this.vox = levelVoxels(this.level);
+      this.voxKey = key;
+      this.voxLevel = this.level;
+    }
+    return this.vox;
+  }
+
+  private voxLevel: Level | null = null;
+
+  /** The level's shape was changed from outside (tests, tools): build its voxels again. */
+  reshaped(): void {
+    this.vox = null;
+    this.body = { z: this.groundZ(this.player), vz: 0, from: null };
+  }
+
+  /** The highest ground at a point (what one stands on, arriving there). */
+  private groundZ(p: Point): number {
+    return this.voxels.groundAt(p.x, p.y, 30) ?? 0;
+  }
+
+  /** Moves a body, at its height, against the voxels; airborne in a leap. */
+  private moveAt(pos: Point, z: number, dx: number, dy: number, radius: number, airborne = false): Point {
+    return moveBody(this.voxels, this.level, pos, z, dx, dy, radius, airborne);
+  }
+
+  private moveEnemy(enemy: Enemy, dx: number, dy: number): void {
+    // Falling, a body keeps going the way it went (nothing underfoot to stop at the edge of).
+    enemy.pos = this.moveAt(enemy.pos, enemy.z, dx, dy, enemy.def.radius, !!enemy.fall);
+  }
+
+  /**
+   * Bodies follow the ground: up steps and down slopes, or falling where there is nothing
+   * close underfoot. A high fall hurts; one out of the level kills.
+   */
+  private settleBodies(dt: number, events: WorldEvent[]): void {
+    if (!(this.action.type === 'dodge' && this.action.leap)) {
+      const fell = settle(this.voxels, this.player, this.body, dt);
+      const harm = fell === Infinity ? this.survival.health : fallHarm(fell);
+      if (harm > 0) {
+        this.survival = { ...this.survival, health: Math.max(0, this.survival.health - harm) };
+        this.lastCause = { type: 'fall' };
+        events.push({ type: 'fell', height: fell });
+      }
+    }
+    for (const enemy of this.enemies) {
+      if (enemy.state === 'dead') continue;
+      const fall = enemy.fall ?? { z: enemy.z, vz: 0, from: null };
+      fall.z = enemy.z;
+      const fell = settle(this.voxels, enemy.pos, fall, dt);
+      enemy.z = fall.z;
+      enemy.fall = fall.from === null ? undefined : fall;
+      const harm = fell === Infinity ? enemy.health : fallHarm(fell);
+      if (harm > 0) this.applyDamage(enemy, harm, false, false, events);
+    }
   }
 
   /** The special can be used right now. */
@@ -680,7 +759,7 @@ export class World {
     for (const f of ready) {
       // Down the stairs they arrive by the steps from above; up, by the steps going down.
       const pos = this.followWay === 'down' ? this.pointOn(this.level.up, 2.2) : this.pointOn(this.level.down, 1.5);
-      this.enemies.push({ ...f.enemy, pos, def: ENEMIES[f.enemy.kind], roamField: null, alerted: true, state: 'chase', forgetTimer: 0 });
+      this.enemies.push({ ...f.enemy, pos, z: this.groundZ(pos), fall: undefined, def: ENEMIES[f.enemy.kind], roamField: null, alerted: true, state: 'chase', forgetTimer: 0 });
     }
   }
 
@@ -736,6 +815,7 @@ export class World {
   /** Back from the mansion: on the stairs down into depth 1, where every life begins. */
   returnFromSurface(): void {
     this.player = this.pointOn(this.level.up, 1.6);
+    this.body = { z: this.groundZ(this.player), vz: 0, from: null };
     this.facing = { ...this.level.up.dir };
     this.lastViewTile = -1;
   }
@@ -770,7 +850,7 @@ export class World {
     this.enemies = mem.enemies.map(({ roaming, ...e }) => {
       const room = this.level.rooms[e.roamRoom];
       const roamField = roaming && room ? floorDistances(this.level, { x: room.x + Math.floor(room.w / 2), y: room.y + Math.floor(room.h / 2) }) : null;
-      return { ...e, pos: { ...e.pos }, def: ENEMIES[e.kind], roamField };
+      return { ...e, pos: { ...e.pos }, z: e.z ?? this.groundZ(e.pos), fall: undefined, def: ENEMIES[e.kind], roamField };
     });
   }
 
@@ -789,6 +869,8 @@ export class World {
       const arrival = from === 'ropeDown' ? this.level.landing : this.besidePit();
       this.player = { x: arrival.x + 0.5, y: arrival.y + 0.5 };
     }
+    // Standing on whatever is highest there (the stairs bring you onto their steps).
+    this.body = { z: this.groundZ(this.player), vz: 0, from: null };
     this.followers = [];
     // The dynasty's map: whatever any ancestor saw here is already known.
     this.explored = unpackTiles(this.exploredByDepth[depth], this.level.width * this.level.height);
@@ -895,6 +977,7 @@ export class World {
     if (revealed.length > 0) events.push({ type: 'revealed', tiles: revealed });
 
     this.updateEnemies(dt, events);
+    this.settleBodies(dt, events);
     this.bashShut(dt, events);
     this.updateProjectiles(dt, events);
 
@@ -997,14 +1080,7 @@ export class World {
   private movePlayer(dt: number, input: ControlInput): void {
     if (this.action.type === 'dodge') {
       const speed = (COMBAT.dodge.distance * (1 + (this.fx.dodgeDistance ?? 0)) * this.thirstPenalty) / COMBAT.dodge.duration;
-      this.player = moveWithCollision(
-        this.level,
-        this.player,
-        this.action.dir.x * speed * dt,
-        this.action.dir.y * speed * dt,
-        CONFIG.player.radius,
-        !!this.action.leap,
-      );
+      this.player = this.moveAt(this.player, this.body.z, this.action.dir.x * speed * dt, this.action.dir.y * speed * dt, CONFIG.player.radius, !!this.action.leap || this.body.from !== null);
       return;
     }
     const l = length(input.move);
@@ -1016,7 +1092,7 @@ export class World {
     if (this.action.type === 'special') speed *= 0.2;
     if (isShallow(this.level, Math.floor(this.player.x), Math.floor(this.player.y))) speed *= CONFIG.water.wade;
     const scale = (Math.min(1, l) / l) * speed * dt;
-    this.player = moveWithCollision(this.level, this.player, input.move.x * scale, input.move.y * scale, CONFIG.player.radius);
+    this.player = this.moveAt(this.player, this.body.z, input.move.x * scale, input.move.y * scale, CONFIG.player.radius, this.body.from !== null);
   }
 
   private updateAction(dt: number, events: WorldEvent[]): void {
@@ -1027,7 +1103,7 @@ export class World {
     switch (action.type) {
       case 'dodge':
         // A leap goes on until both feet are on the far side (or, failing that, back).
-        if (action.leap && blocked(this.level, this.player, CONFIG.player.radius)) {
+        if (action.leap && bodyBlocked(this.voxels, this.level, this.player, this.body.z, CONFIG.player.radius)) {
           if (action.leap.spare > 0) {
             action.leap.spare -= 0.03;
             action.timer = 0.03;
@@ -1168,7 +1244,7 @@ export class World {
     this.applyDamage(enemy, Math.round(damage), crit, false, events);
     if (knockback > 0 && enemy.health > 0) {
       const dir = normalize({ x: enemy.pos.x - this.player.x, y: enemy.pos.y - this.player.y });
-      enemy.pos = moveWithCollision(this.level, enemy.pos, dir.x * knockback, dir.y * knockback, enemy.def.radius);
+      this.moveEnemy(enemy, dir.x * knockback, dir.y * knockback);
     }
   }
 
@@ -1231,7 +1307,7 @@ export class World {
       }
       case 'shadowStep': {
         const dir = this.facing;
-        this.player = moveWithCollision(this.level, this.player, dir.x * special.distance, dir.y * special.distance, CONFIG.player.radius);
+        this.player = this.moveAt(this.player, this.body.z, dir.x * special.distance, dir.y * special.distance, CONFIG.player.radius);
         this.invisibleTimer = special.invisibleFor;
         this.invulnerableTimer = 0.3;
         this.action = { type: 'none' };
@@ -2240,6 +2316,7 @@ export class World {
       waxTick: 0,
       bleed: 0,
       bleedTick: 0,
+      z: this.groundZ(pos),
     };
   }
 
@@ -2319,7 +2396,10 @@ export class World {
       if (depth === this.depth) {
         this.refreshShut();
         // Do not leave the hero standing in deep water.
-        if (!isFloor(level, Math.floor(this.player.x), Math.floor(this.player.y))) this.player = this.nearestFloor(this.player);
+        if (!isFloor(level, Math.floor(this.player.x), Math.floor(this.player.y))) {
+          this.player = this.nearestFloor(this.player);
+          this.body = { z: this.groundZ(this.player), vz: 0, from: null };
+        }
       }
       if (now < before) continue;
       const wet = (x: number, y: number) => waterAt(level, x, y) !== 0;
@@ -2912,7 +2992,7 @@ export class World {
     const wet = (p: Point) => isShallow(this.level, Math.floor(p.x), Math.floor(p.y));
     const inWater = wet(enemy.pos);
     if (inWater) distance *= CONFIG.water.wade;
-    const next = moveWithCollision(this.level, enemy.pos, dir.x * distance, dir.y * distance, enemy.def.radius);
+    const next = this.moveAt(enemy.pos, enemy.z, dir.x * distance, dir.y * distance, enemy.def.radius, !!enemy.fall);
     // Crawlers will not set foot in water: they wait at its edge.
     if (enemy.kind === 'crawler' && !inWater && wet(next)) return;
     enemy.pos = next;
@@ -2963,15 +3043,15 @@ export class World {
         const min = a.def.radius + b.def.radius;
         if (d >= min || d < 1e-6) continue;
         const push = (min - d) / 2;
-        a.pos = moveWithCollision(this.level, a.pos, (-dx / d) * push, (-dy / d) * push, a.def.radius);
-        b.pos = moveWithCollision(this.level, b.pos, (dx / d) * push, (dy / d) * push, b.def.radius);
+        this.moveEnemy(a, (-dx / d) * push, (-dy / d) * push);
+        this.moveEnemy(b, (dx / d) * push, (dy / d) * push);
       }
       const dx = a.pos.x - this.player.x;
       const dy = a.pos.y - this.player.y;
       const d = Math.hypot(dx, dy);
       const min = a.def.radius + CONFIG.player.radius;
       if (d < min && d > 1e-6) {
-        a.pos = moveWithCollision(this.level, a.pos, (dx / d) * (min - d), (dy / d) * (min - d), a.def.radius);
+        this.moveEnemy(a, (dx / d) * (min - d), (dy / d) * (min - d));
       }
     }
   }

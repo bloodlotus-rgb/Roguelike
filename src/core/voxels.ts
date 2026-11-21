@@ -116,6 +116,24 @@ export class Voxels {
     return best;
   }
 
+  /**
+   * The ground under a point (px, py in level units, not a tile): the highest surface
+   * at or a little above z, read on sloped tops (ramps, stairs) at that exact spot.
+   */
+  groundAt(px: number, py: number, z: number, step = 0.45): number | null {
+    const tx = Math.floor(px);
+    const ty = Math.floor(py);
+    const col = this.column(tx, ty).filter((s) => s.mat !== Material.Water);
+    let best: number | null = null;
+    col.forEach((s, i) => {
+      const above = col[i + 1]?.bottom ?? HIGH;
+      if (s.top <= DEEP || above - s.top < CLEARANCE) return;
+      const top = topAt(s, px - tx, py - ty);
+      if (top <= z + step && (best === null || top > best)) best = top;
+    });
+    return best;
+  }
+
   /** The underside of the first solid thing above z. */
   ceilingAbove(x: number, y: number, z: number): number {
     for (const s of this.column(x, y)) if (s.mat !== Material.Water && s.bottom >= z) return s.bottom;
@@ -169,15 +187,19 @@ export function levelVoxels(level: Level): Voxels {
       // Ground: terraces and ramps, or the steps of a stairwell.
       let ground = groundHeight(level, centre);
       let mat: Material = Material.Rock;
-      if (onSteps(level.down, centre)) {
-        ground = -LEVEL_HEIGHT * Math.min(1, Math.max(0, (stairProgress(level.down, centre) - 0.5) / 3));
-        mat = Material.Stone;
-      } else if (onSteps(level.up, centre)) {
-        ground = LEVEL_HEIGHT * (1 - Math.min(1, Math.max(0, (stairProgress(level.up, centre) - 0.5) / 3)));
+      // The stairs are a slope of worked stone, going down or up a storey over three tiles.
+      const flight = onSteps(level.down, centre) ? level.down : onSteps(level.up, centre) ? level.up : null;
+      const stairs = (fx: number, fy: number) => {
+        const t = Math.min(1, Math.max(0, (stairProgress(flight!, { x: x + fx, y: y + fy }) - 0.5) / 3));
+        return flight === level.down ? -LEVEL_HEIGHT * t : LEVEL_HEIGHT * (1 - t);
+      };
+      if (flight) {
+        ground = stairs(0.5, 0.5);
         mat = Material.Stone;
       }
       const column: Column = [{ bottom: DEEP, top: ground, mat }];
-      if (mat === Material.Rock && groundAt(level, x, y) === Ground.Ramp) {
+      if (flight) column[0].slope = [stairs(0, 0), stairs(1, 0), stairs(1, 1), stairs(0, 1)];
+      else if (groundAt(level, x, y) === Ground.Ramp) {
         const at = (fx: number, fy: number) => groundHeight(level, { x: x + Math.min(0.999, Math.max(0.001, fx)), y: y + Math.min(0.999, Math.max(0.001, fy)) });
         column[0].slope = [at(0, 0), at(1, 0), at(1, 1), at(0, 1)];
       }

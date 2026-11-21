@@ -30,6 +30,7 @@ function campSpot(world: World): { x: number; y: number } {
 function intoRoom(world: World): World {
   const { up } = world.level;
   world.player = { x: up.bottom.x + 0.5 + up.dir.x * 2, y: up.bottom.y + 0.5 + up.dir.y * 2 };
+  world.reshaped();
   return world;
 }
 
@@ -40,6 +41,7 @@ function arena(classId: ClassId = 'headsman'): World {
   const cx = Math.floor(world.player.x);
   const cy = Math.floor(world.player.y);
   for (let y = cy - 5; y <= cy + 5; y++) for (let x = cx - 5; x <= cx + 5; x++) world.level.tiles[y * world.level.width + x] = 1;
+  world.reshaped();
   world.update(0.016, NO_INPUT);
   return world;
 }
@@ -69,6 +71,7 @@ function place(world: World, kind: EnemyKind, dx: number, dy: number, state: Ene
     waxTick: 0,
     bleed: 0,
     bleedTick: 0,
+    z: world.playerZ,
   };
   world.enemies.push(enemy);
   return enemy;
@@ -961,6 +964,7 @@ describe('chasms', () => {
     const cx = Math.floor(world.player.x);
     const cy = Math.floor(world.player.y);
     for (let k = 1; k <= wide; k++) for (let y = cy - 5; y <= cy + 5; y++) world.level.tiles[y * world.level.width + cx + k] = 3;
+    world.reshaped();
     world.player = { x: cx + 0.6, y: cy + 0.5 };
     world.facing = { x: 1, y: 0 };
     return cx;
@@ -1016,6 +1020,7 @@ describe('water', () => {
     const cy = Math.floor(world.player.y);
     world.level.water = world.level.water ?? new Uint8Array(world.level.tiles.length);
     for (let y = cy - 5; y <= cy + 5; y++) for (let x = cx + 1; x <= cx + 3; x++) world.level.water[y * world.level.width + x] = 1;
+    world.reshaped();
     world.player = { x: cx + 0.5, y: cy + 0.5 };
     return cx;
   }

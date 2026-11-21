@@ -187,6 +187,11 @@ export class Sound {
         this.playTone({ freq: 180, freqEnd: 90, type: 'square', duration: 0.08, gain: 0.25 });
         this.playNoise({ filter: 'highpass', freq: 1800, freqEnd: 900, duration: 0.35, gain: 0.12 });
         break;
+      case 'fell':
+        // A heavy landing on stone.
+        this.playTone({ freq: 70, freqEnd: 35, type: 'sine', duration: 0.35, gain: 0.8 });
+        this.playNoise({ filter: 'lowpass', freq: 1200, freqEnd: 200, duration: 0.3, gain: 0.35 });
+        break;
       case 'leap':
         // A rush of air over the drop, then far below, nothing.
         this.playNoise({ filter: 'lowpass', freq: 900, freqEnd: 140, duration: 0.5, gain: 0.22 });
