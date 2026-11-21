@@ -93,3 +93,13 @@ Para romper la monotonía de la generación (lo charlamos hace tiempo): **piezas
 - En el **nivel de abajo** el mismo tramo sube desde la casilla baja, que da a la sala de llegada; la casilla alta es pared.
 - Bajar o subir es caminar: al pasar el último escalón cambiás de nivel sin cortes.
 - Desde la profundidad 1, la escalera de subida lleva a la mansión.
+
+## N1 implementada
+
+- **Pila**: cada nivel se genera debajo del anterior. La escalera de bajada de un nivel cae sobre la sala de llegada del de abajo, en el mismo lugar; el pozo cae sobre una sala de abajo (donde llega la soga).
+- **Escaleras físicas**: un pozo de escalera de 3 × 5 casillas con tres escalones. Se baja y se sube caminando, sin cortes; el héroe y los horrores van a la altura del escalón. Desde la profundidad 1, la escalera de subida lleva a la mansión.
+- **Te siguen**: los horrores que te cazan de cerca bajan o suben la escalera detrás tuyo un momento después.
+- **Galerías**: la mitad de los niveles tienen una sala de doble altura: pasillo con baranda junto a las paredes y vacío en el medio sobre un salón del nivel de abajo. Por el vacío se ve, pasa la luz y pasan los escupitajos, pero nadie camina.
+- **Ver abajo**: por la escalera, el pozo y las galerías se ve el nivel de abajo, iluminado por tu llama (que llega un piso más abajo, sin alcanzar más lejos en el plano).
+- Las partidas anteriores se descartan: se empieza una estirpe nueva (guardado versión 5).
+- **Pendiente para N4**: que los horrores de otro nivel te noten por los huecos (te ven, te oyen o ven tu luz) y vengan; tirar un frasco encendido por un pozo.
