@@ -49,4 +49,31 @@ describe('generateLevel', () => {
       expect(isFloor(level, level.width - 1, y)).toBe(false);
     }
   });
+
+  for (const seed of seeds) {
+    it(`stacks the levels: stairs and pits line up with the level below (${seed})`, () => {
+      for (let depth = 1; depth <= 6; depth++) {
+        const level = generateLevel(seed, depth);
+        const below = generateLevel(seed, depth + 1);
+        expect(below.up).toEqual(level.down);
+        expect(below.landing).toEqual(level.pit);
+        // The stairs down: entrance open above, steps open on both levels, the bottom open below.
+        expect(isFloor(level, level.down.top.x, level.down.top.y)).toBe(true);
+        expect(isFloor(level, level.down.bottom.x, level.down.bottom.y)).toBe(false);
+        for (const step of level.down.steps) {
+          expect(isFloor(level, step.x, step.y)).toBe(true);
+          expect(isFloor(below, step.x, step.y)).toBe(true);
+        }
+        expect(isFloor(below, level.down.top.x, level.down.top.y)).toBe(false);
+        expect(isFloor(below, level.down.bottom.x, level.down.bottom.y)).toBe(true);
+        // The rope from the pit comes down onto floor.
+        expect(isFloor(below, level.pit.x, level.pit.y)).toBe(true);
+        // From the arrival you can walk to the stairs down and the pit.
+        const dist = floorDistances(level, level.start);
+        expect(dist[level.down.top.y * level.width + level.down.top.x]).toBeGreaterThan(0);
+        expect(dist[level.pit.y * level.width + level.pit.x]).toBeGreaterThan(0);
+      }
+    });
+  }
 });
+

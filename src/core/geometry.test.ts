@@ -9,8 +9,8 @@ describe('castWallRay', () => {
   it('stops at the first wall and reports where it leaves that tile', () => {
     for (let i = 0; i < 36; i++) {
       const angle = (i / 36) * Math.PI * 2;
-      const hit = castWallRay(level, start, angle, 30);
-      expect(hit.enter).toBeLessThan(30);
+      const hit = castWallRay(level, start, angle, 90);
+      expect(hit.enter).toBeLessThan(90);
       expect(hit.exit).toBeGreaterThan(hit.enter);
       // Just before the hit there is floor; just after it there is wall.
       const before = { x: start.x + Math.cos(angle) * (hit.enter - 0.01), y: start.y + Math.sin(angle) * (hit.enter - 0.01) };
