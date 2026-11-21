@@ -1,10 +1,7 @@
 import type { ControlInput } from '../core/world';
+import { ACTIONS, keysFor, type Action } from '../settings/settings';
 
 type Vector = { x: number; y: number };
-
-const ATTACK_KEYS = ['Space', 'KeyJ'];
-const DODGE_KEYS = ['ShiftLeft', 'ShiftRight', 'KeyK'];
-const SPECIAL_KEYS = ['KeyQ', 'KeyL'];
 
 /**
  * Floating virtual joystick (touching anywhere outside the buttons places the stick
@@ -43,7 +40,8 @@ export class Controls {
     zone.addEventListener('pointerup', this.onUp);
     zone.addEventListener('pointercancel', this.onUp);
     window.addEventListener('keydown', (e) => {
-      if ([...ATTACK_KEYS, ...DODGE_KEYS, ...SPECIAL_KEYS].includes(e.code)) e.preventDefault();
+      // Bound keys belong to the game (no page scrolling on Space or the arrows).
+      if (ACTIONS.some((a) => keysFor(a).includes(e.code)) && !(e.target instanceof HTMLInputElement)) e.preventDefault();
       this.keys.add(e.code);
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -51,19 +49,21 @@ export class Controls {
   }
 
   get input(): ControlInput {
-    const k = this.keys;
     return {
       move: this.vector,
-      attack: this.attackTouch || ATTACK_KEYS.some((code) => k.has(code)),
-      dodge: this.dodgeTouch || DODGE_KEYS.some((code) => k.has(code)),
-      special: this.specialTouch || SPECIAL_KEYS.some((code) => k.has(code)),
+      attack: this.attackTouch || this.held('attack'),
+      dodge: this.dodgeTouch || this.held('dodge'),
+      special: this.specialTouch || this.held('special'),
     };
   }
 
+  private held(action: Action): boolean {
+    return keysFor(action).some((code) => this.keys.has(code));
+  }
+
   private get vector(): Vector {
-    const k = this.keys;
-    const kx = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
-    const ky = (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0) - (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0);
+    const kx = (this.held('right') ? 1 : 0) - (this.held('left') ? 1 : 0);
+    const ky = (this.held('down') ? 1 : 0) - (this.held('up') ? 1 : 0);
     if (kx !== 0 || ky !== 0) {
       const length = Math.hypot(kx, ky);
       return { x: kx / length, y: ky / length };
