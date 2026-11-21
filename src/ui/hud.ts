@@ -275,6 +275,7 @@ export class Hud {
       force: 'action_force',
       pick: 'action_pick',
       bash: 'action_bash',
+      outpost: 'action_outpost',
     };
     const key = this.interaction ? keys[this.interaction] : 'descend';
     this.descendButton.textContent = t(key);
@@ -426,7 +427,7 @@ export class Hud {
 
   /** The legend: every mark the map uses, drawn the same way, with its name. */
   private renderLegend(): void {
-    const marks: MapMark[] = ['hero', 'down', 'up', 'camp', 'fountain', 'shallow', 'deep', 'waterfall', 'locked', 'stuck', 'pit', 'chasm', 'bridge', 'rubble'];
+    const marks: MapMark[] = ['hero', 'down', 'up', 'camp', 'outpost', 'fountain', 'shallow', 'deep', 'waterfall', 'locked', 'stuck', 'pit', 'chasm', 'bridge', 'rubble'];
     const list = this.mapScreen.querySelector('.map-legend')!;
     list.innerHTML = '';
     const dpr = Math.min(window.devicePixelRatio || 1, 2);

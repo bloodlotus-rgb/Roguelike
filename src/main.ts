@@ -9,7 +9,7 @@ import type { SceneHost } from './game/DungeonScene';
 import type { ClassicEngine } from './game/classic';
 import type { FirstPersonView } from './game/firstPerson';
 import { ThreeView } from './game/threeView';
-import { t, type StringKey } from './i18n/i18n';
+import { getLang, t, type StringKey } from './i18n/i18n';
 import { Controls } from './ui/controls';
 import { Hud } from './ui/hud';
 import { CampUi } from './ui/camp';
@@ -19,6 +19,7 @@ import type { MapExtras } from './ui/map';
 import { traitName } from './ui/traitText';
 import './ui/styles.css';
 import { SettingsScreen } from './ui/settingsScreen';
+import { LOCATIONS } from './core/locations';
 import { actionFor, settings } from './settings/settings';
 
 /** A readable random seed, e.g. "ashen-crypt-417". Seeds are chosen outside game logic. */
@@ -295,6 +296,10 @@ class Session implements SceneHost {
       else if (e.type === 'picking') this.hud.toastText(t('toast_picking'), true);
       else if (e.type === 'unlocked') this.hud.toast('toast_unlocked');
       else if (e.type === 'campPacked') this.hud.toastText(t('toast_campPacked'), true);
+      else if (e.type === 'placeEntered') {
+        const def = LOCATIONS.find((d) => d.id === e.id);
+        if (def) this.hud.toastText(def.name[getLang()], true);
+      }
       else if (e.type === 'floodRose') this.hud.toastText(t('toast_floodRose', { depth: e.depth }), true);
       else if (e.type === 'cantUse') {
         if (e.reason === 'locked') this.hud.toastText(t('toast_locked'), true);
@@ -541,6 +546,16 @@ class Session implements SceneHost {
     if (interaction === 'ropeDown' || interaction === 'ropeUp') {
       this.world.climbRope();
       this.levelChanged();
+    } else if (interaction === 'outpost') {
+      // A camp of old: lit again, it is the family's, and the fire screen opens.
+      const events = this.world.relightOutpost();
+      this.announce(events);
+      if (this.world.campInReach) {
+        this.paused = true;
+        this.controls.reset();
+        this.hud.closeMap();
+        this.campUi.show(this.world);
+      }
     } else if (interaction === 'camp') {
       // The camp is a pause by the fire.
       this.paused = true;

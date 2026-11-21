@@ -1,6 +1,8 @@
 import { doorwayPartner, isBridge, isChasm, isDeep, isFloor, isShallow, isVoid } from '../core/dungeon';
 import { covers } from '../core/dynasty';
 import type { World } from '../core/world';
+import { LOCATIONS } from '../core/locations';
+import { getLang } from '../i18n/i18n';
 
 const PAPER = '#ece2cb';
 const PAPER_DARK = '#d9cba9';
@@ -22,7 +24,7 @@ export interface MapView {
 export const MAP_ZOOM = { min: 5, max: 48, start: 22 };
 
 /** Marks of the map, shared by the map and its legend. */
-export type MapMark = 'hero' | 'down' | 'up' | 'camp' | 'fountain' | 'pit' | 'rubble' | 'bridge' | 'chasm' | 'death' | 'shallow' | 'deep' | 'waterfall' | 'locked' | 'stuck';
+export type MapMark = 'hero' | 'down' | 'up' | 'camp' | 'fountain' | 'pit' | 'rubble' | 'bridge' | 'chasm' | 'death' | 'shallow' | 'deep' | 'waterfall' | 'locked' | 'stuck' | 'outpost';
 
 /** Draws one mark centred on (x, y), `r` pixels across from the centre. */
 export function drawMark(ctx: CanvasRenderingContext2D, mark: MapMark, x: number, y: number, r: number, angle = -Math.PI / 2): void {
@@ -69,8 +71,9 @@ export function drawMark(ctx: CanvasRenderingContext2D, mark: MapMark, x: number
       ctx.fill();
       break;
     }
+    case 'outpost':
     case 'camp':
-      ctx.fillStyle = '#d9822b';
+      ctx.fillStyle = mark === 'camp' ? '#d9822b' : PAPER_DARK;
       ctx.beginPath();
       ctx.moveTo(x, y - r);
       ctx.lineTo(x + r * 0.9, y + r * 0.7);
@@ -357,6 +360,27 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     const c = at(p.x + 0.5, p.y + 0.5);
     drawMark(ctx, 'waterfall', c.x, c.y, markR);
     landmarks.push({ mark: 'waterfall', x: p.x + 0.5, y: p.y + 0.5 });
+  }
+
+  // Locations drawn by hand: their name over them, once anything of them was seen; and
+  // camps of old not lit yet.
+  ctx.fillStyle = INK;
+  ctx.textAlign = 'center';
+  ctx.font = `italic ${Math.max(10, Math.min(15, size * 0.6))}px Georgia, serif`;
+  for (const p of level.places) {
+    let known = false;
+    for (let y = p.y; y < p.y + p.h && !known; y++) for (let x = p.x; x < p.x + p.w && !known; x++) known = seen(x, y);
+    if (!known || size < 8) continue;
+    const name = LOCATIONS.find((d) => d.id === p.id)?.name[getLang()];
+    if (!name) continue;
+    const c = at(p.x + p.w / 2, p.y - 0.3);
+    ctx.fillStyle = INK;
+    ctx.fillText(name, c.x, c.y);
+  }
+  for (const p of level.outposts) {
+    if (!seen(p.x, p.y) || world.camps.some((c) => c.depth === world.depth && c.x === p.x && c.y === p.y)) continue;
+    const c = at(p.x + 0.5, p.y + 0.5);
+    drawMark(ctx, 'outpost', c.x, c.y, markR);
   }
 
   // The family's camps on this level: known to all, seen or not.

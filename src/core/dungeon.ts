@@ -1,5 +1,6 @@
 import { CONFIG } from './config';
 import type { ItemKind, KeyKind } from './inventory';
+import { connectorsOf, LOCATIONS, type LocationDef } from './locations';
 import { Rng } from './rng';
 
 export const Tile = {
@@ -36,7 +37,7 @@ export interface Point {
   y: number;
 }
 
-export type RoomShape = 'rect' | 'cave' | 'hall';
+export type RoomShape = 'rect' | 'cave' | 'hall' | 'place';
 
 export interface Room {
   x: number;
@@ -44,6 +45,8 @@ export interface Room {
   w: number;
   h: number;
   shape: RoomShape;
+  /** For a location drawn by hand (shape 'place'): which (see locations.ts). */
+  place?: string;
 }
 
 export interface LevelItem {
@@ -167,6 +170,12 @@ export interface Level {
    * or are forced, slowly and loudly; `stuck` ones are forced. One entry per tile.
    */
   locks: Array<Point & { kind: 'locked' | 'stuck'; key?: KeyKind }>;
+  /** Locations drawn by hand set into this level (their rooms have shape 'place'). */
+  places: Array<{ id: string; x: number; y: number; w: number; h: number }>;
+  /** Camps of old, in some locations, that can be lit again without a kit. */
+  outposts: Point[];
+  /** Crates and remains that locations put in fixed spots (searched anew in every life). */
+  fixedLoot: Feature[];
   /** Where a key for this level's locked doors lies (one is always left in the level). */
   key?: Point & { kind: KeyKind };
   /** Tiles of chasm spanned by a bridge (floor now, drawn as planks). */
@@ -246,6 +255,12 @@ function overlaps(a: Room, b: Room, margin: number): boolean {
 }
 
 function carveRoom(tiles: Uint8Array, width: number, room: Room, rng: Rng): void {
+  if (room.shape === 'place') {
+    // A location is laid exactly as drawn: rock where its plan says so, floor elsewhere.
+    const plan = locationById(room.place!).plan;
+    for (let y = 0; y < room.h; y++) for (let x = 0; x < room.w; x++) tiles[(room.y + y) * width + room.x + x] = plan[y][x] === '#' ? Tile.Wall : Tile.Floor;
+    return;
+  }
   const cx = room.x + (room.w - 1) / 2;
   const cy = room.y + (room.h - 1) / 2;
   for (let y = room.y; y < room.y + room.h; y++) {
@@ -267,6 +282,8 @@ function carveRoom(tiles: Uint8Array, width: number, room: Room, rng: Rng): void
   }
 }
 
+const locationById = (id: string): LocationDef => LOCATIONS.find((d) => d.id === id)!;
+
 /** Turns into rock any floor that cannot be reached from `origin`. */
 function removeUnreachable(level: Level, origin: Point): void {
   const dist = floorDistances(level, origin);
@@ -279,13 +296,14 @@ function removeUnreachable(level: Level, origin: Point): void {
  * A natural tunnel: it heads for its goal but drifts from side to side, and here and
  * there opens a little wider, as water or old digging would leave it.
  */
-function carveTunnel(tiles: Uint8Array, width: number, height: number, from: Point, to: Point, rng: Rng): void {
+function carveTunnel(tiles: Uint8Array, width: number, height: number, from: Point, to: Point, rng: Rng, protect?: Uint8Array): void {
   let { x, y } = from;
   // Two tiles wide like the corridors, now and then wider.
   const carve = (cx: number, cy: number) => {
     for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
       const tx = cx + dx;
       const ty = cy + dy;
+      if (protect?.[ty * width + tx]) continue;
       if (tx >= 2 && ty >= 2 && tx < width - 2 && ty < height - 2) tiles[ty * width + tx] = Tile.Floor;
     }
   };
@@ -307,13 +325,14 @@ function carveTunnel(tiles: Uint8Array, width: number, height: number, from: Poi
   carve(x, y);
 }
 
-function carveCorridor(tiles: Uint8Array, width: number, from: Point, to: Point, horizontalFirst: boolean): void {
-  // Passages two tiles wide: a square brush of two by two.
+function carveCorridor(tiles: Uint8Array, width: number, from: Point, to: Point, horizontalFirst: boolean, protect?: Uint8Array): void {
+  // Passages two tiles wide: a square brush of two by two. Never through a location.
   const height = tiles.length / width;
   const carve = (x: number, y: number) => {
     for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
       const cx = x + dx;
       const cy = y + dy;
+      if (protect?.[cy * width + cx]) continue;
       if (cx >= 1 && cy >= 1 && cx < width - 1 && cy < height - 1) tiles[cy * width + cx] = Tile.Floor;
     }
   };
@@ -537,7 +556,8 @@ function runRiver(level: Level, rng: Rng, keepClear: Point[], next: { down: Stai
   const forbidden = (p: Point) =>
     p.x < 1 || p.y < 1 || p.x >= width - 1 || p.y >= height - 1 ||
     keepClear.some((q) => Math.abs(q.x - p.x) <= 3 && Math.abs(q.y - p.y) <= 3) ||
-    (level.gallery !== null && p.x >= level.gallery.x - 1 && p.x <= level.gallery.x + level.gallery.w && p.y >= level.gallery.y - 1 && p.y <= level.gallery.y + level.gallery.h);
+    (level.gallery !== null && p.x >= level.gallery.x - 1 && p.x <= level.gallery.x + level.gallery.w && p.y >= level.gallery.y - 1 && p.y <= level.gallery.y + level.gallery.h) ||
+    level.places.some((r) => p.x >= r.x - 1 && p.x <= r.x + r.w && p.y >= r.y - 1 && p.y <= r.y + r.h);
   for (let attempt = 0; attempt < 12; attempt++) {
     // The course: across the map, wandering a little from side to side.
     const course: Point[] = [];
@@ -698,7 +718,7 @@ function fillPools(level: Level, rng: Rng, keepClear: Point[], forced: number): 
   const { width, tiles } = level;
   const water = level.water!;
   level.rooms.forEach((room, index) => {
-    if (index < forced || room.w < 5 || room.h < 5 || !rng.chance(CONFIG.level.poolChance)) return;
+    if (index < forced || room.shape === 'place' || room.w < 5 || room.h < 5 || !rng.chance(CONFIG.level.poolChance)) return;
     if (level.gallery && overlaps(room, level.gallery, 0)) return;
     if (keepClear.some((p) => p.x >= room.x - 1 && p.x <= room.x + room.w && p.y >= room.y - 1 && p.y <= room.y + room.h)) return;
     for (let y = room.y; y < room.y + room.h; y++) {
@@ -776,6 +796,22 @@ function generateLayout(seed: string, depth: number): Level {
   const upBlock = stairBlock(up).map((b) => b.p);
   const touchesStairs = (r: Room) => upBlock.some((p) => p.x >= r.x - 2 && p.x < r.x + r.w + 2 && p.y >= r.y - 2 && p.y < r.y + r.h + 2);
 
+  // Locations drawn by hand, set in first so the rooms keep clear of them.
+  const placeRng = Rng.derive(seed, 'places', depth);
+  const pool = LOCATIONS.filter((d) => depth >= d.depths[0] && depth <= d.depths[1]);
+  for (let n = placeRng.int(cfg.places.min, cfg.places.max); n > 0 && pool.length > 0; n--) {
+    let roll = placeRng.next() * pool.reduce((t, d) => t + d.weight, 0);
+    const def = pool.find((d) => (roll -= d.weight) < 0) ?? pool[0];
+    const w = def.plan[0].length;
+    const h = def.plan.length;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const room: Room = { x: placeRng.int(4, width - w - 4), y: placeRng.int(4, height - h - 4), w, h, shape: 'place', place: def.id };
+      if (rooms.some((other) => overlaps(room, other, 4)) || touchesStairs(room)) continue;
+      rooms.push(room);
+      break;
+    }
+  }
+
   // Other rooms: random placement without overlap, keeping a border of rock.
   const targetRooms = rng.int(cfg.minRooms, cfg.maxRooms);
   for (let attempt = 0; attempt < cfg.roomAttempts && rooms.length < targetRooms; attempt++) {
@@ -835,6 +871,22 @@ function generateLayout(seed: string, depth: number): Level {
   // room connects from beyond the stairs, so corridors leave the stairwell alone.
   const centers = rooms.map(center);
   centers[0] = { x: up.top.x + up.dir.x * 6, y: up.top.y + up.dir.y * 6 };
+  // Locations are joined only through their connectors: a short passage leads out of each,
+  // and the corridors meet it out there; nothing is ever cut through a location.
+  const protect = new Uint8Array(width * height);
+  const outlets: Array<{ room: number; at: Point }> = [];
+  rooms.forEach((room, i) => {
+    if (room.shape !== 'place') return;
+    for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) protect[y * width + x] = 1;
+    connectorsOf(locationById(room.place!).plan).forEach((c, k) => {
+      for (const cell of c.cells) {
+        for (let s = 1; s <= 3; s++) tiles[(room.y + cell.y + c.dir.y * s) * width + room.x + cell.x + c.dir.x * s] = Tile.Floor;
+      }
+      const at = { x: room.x + c.cells[0].x + c.dir.x * 3, y: room.y + c.cells[0].y + c.dir.y * 3 };
+      if (k === 0) centers[i] = at;
+      else outlets.push({ room: i, at });
+    });
+  });
   const connected = new Set<number>([0]);
   const edges: Array<[number, number]> = [];
   while (connected.size < rooms.length) {
@@ -854,6 +906,20 @@ function generateLayout(seed: string, depth: number): Level {
     connected.add(best[1]);
     edges.push(best);
   }
+  // A location's other openings each lead to the nearest room.
+  const outletEdges: Array<[Point, Point]> = outlets.map(({ room, at }) => {
+    let best = centers[0];
+    let bestD = Infinity;
+    centers.forEach((c, j) => {
+      if (j === room || rooms[j].shape === 'place') return;
+      const d = Math.abs(c.x - at.x) + Math.abs(c.y - at.y);
+      if (d < bestD) {
+        bestD = d;
+        best = c;
+      }
+    });
+    return [at, best];
+  });
   for (let i = 0; i < cfg.extraConnections && rooms.length > 2; i++) {
     const a = rng.int(0, rooms.length - 1);
     const b = rng.int(0, rooms.length - 1);
@@ -861,9 +927,10 @@ function generateLayout(seed: string, depth: number): Level {
   }
   // Some passages are natural tunnels that wander and widen; the rest are cut straight.
   for (const [a, b] of edges) {
-    if (rng.chance(CONFIG.level.tunnelChance)) carveTunnel(tiles, width, height, centers[a], centers[b], rng);
-    else carveCorridor(tiles, width, centers[a], centers[b], rng.chance(0.5));
+    if (rng.chance(CONFIG.level.tunnelChance)) carveTunnel(tiles, width, height, centers[a], centers[b], rng, protect);
+    else carveCorridor(tiles, width, centers[a], centers[b], rng.chance(0.5), protect);
   }
+  for (const [a, b] of outletEdges) carveCorridor(tiles, width, a, b, rng.chance(0.5), protect);
 
   const level: Level = {
     seed,
@@ -886,6 +953,9 @@ function generateLayout(seed: string, depth: number): Level {
     bridges: [],
     rubble: [],
     locks: [],
+    places: rooms.filter((r) => r.shape === 'place').map((r) => ({ id: r.place!, x: r.x, y: r.y, w: r.w, h: r.h })),
+    outposts: [],
+    fixedLoot: [],
   };
 
   // Stairwells are cut last, so no corridor breaks them; any room a stairwell cut off is
@@ -897,20 +967,24 @@ function generateLayout(seed: string, depth: number): Level {
     const lost = rooms.map((_, i) => i).filter((i) => i > 0 && dist[centers[i].y * width + centers[i].x] < 0 && tiles[centers[i].y * width + centers[i].x] === Tile.Floor);
     const downLost = dist[down.top.y * width + down.top.x] < 0;
     if (lost.length === 0 && !downLost) break;
-    for (const i of lost) carveCorridor(tiles, width, centers[i], centers[0], pass % 2 === 0);
-    if (downLost) carveCorridor(tiles, width, { x: down.top.x - down.dir.x, y: down.top.y - down.dir.y }, centers[0], pass % 2 === 1);
+    for (const i of lost) carveCorridor(tiles, width, centers[i], centers[0], pass % 2 === 0, protect);
+    if (downLost) carveCorridor(tiles, width, { x: down.top.x - down.dir.x, y: down.top.y - down.dir.y }, centers[0], pass % 2 === 1, protect);
   }
   applyStairs(tiles, width, up, 'lower');
   applyStairs(tiles, width, down, 'upper');
   // The stairwell walls can seal a small stairs room off; then a passage is cut to it, so
   // the way down is never lost.
+  // So can a straight corridor that had to stop at a location: whatever is left apart is
+  // joined by digging around (the stairwells and the locations are never dug through).
   const entrance = { x: down.top.x - down.dir.x, y: down.top.y - down.dir.y };
-  const reached = floorDistances(level, level.start);
-  if (reached[entrance.y * width + entrance.x] === -1) {
-    // The shortest way through the rock to anything reached, around both stairwells.
-    const sealed = new Set([...stairBlock(up), ...stairBlock(down)].map((b) => b.p.y * width + b.p.x));
+  const sealed = new Set([...stairBlock(up), ...stairBlock(down)].map((b) => b.p.y * width + b.p.x));
+  protect.forEach((v, i) => v && sealed.add(i));
+  for (const target of [entrance, ...centers.slice(1), ...outlets.map((o) => o.at)]) {
+    const reached = floorDistances(level, level.start);
+    if (tiles[target.y * width + target.x] !== Tile.Floor || reached[target.y * width + target.x] !== -1) continue;
+    // The shortest way through the rock to anything reached.
     const from = new Int32Array(width * height).fill(-2);
-    const queue = [entrance.y * width + entrance.x];
+    const queue = [target.y * width + target.x];
     from[queue[0]] = -1;
     let goal = -1;
     for (let head = 0; head < queue.length && goal < 0; head++) {
@@ -940,6 +1014,7 @@ function generateLayout(seed: string, depth: number): Level {
   const nextArrival = arrivalRoom(down);
   for (let attempt = 0; attempt < 200; attempt++) {
     const room = shaftRng.pick(rooms);
+    if (room.shape === 'place') continue;
     const p = { x: shaftRng.int(room.x, room.x + room.w - 1), y: shaftRng.int(room.y, room.y + room.h - 1) };
     if (!isFloor(level, p.x, p.y)) continue;
     const near = (blocks: Point[], d: number) => blocks.some((q) => Math.abs(q.x - p.x) <= d && Math.abs(q.y - p.y) <= d);
@@ -980,6 +1055,30 @@ function generateLayout(seed: string, depth: number): Level {
 
   level.ground = new Uint8Array(width * height);
   level.water = new Uint8Array(width * height);
+  // What the locations hold, as drawn: water, crates, remains, camps of old.
+  const placeFeatures: Feature[] = [];
+  for (const room of rooms) {
+    if (room.shape !== 'place') continue;
+    const plan = locationById(room.place!).plan;
+    for (let y = 0; y < room.h; y++) {
+      for (let x = 0; x < room.w; x++) {
+        const c = plan[y][x];
+        const p = { x: room.x + x, y: room.y + y };
+        const i = p.y * width + p.x;
+        if (c === '~') level.water[i] = Water.Shallow;
+        else if (c === 'W') {
+          tiles[i] = Tile.Deep;
+          level.water[i] = Water.Deep;
+        } else if (c === 'F') placeFeatures.push({ id: 0, kind: 'fountain', ...p });
+        else if (c === 'd') {
+          placeFeatures.push({ id: 0, kind: 'drip', ...p });
+          level.water[i] = Water.Shallow;
+        } else if (c === 'k') level.fixedLoot.push({ id: 0, kind: 'crate', ...p });
+        else if (c === 'r') level.fixedLoot.push({ id: 0, kind: 'remains', ...p });
+        else if (c === 'O') level.outposts.push(p);
+      }
+    }
+  }
   const clear = [...upBlock, ...downBlock, level.pit, level.landing, ...(fall ? [fall] : [])];
   if (fall) plungePool(level, fall);
   runRiver(level, Rng.derive(seed, 'river', depth), clear, { down, nextArrival });
@@ -992,8 +1091,10 @@ function generateLayout(seed: string, depth: number): Level {
   for (const p of clear) {
     for (const d of [{ x: 0, y: 0 }, ...DIRS]) taken.add(`${p.x + d.x},${p.y + d.y}`);
   }
+  // Nor on anything a location keeps.
+  for (const p of [...placeFeatures, ...level.fixedLoot, ...level.outposts]) taken.add(`${p.x},${p.y}`);
   const fountains = placeSpots(level, Rng.derive(seed, 'fountains', depth), taken, rngCount(Rng.derive(seed, 'fountains-n', depth), CONFIG.features.fountain));
-  const features: Feature[] = fountains.map(([x, y]) => ({ id: 0, kind: 'fountain' as const, x, y }));
+  const features: Feature[] = [...placeFeatures, ...fountains.map(([x, y]) => ({ id: 0, kind: 'fountain' as const, x, y }))];
   const dripRng = Rng.derive(seed, 'drips', depth);
   // Drips fall on the low floor, where their puddle can gather.
   for (const [x, y] of placeSpots(level, dripRng, taken, rngCount(dripRng, CONFIG.features.drip), (x, y) => groundAt(level, x, y) === Ground.Low)) {
@@ -1040,6 +1141,9 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
     bridges: layout.bridges.slice(),
     rubble: layout.rubble.map((p) => ({ ...p })),
     locks: layout.locks.map((p) => ({ ...p })),
+    places: layout.places.map((p) => ({ ...p })),
+    outposts: layout.outposts.map((p) => ({ ...p })),
+    fixedLoot: layout.fixedLoot.map((f) => ({ ...f })),
     key: layout.key && { ...layout.key },
     rooms: layout.rooms.map((r) => ({ ...r })),
     features: layout.features.map((f) => ({ ...f })),
@@ -1052,6 +1156,9 @@ export function generateLevel(seed: string, depth: number, itemsRoll = 0): Level
   for (const p of [...stairBlock(level.up).map((b) => b.p), ...stairBlock(level.down).map((b) => b.p), level.pit, level.landing]) {
     for (const d of [{ x: 0, y: 0 }, ...DIRS]) taken.add(`${p.x + d.x},${p.y + d.y}`);
   }
+  // The crates and remains a location keeps, where it keeps them.
+  level.features.push(...level.fixedLoot.map((f) => ({ ...f })));
+  for (const p of level.outposts) taken.add(`${p.x},${p.y}`);
   for (const f of level.features) taken.add(`${f.x},${f.y}`);
   const lootRng = Rng.derive(seed, 'items', depth, itemsRoll);
   for (const kind of ['remains', 'crate'] as const) {

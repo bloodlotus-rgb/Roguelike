@@ -1100,6 +1100,13 @@ export class ThreeView {
     floorMesh.castShadow = true;
     this.levelGroup.add(floorMesh);
     this.layPaving(level);
+    // Camps of old, cold until someone of the family lights them.
+    for (const p of level.outposts) {
+      const obj = outlined(campModel(this.mats), this.mats);
+      obj.position.set(p.x + 0.5, this.groundAtLevel(level, p.x, p.y), p.y + 0.5);
+      obj.scale.setScalar(1.4);
+      this.levelGroup.add(obj);
+    }
     // Real stairs: down into a shaft cut in the floor, and up toward the level above.
     this.levelGroup.add(this.stairsMesh(level.down, 'down'));
     this.levelGroup.add(this.stairsMesh(level.up, 'up'));
@@ -1275,6 +1282,10 @@ export class ThreeView {
     add(new THREE.IcosahedronGeometry(1, 0), stone, rocks, 0.22);
     add(new THREE.CylinderGeometry(1, 0.8, 1, 6), bone, bones);
     add(new THREE.SphereGeometry(1, 10, 8), bone, skulls, 0.14);
+  }
+
+  private groundAtLevel(level: Level, x: number, y: number): number {
+    return groundHeight(level, { x: x + 0.5, y: y + 0.5 });
   }
 
   /** Ceiling height over each tile in first person (see `ceilingHeights`). */
