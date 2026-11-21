@@ -1,4 +1,4 @@
-import { isBridge, isChasm, isDeep, isFloor, isShallow, isVoid } from '../core/dungeon';
+import { doorwayPartner, isBridge, isChasm, isDeep, isFloor, isShallow, isVoid } from '../core/dungeon';
 import { covers } from '../core/dynasty';
 import type { World } from '../core/world';
 
@@ -22,7 +22,7 @@ export interface MapView {
 export const MAP_ZOOM = { min: 5, max: 48, start: 22 };
 
 /** Marks of the map, shared by the map and its legend. */
-export type MapMark = 'hero' | 'down' | 'up' | 'camp' | 'fountain' | 'pit' | 'rubble' | 'bridge' | 'chasm' | 'death' | 'shallow' | 'deep' | 'waterfall';
+export type MapMark = 'hero' | 'down' | 'up' | 'camp' | 'fountain' | 'pit' | 'rubble' | 'bridge' | 'chasm' | 'death' | 'shallow' | 'deep' | 'waterfall' | 'locked' | 'stuck';
 
 /** Draws one mark centred on (x, y), `r` pixels across from the centre. */
 export function drawMark(ctx: CanvasRenderingContext2D, mark: MapMark, x: number, y: number, r: number, angle = -Math.PI / 2): void {
@@ -121,6 +121,23 @@ export function drawMark(ctx: CanvasRenderingContext2D, mark: MapMark, x: number
       ctx.fillRect(x - r, y - r, r * 2, r * 2);
       ctx.fillStyle = 'rgba(125, 147, 163, 0.45)';
       ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      break;
+    case 'locked':
+    case 'stuck':
+      // A keyhole on a round plate.
+      ctx.fillStyle = mark === 'locked' ? BLOOD : PAPER_DARK;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = mark === 'locked' ? PAPER : INK;
+      ctx.beginPath();
+      ctx.arc(x, y - r * 0.2, r * 0.3, 0, Math.PI * 2);
+      ctx.moveTo(x - r * 0.18, y);
+      ctx.lineTo(x + r * 0.18, y);
+      ctx.lineTo(x, y + r * 0.6);
+      ctx.closePath();
+      ctx.fill();
       break;
     case 'waterfall':
       ctx.fillStyle = '#7d93a3';
@@ -354,6 +371,7 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
   if (seen(level.pit.x, level.pit.y)) {
     const p = at(level.pit.x + 0.5, level.pit.y + 0.5);
     drawMark(ctx, 'pit', p.x, p.y, markR);
+    if (world.lockAt(level.pit.x, level.pit.y)) drawMark(ctx, 'stuck', p.x, p.y, markR * 0.7);
     landmarks.push({ mark: 'pit', x: level.pit.x + 0.5, y: level.pit.y + 0.5 });
     if (world.works.some((w) => w.kind === 'rope' && w.depth === world.depth)) {
       ctx.strokeStyle = '#b48a5a';
@@ -383,7 +401,9 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
     if (!barricade && (!door || door.state === 'broken')) continue;
     const shut = level.closed?.has(tile) ?? false;
     const p = at(d.x, d.y);
-    const acrossX = !isFloor(level, d.x - 1, d.y) && !isFloor(level, d.x + 1, d.y);
+    // A double door lies along the line of its two tiles.
+    const partner = doorwayPartner(level, d);
+    const acrossX = partner ? partner.y === d.y : !isFloor(level, d.x - 1, d.y) && !isFloor(level, d.x + 1, d.y);
     ctx.strokeStyle = barricade ? BLOOD : INK;
     ctx.lineWidth = Math.max(1.5, size / (shut ? 4 : 9));
     ctx.beginPath();
@@ -395,6 +415,9 @@ export function drawMap(canvas: HTMLCanvasElement, world: World, extras: MapExtr
       ctx.lineTo(p.x + size / 2, p.y + size);
     }
     ctx.stroke();
+    // Locked (red) or stuck (ink): a keyhole on the door.
+    const lock = world.lockAt(d.x, d.y);
+    if (lock) drawMark(ctx, lock === 'locked' ? 'locked' : 'stuck', p.x + size / 2, p.y + size / 2, Math.max(4, size * 0.3));
   }
 
   // Collapses: a heap of stones across the corridor.

@@ -267,4 +267,32 @@ describe('generateLevel', () => {
     }
     expect(pairs).toBeGreaterThan(singles);
   });
+
+  it('the ways down are closed: the stairs behind locked doors, the key reachable, the pit behind stuck ones', () => {
+    let sealedStairs = 0;
+    let sealedPits = 0;
+    for (const seed of seeds) {
+      for (let depth = 1; depth <= 4; depth++) {
+        const level = generateLevel(seed, depth);
+        const closed = new Set([...level.rubble, ...level.locks].map((p) => p.y * level.width + p.x));
+        const dist = floorDistances({ ...level, closed }, level.start);
+        const at = (p: { x: number; y: number }) => dist[p.y * level.width + p.x];
+        if (level.locks.some((l) => l.kind === 'locked')) {
+          sealedStairs++;
+          expect(at(level.down.top)).toBe(-1);
+          expect(level.key).toBeDefined();
+          expect(at(level.key!)).toBeGreaterThan(0);
+          expect(level.items.some((i) => i.kind === 'key')).toBe(true);
+        }
+        // The pit is behind stuck doors, under a stuck grate, or inside the locked room.
+        const grate = level.locks.some((l) => l.kind === 'stuck' && l.x === level.pit.x && l.y === level.pit.y);
+        if (level.locks.some((l) => l.kind === 'stuck')) sealedPits++;
+        if (!grate) expect(at(level.pit)).toBe(-1);
+        // Every lock is a door of the level, but the grate over the pit.
+        for (const l of level.locks) if (l.x !== level.pit.x || l.y !== level.pit.y) expect(level.doors.some((d) => d.x === l.x && d.y === l.y)).toBe(true);
+      }
+    }
+    expect(sealedStairs).toBeGreaterThan(5);
+    expect(sealedPits).toBeGreaterThan(3);
+  });
 });

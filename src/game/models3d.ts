@@ -231,6 +231,13 @@ export function lootModel(kind: LootKind, m: ModelMaterials): Parts {
         part(g, new THREE.TorusGeometry(r, 0.02, 5, 14), m.wood, 0, y, 0, Math.PI / 2);
       }
       break;
+    case 'key':
+      // A big iron key: a ring, a shank and a bit with teeth, lying flat.
+      part(g, new THREE.TorusGeometry(0.06, 0.016, 6, 14), m.metal, -0.12, 0.016, 0, Math.PI / 2);
+      part(g, cyl(0.014, 0.014, 0.2, 6), m.metal, 0.02, 0.016, 0, 0, 0, Math.PI / 2);
+      part(g, box(0.04, 0.02, 0.06), m.metal, 0.11, 0.016, 0.03);
+      part(g, box(0.02, 0.02, 0.04), m.metal, 0.08, 0.016, 0.03);
+      break;
   }
   return g;
 }

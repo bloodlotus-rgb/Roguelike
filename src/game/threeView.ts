@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { covers } from '../core/dynasty';
 import type { Level, Point } from '../core/dungeon';
 import { CONFIG } from '../core/config';
-import { generateLevel, Ground, groundAt, groundHeight, isBridge, isChasm, isDeep, isFloor, isShallow, isVoid, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
+import { doorwayPartner, generateLevel, Ground, groundAt, groundHeight, isBridge, isChasm, isDeep, isFloor, isShallow, isVoid, LEVEL_HEIGHT, type Stairwell } from '../core/dungeon';
 import { Rng } from '../core/rng';
 import type { EnemyKind } from '../core/enemies';
 import { COMBAT, type Enemy, type World, type WorldEvent } from '../core/world';
@@ -848,6 +848,7 @@ export class ThreeView {
     return this.paintedBelow;
   }
   private paintedBelow: THREE.Material | null = null;
+  private readonly unitBox = new THREE.BoxGeometry(1, 1, 1);
   private readonly woodMaterial = inkMaterial(new THREE.MeshLambertMaterial({ color: 0x9a7448 }), { cut: true, outline: true });
   private readonly projectiles = new Map<number, Cutout>();
   private readonly walks = new Map<number, { walked: number; last: Point }>();
@@ -2154,7 +2155,6 @@ export class ThreeView {
   private syncDoors(world: World): void {
     const level = world.level;
     const seen = new Set<number>();
-    const H = 1.5;
     for (const d of level.doorways) {
       const tile = d.y * level.width + d.x;
       const barricade = world.works.find((w) => w.kind === 'barricade' && w.depth === world.depth && covers(w, d.x, d.y));
@@ -2162,17 +2162,25 @@ export class ThreeView {
       if (!barricade && (!door || door.state === 'broken')) continue;
       seen.add(tile);
       const shut = level.closed?.has(tile) ?? false;
-      const key = `${barricade ? 'b' : 'd'}-${shut}`;
+      const lock = world.lockAt(d.x, d.y);
+      // In first person a door fills its opening up to the ceiling; from above it stays low.
+      const H = this.mode === 'first' ? this.ceilings[tile] || CEILING.passage : 1.5;
+      const key = `${barricade ? 'b' : 'd'}-${shut}-${lock ?? ''}-${H}`;
       const entry = this.doors.get(tile);
       if (entry && entry.key === key) continue;
       if (entry) this.scene.remove(entry.obj);
-      // Walls on the left and right: the passage runs north–south and the door spans x.
-      const acrossX = !isFloor(level, d.x - 1, d.y) && !isFloor(level, d.x + 1, d.y);
+      // Walls on the left and right: the passage runs north–south and the door spans x. A
+      // double door spans the line of its two tiles, each leaf opening toward its own wall.
+      const partner = doorwayPartner(level, d);
+      const acrossX = partner ? partner.y === d.y : !isFloor(level, d.x - 1, d.y) && !isFloor(level, d.x + 1, d.y);
+      const outer = !partner ? -1 : acrossX ? (partner.x > d.x ? -1 : 1) : partner.y > d.y ? 1 : -1;
       const group = new THREE.Group();
       group.position.set(d.x + 0.5, 0, d.y + 0.5);
       if (!acrossX) group.rotation.y = Math.PI / 2;
       const box = (w: number, h: number, depth: number, x: number, y: number, z: number, rz = 0) => {
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, depth), this.woodMaterial);
+        // A unit box scaled to size: the pen outline is drawn along a unit box's edges.
+        const mesh = new THREE.Mesh(this.unitBox, this.woodMaterial);
+        mesh.scale.set(w, h, depth);
         mesh.position.set(x, y, z);
         mesh.rotation.z = rz;
         mesh.castShadow = true;
@@ -2188,8 +2196,20 @@ export class ThreeView {
           // Opened: the planks lean against the wall.
           box(0.08, 1.2, 0.16, -0.45, 0.6, 0.2, 0.15);
         }
-      } else if (shut) box(0.98, H, 0.1, 0, H / 2, 0);
-      else box(0.1, H, 0.9, -0.44, H / 2, 0);
+      } else if (shut) {
+        box(0.98, H, 0.1, 0, H / 2, 0);
+        if (lock) {
+          // Iron bands and, on a locked door, a lock plate.
+          const iron = (w: number, h: number, x: number, y: number) => {
+            const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.14), this.mats.metal);
+            mesh.position.set(x, y, 0);
+            group.add(mesh);
+          };
+          iron(0.98, 0.07, 0, 0.35);
+          iron(0.98, 0.07, 0, H - 0.3);
+          if (lock === 'locked') iron(0.16, 0.22, -outer * 0.38, 0.85);
+        }
+      } else box(0.1, H, 0.9, outer * 0.44, H / 2, 0);
       this.scene.add(group);
       this.doors.set(tile, { obj: group, key });
     }
@@ -2221,6 +2241,8 @@ export class ThreeView {
 
   private ropeKey = '';
   private rubbleKey = '';
+  private grateKey = '';
+  private grate: THREE.Object3D | null = null;
   private rubbleMeshes: THREE.Object3D[] = [];
 
   /** Collapses not yet dug out on this level. */
@@ -2239,6 +2261,28 @@ export class ThreeView {
     if (ropeKey !== this.ropeKey) {
       this.ropeKey = ropeKey;
       this.syncRopes(world);
+    }
+    // An iron grate stuck over the pit, until someone forces it.
+    const grateKey = `${world.depth}:${!!world.lockAt(world.level.pit.x, world.level.pit.y)}`;
+    if (grateKey !== this.grateKey) {
+      this.grateKey = grateKey;
+      if (this.grate) this.scene.remove(this.grate);
+      this.grate = null;
+      const { pit } = world.level;
+      if (world.lockAt(pit.x, pit.y)) {
+        const g = new THREE.Group();
+        for (let i = 0; i < 5; i++) {
+          for (const along of [true, false]) {
+            const bar = new THREE.Mesh(new THREE.BoxGeometry(along ? 1.04 : 0.05, 0.05, along ? 0.05 : 1.04), this.mats.metal);
+            bar.position.set(along ? 0 : -0.4 + i * 0.2, 0.03, along ? -0.4 + i * 0.2 : 0);
+            bar.castShadow = true;
+            g.add(bar);
+          }
+        }
+        g.position.set(pit.x + 0.5, 0, pit.y + 0.5);
+        this.grate = outlined(g, this.mats);
+        this.scene.add(this.grate);
+      }
     }
     const rubbleKey = `${world.depth}:${world.rubble.map((p) => `${p.x},${p.y}`).join(';')}`;
     if (rubbleKey !== this.rubbleKey) {

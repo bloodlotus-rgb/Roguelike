@@ -1163,6 +1163,76 @@ describe('double doors', () => {
   });
 });
 
+describe('closed ways down', () => {
+  /** A world at a depth whose stairs room is locked, standing by one of its locked doors. */
+  function atLock(kind: 'locked' | 'stuck'): { w: World; works: import('./dynasty').Work[]; lock: { x: number; y: number } } {
+    for (const seed of ['estirpe', 'tainted', 'abc', '12345', 'mansion']) {
+      for (let depth = 1; depth <= 4; depth++) {
+        const works: import('./dynasty').Work[] = [];
+        const w = new World(seed, 'headsman', 0, depth, { works });
+        const lock = w.level.locks.find((l) => l.kind === kind);
+        if (!lock) continue;
+        w.enemies = [];
+        // Stand on the corridor side of the door.
+        const out = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(
+          ([dx, dy]) => isFloor(w.level, lock.x + dx, lock.y + dy) && !w.level.rooms.some((r) => lock.x + dx >= r.x && lock.x + dx < r.x + r.w && lock.y + dy >= r.y && lock.y + dy < r.y + r.h) && !w.level.locks.some((l) => l.x === lock.x + dx && l.y === lock.y + dy),
+        )!;
+        w.player = { x: lock.x + out[0] + 0.5, y: lock.y + out[1] + 0.5 };
+        return { w, works, lock };
+      }
+    }
+    throw new Error('no lock found');
+  }
+
+  it('a locked door does not simply open: without the key it is forced, slowly and loudly', () => {
+    const { w, works, lock } = atLock('locked');
+    w.update(0.02, NO_INPUT);
+    expect(w.interaction).toBe('force');
+    expect(w.level.closed?.has(lock.y * w.level.width + lock.x)).toBe(true);
+    w.interact();
+    const events = run(w, CONFIG.works.forceLocked + 0.5);
+    expect(events.some((e) => e.type === 'forcing')).toBe(true);
+    expect(events.some((e) => e.type === 'dig')).toBe(true);
+    expect(events.some((e) => e.type === 'unlocked')).toBe(true);
+    expect(works.some((x) => x.kind === 'unlocked')).toBe(true);
+    expect(w.lockAt(lock.x, lock.y)).toBeNull();
+  });
+
+  it('with the level’s key it opens at once, for the whole family', () => {
+    const { w, works, lock } = atLock('locked');
+    // Pick the key up where it lies.
+    w.player = { x: w.level.key!.x + 0.5, y: w.level.key!.y + 0.5 };
+    w.update(0.02, NO_INPUT);
+    expect(w.keys.has(w.depth)).toBe(true);
+    const out = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(
+      ([dx, dy]) => isFloor(w.level, lock.x + dx, lock.y + dy) && !w.level.rooms.some((r) => lock.x + dx >= r.x && lock.x + dx < r.x + r.w && lock.y + dy >= r.y && lock.y + dy < r.y + r.h) && !w.level.locks.some((l) => l.x === lock.x + dx && l.y === lock.y + dy),
+    )!;
+    w.player = { x: lock.x + out[0] + 0.5, y: lock.y + out[1] + 0.5 };
+    w.update(0.02, NO_INPUT);
+    expect(w.interaction).toBe('unlock');
+    w.interact();
+    w.update(0.02, NO_INPUT);
+    expect(w.lockAt(lock.x, lock.y)).toBeNull();
+    // The next life finds it open.
+    const next = new World(w.seed, 'headsman', 1, w.depth, { works });
+    expect(next.lockAt(lock.x, lock.y)).toBeNull();
+  });
+
+  it('a camp can be packed up into a kit again', () => {
+    const world = intoRoom(new World('estirpe', 'headsman', 0, 1, { camps: [] }));
+    world.enemies = [];
+    world.player = campSpot(world);
+    world.useItem(world.inventory.items.find((i) => i.kind === 'campKit')!.uid);
+    world.update(0.02, NO_INPUT);
+    expect(world.camps.length).toBe(1);
+    expect(world.inventory.items.some((i) => i.kind === 'campKit')).toBe(false);
+    const events = world.packCamp();
+    expect(events.some((e) => e.type === 'campPacked')).toBe(true);
+    expect(world.camps.length).toBe(0);
+    expect(world.inventory.items.some((i) => i.kind === 'campKit')).toBe(true);
+  });
+});
+
 describe('collapses', () => {
   it('some corridors are blocked by stones that can be dug out, loudly, for the whole family', () => {
     let world: World | null = null;
@@ -1261,6 +1331,10 @@ describe('doors and barricades', () => {
 describe('pits and ropes', () => {
   it('a rope tied at the pit is a shortcut down and back up, for the family', () => {
     const works: import('./dynasty').Work[] = [];
+    // A grate stuck over the pit has been forced already.
+    const first = new World('estirpe', 'headsman', 0, 1, {});
+    const grate = first.level.locks.find((l) => l.x === first.level.pit.x && l.y === first.level.pit.y);
+    if (grate) works.push({ id: 99, kind: 'unlocked', depth: 1, x: grate.x, y: grate.y, built: 1, builder: 1, condition: 100 });
     const world = new World('estirpe', 'headsman', 0, 1, { works });
     world.enemies = [];
     world.inventory.items = world.inventory.items.filter((i) => i.kind !== 'campKit');
@@ -1271,7 +1345,7 @@ describe('pits and ropes', () => {
     const rope = world.inventory.items.find((i) => i.kind === 'rope')!;
     world.useItem(rope.uid);
     run(world, 0.05);
-    expect(works).toMatchObject([{ kind: 'rope', depth: 1 }]);
+    expect(works.filter((w) => w.kind === 'rope')).toMatchObject([{ kind: 'rope', depth: 1 }]);
     expect(world.interaction).toBe('ropeDown');
     expect(world.climbRope()).toBe('down');
     expect(world.depth).toBe(2);

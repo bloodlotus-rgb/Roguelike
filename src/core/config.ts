@@ -138,6 +138,9 @@ export const CONFIG = {
     /** Seconds of digging to clear a collapse, and how far the noise carries (tiles). */
     digTime: 6,
     digNoise: 9,
+    /** Seconds of work to force a stuck door, and a locked one without its key. */
+    forceStuck: 8,
+    forceLocked: 20,
     /** A plain door's strength, and how fast hunting horrors batter doors and barricades. */
     doorHp: 60,
     bashDoor: 20,
