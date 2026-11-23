@@ -156,3 +156,20 @@ it('meters declared external recharge at the physical inlet across cycles and re
   expect(() => step(graph, initialState(false, { ...source, connector: 'cut-1' }))).toThrow('inlet');
   expect(() => step(graph, initialState(false, { ...source, rate: Infinity }))).toThrow('recharge');
 });
+
+it('wakes a dry nutrient donor on the hour after water arrives and still runs scheduled local losses', () => {
+  const graph = chain('watercourse');
+  const before = initialState();
+  before.tick = 243;
+  before.stocks.set(0, { ...emptyStock(), water: 12 });
+  before.stocks.set(1, { ...emptyStock(), nutrients: 3 });
+  before.stocks.set(2, { ...emptyStock(), fungalBiomass: 1 });
+  const oldSave = JSON.stringify(snapshot(graph, before));
+  const first = step(graph, before);
+  expect(audit(before.stocks, first.state.stocks, first.ledger).transported.nutrients).toBe(0);
+  expect(first.state.stocks.has(2)).toBe(false); // Respiration on hour 244.
+  const second = step(graph, first.state);
+  expect(second.ledger).toContainEqual({ kind: 'transfer', process: 'transport', resource: 'nutrients',
+    amount: 3, from: 1, to: 2, connector: 'cut-1' });
+  expect(JSON.stringify(snapshot(graph, before))).toBe(oldSave);
+});

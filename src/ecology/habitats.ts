@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, type Hash } from 'node:crypto';
 import { CELL } from '../core/jenga.ts';
 import { makePlan, STOREYS_PER_ZONE, ZONE_SLAB } from '../core/plan.ts';
 import { extractGraph, region, type SpatialGraph, type Kind, type State, type Edge } from '../core/spatial.ts';
@@ -34,6 +34,19 @@ export interface HabitatGraph {
 export const generatorVersion = 'jenga-e0m-9ecd0b7';
 export const modelVersion = 1;
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+
+// Only the small SHA-256 prefix state survives derivation. The fine graph is released.
+const partitionDigest = new WeakMap<HabitatGraph['regionToHabitat'], Hash>();
+export function sharesDerivedPartition(first: HabitatGraph, second: HabitatGraph) {
+  return first.regionToHabitat === second.regionToHabitat && partitionDigest.has(first.regionToHabitat);
+}
+
+function signature(prefix: Hash, boundaries: Boundary[], habitats: Habitat[], entrance: number) {
+  const digest = prefix.copy();
+  for (const boundary of boundaries) digest.update(JSON.stringify(boundary));
+  for (const habitat of habitats) digest.update(JSON.stringify(habitat));
+  return digest.update(String(entrance)).digest('hex');
+}
 
 /** Iterative low-link DFS. Skip only the parent edge, so parallel cuts stay distinct. */
 function findBridges(adjacent: Map<string, Edge[]>): Set<string> {
@@ -140,16 +153,14 @@ export function deriveHabitats(structure: Structure, fine: SpatialGraph,
     const from = regionToHabitat.get(edge.from)!, to = regionToHabitat.get(edge.to)!;
     if (from === to) continue;
     const boundary = { id: edge.id, from, to, kind: edge.kind, key: edge.key, state: states.get(edge.id) ?? edge.state };
-    digest.update(JSON.stringify(boundary));
     incident[from].push(boundaries.length);
     incident[to].push(boundaries.length);
     boundaries.push(boundary);
   }
   const entrance = regionToHabitat.get(region(structure.zones[0], structure.entrance));
   if (entrance === undefined) throw new Error('Missing surface habitat');
-  for (const habitat of habitats) digest.update(JSON.stringify(habitat));
-  digest.update(String(entrance));
-  return { seed: structure.seed, signature: digest.digest('hex'), entrance, habitats, regionToHabitat,
+  partitionDigest.set(regionToHabitat, digest);
+  return { seed: structure.seed, signature: signature(digest, boundaries, habitats, entrance), entrance, habitats, regionToHabitat,
     boundaries, incident, barriers: [...states].sort(([a], [b]) => compare(a, b)) };
 }
 
@@ -157,4 +168,28 @@ export function deriveHabitats(structure: Structure, fine: SpatialGraph,
 export function buildHabitatGraph(seed: string, states: ReadonlyMap<string, State> = new Map()): HabitatGraph {
   const structure = buildStructure(makePlan(seed));
   return deriveHabitats(structure, extractGraph(structure), states);
+}
+
+/** A gate pins both fine endpoints in every state. All other edits use full derivation. */
+export function updateBarrier(graph: HabitatGraph, id: string, state: State,
+  rebuild = (states: ReadonlyMap<string, State>) => buildHabitatGraph(graph.seed, states)): HabitatGraph {
+  const states = new Map(graph.barriers).set(id, state);
+  const index = graph.boundaries.findIndex(cut => cut.id === id);
+  const prior = graph.boundaries[index];
+  const prefix = partitionDigest.get(graph.regionToHabitat);
+  if (!prefix || prior?.kind !== 'gate') return rebuild(states);
+  if (!['open', 'closed', 'blocked', 'destroyed', 'flooded'].includes(state)) throw new Error('Unknown barrier state: ' + state);
+
+  const boundaries = graph.boundaries.slice();
+  boundaries[index] = { ...prior, state };
+  let habitats = graph.habitats;
+  if ((state === 'flooded') !== (prior.state === 'flooded')) {
+    habitats = habitats.slice();
+    for (const endpoint of [prior.from, prior.to]) {
+      const wet = graph.incident[endpoint].some(i => boundaries[i].kind === 'watercourse' || boundaries[i].state === 'flooded');
+      habitats[endpoint] = { ...habitats[endpoint], humidity: wet ? parameters.wetHumidity : parameters.dryHumidity };
+    }
+  }
+  return { ...graph, habitats, boundaries, barriers: [...states].sort(([a], [b]) => compare(a, b)),
+    signature: signature(prefix, boundaries, habitats, graph.entrance) };
 }

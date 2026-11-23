@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { Profile } from './profile.ts';
 import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { Rng } from '../src/core/rng.ts';
-import { buildHabitatGraph } from '../src/ecology/habitats.ts';
+import { buildHabitatGraph, updateBarrier } from '../src/ecology/habitats.ts';
 import { audit } from '../src/ecology/audit.ts';
 import { initialState, reaggregate, restore, snapshot, step, totals } from '../src/ecology/resources.ts';
 
@@ -34,7 +34,7 @@ for (let i = 0; i < ticks; i++) {
     const status = i === Math.floor(ticks / 3) ? 'destroyed' : 'flooded';
     const start = performance.now();
     profile.start();
-    const rebuilt = buildHabitatGraph(graph.seed, new Map([[gate.id, status]]));
+    const rebuilt = updateBarrier(graph, gate.id, status);
     profile.end('graphUpdate');
     const projected = reaggregate(graph, rebuilt, state);
     profile.end('reaggregate');

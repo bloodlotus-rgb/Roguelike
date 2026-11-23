@@ -31,23 +31,33 @@ export function channelReach(graph: HabitatGraph, start: number, resource: Chann
 }
 
 /** Proposals use the same phase-start stocks. Vertical mass transfer is downhill only. */
-export function fluxes(graph: HabitatGraph, cut: Boundary, a: Stock, b: Stock): Flux[] {
-  if (cut.state === 'closed' || cut.state === 'blocked') return [];
+export type VisitFlux = (from: number, to: number, resource: Channel, amount: number, connector: string) => void;
+
+export function visitFluxes(graph: HabitatGraph, cut: Boundary, a: Stock, b: Stock, visit: VisitFlux) {
+  if (cut.state === 'closed' || cut.state === 'blocked') return;
   const upper = graph.habitats[cut.from], lower = graph.habitats[cut.to];
   const downhill = Math.sign(lower.depthM - upper.depthM);
-  const result: Flux[] = [];
-  for (const resource of channels) {
+  const rates = cut.state === 'flooded' ? flooded : conductance[cut.kind];
+  for (let i = 0; i < channels.length; i++) {
+    const resource = channels[i];
+    if (!rates[i] || (!a[resource] && !b[resource])) continue;
     const gradient = (a[resource] * lower.capacity - b[resource] * upper.capacity) / (upper.capacity + lower.capacity);
     let signed = Math.trunc(gradient);
     if (resource !== 'energy' && downhill) signed = downhill > 0 ? a[resource] : -b[resource];
     if (!signed) continue;
     const forward = signed > 0;
-    const limit = channelLimit(graph, cut, forward ? cut.from : cut.to, resource);
-    if (!limit) continue;
+    // For mass on a slope, signed already selects the downhill endpoint.
+    if (!forward && cut.kind === 'watercourse') continue;
     const donor = forward ? a : b;
     if (resource === 'nutrients' && !donor.water) continue;
-    result.push({ from: forward ? cut.from : cut.to, to: forward ? cut.to : cut.from,
-      resource, amount: Math.min(Math.abs(signed), limit), connector: cut.id });
+    visit(forward ? cut.from : cut.to, forward ? cut.to : cut.from, resource, Math.min(Math.abs(signed), rates[i]), cut.id);
   }
+}
+
+export function fluxes(graph: HabitatGraph, cut: Boundary, a: Stock, b: Stock): Flux[] {
+  const result: Flux[] = [];
+  visitFluxes(graph, cut, a, b, (from, to, resource, amount, connector) => {
+    result.push({ from, to, resource, amount, connector });
+  });
   return result;
 }
