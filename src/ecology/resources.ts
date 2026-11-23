@@ -1,6 +1,6 @@
-import { generatorVersion, modelVersion, type HabitatGraph } from './habitats.ts';
+import { generatorVersion, modelVersion, sharesDerivedPartition, type HabitatGraph } from './habitats.ts';
 import { emptyStock, parameters as p, resourceSignature, resources, type Recharge, type Resource, type Stock } from './parameters.ts';
-import { fluxes } from './transport.ts';
+import { visitFluxes, type VisitFlux } from './transport.ts';
 
 export type Inventory = Map<number, Stock>;
 export interface ModelState {
@@ -62,12 +62,15 @@ export function rechargeSite(graph: HabitatGraph, source: Recharge): number {
   return site;
 }
 
+export type PhaseObserver = (phase: 'inventory' | 'transport' | 'local', units: number) => void;
+
 /** Produce a new committed state and a replayable ledger. Never spend incoming flux twice. */
-export function step(graph: HabitatGraph, previous: ModelState): { state: ModelState; ledger: Entry[] } {
+export function step(graph: HabitatGraph, previous: ModelState, observe?: PhaseObserver): { state: ModelState; ledger: Entry[] } {
   const headroom = validateState(graph, previous);
   const tick = previous.tick + 1;
   if (!Number.isSafeInteger(tick)) throw new Error('Tick outside integer range');
-  const stocks: Inventory = new Map([...previous.stocks].map(([id, stock]) => [id, { ...stock }]));
+  const stocks: Inventory = new Map();
+  for (const [id, stock] of previous.stocks) stocks.set(id, { ...stock });
   const ledger: Entry[] = [];
   function apply(kind: Entry['kind'], process: string, resource: Resource, amount: number,
     from: number | null, to: number | null, connector?: string) {
@@ -95,22 +98,59 @@ export function step(graph: HabitatGraph, previous: ModelState): { state: ModelS
       apply('source', 'aquifer/' + source.watershed, 'water', Math.min(headroom, source.rate), null, site, source.connector);
     }
   }
-  // Only cuts incident to nonempty habitats can carry anything.
-  const active = new Set<number>();
-  for (const id of stocks.keys()) for (const cut of graph.incident[id]) active.add(cut);
-  const remaining: Inventory = new Map([...stocks].map(([id, stock]) => [id, { ...stock }]));
-  const proposals = ordered(active).flatMap(index => {
+  // Most phase-start accounts already live in previous. Only source recipients changed.
+  const supplied: Inventory = new Map();
+  for (const entry of ledger) supplied.set(entry.to!, { ...stocks.get(entry.to!)! });
+  observe?.('inventory', stocks.size);
+
+  const transferStart = ledger.length;
+  let proposals = 0;
+  const post: VisitFlux = (from, to, resource, proposed, connector) => {
+    proposals++;
+    const donor = stocks.get(from)!;
+    const amount = Math.min(proposed, donor[resource]);
+    if (!amount) return;
+    donor[resource] -= amount;
+    if (!stocks.has(to)) stocks.set(to, emptyStock());
+    ledger.push({ kind: 'transfer', process: 'transport', resource, amount, from, to, connector });
+  };
+  function visit(index: number) {
     const cut = graph.boundaries[index];
-    return fluxes(graph, cut, remaining.get(cut.from) ?? none, remaining.get(cut.to) ?? none);
-  });
-  for (const flux of proposals) {
-    const budget = remaining.get(flux.from)!;
-    const amount = Math.min(flux.amount, budget[flux.resource]);
-    budget[flux.resource] -= amount;
-    apply('transfer', 'transport', flux.resource, amount, flux.from, flux.to, flux.connector);
+    const a = supplied.get(cut.from) ?? previous.stocks.get(cut.from) ?? none;
+    const b = supplied.get(cut.to) ?? previous.stocks.get(cut.to) ?? none;
+    visitFluxes(graph, cut, a, b, post);
   }
-  for (const id of ordered(stocks.keys())) {
-    const stock = stocks.get(id)!;
+  // A dry nutrient-only or biomass-only account cannot initiate a transfer. Its
+  // incoming cuts still run when a neighbour can send; local events run below.
+  const mobile = (s: Stock) => s.water || s.detritus || s.energy;
+  if (stocks.size < graph.habitats.length / 8) {
+    const cuts = new Set<number>();
+    for (const [id, stock] of stocks) if (mobile(stock)) {
+      for (const index of graph.incident[id]) cuts.add(index);
+    }
+    for (const index of ordered(cuts)) visit(index);
+  } else {
+    // One bit per physical boundary avoids sorting a dense set of cut indices.
+    const bits = new Uint32Array(Math.ceil(graph.boundaries.length / 32));
+    for (const [id, stock] of stocks) if (mobile(stock)) {
+      for (const index of graph.incident[id]) bits[index >>> 5] |= 1 << (index & 31);
+    }
+    for (let word = 0; word < bits.length; word++) {
+      let mask = bits[word];
+      while (mask) {
+        visit(word * 32 + 31 - Math.clz32(mask & -mask));
+        mask &= mask - 1;
+      }
+    }
+  }
+  // Debits used only the opening balance. Apply credits after the last proposal
+  // so an arrival cannot fund another crossing in the same hour.
+  for (let i = transferStart; i < ledger.length; i++) {
+    const credit = ledger[i];
+    stocks.get(credit.to!)![credit.resource] += credit.amount;
+  }
+  observe?.('transport', proposals);
+  function local(id: number, stock: Stock) {
     const mineral = Math.min(p.mineralize, stock.detritus);
     apply('conversion', 'mineralization', 'detritus', mineral, id, null);
     apply('conversion', 'mineralization', 'nutrients', mineral, null, id);
@@ -130,6 +170,15 @@ export function step(graph: HabitatGraph, previous: ModelState): { state: ModelS
     }
     if (resources.every(r => stock[r] === 0)) stocks.delete(id);
   }
+  if (stocks.size < graph.habitats.length / 8) {
+    for (const id of ordered(stocks.keys())) local(id, stocks.get(id)!);
+  } else {
+    for (let id = 0; id < graph.habitats.length; id++) {
+      const stock = stocks.get(id);
+      if (stock) local(id, stock);
+    }
+  }
+  observe?.('local', ledger.length);
   return { state: { ...previous, stocks, tick }, ledger };
 }
 
@@ -161,6 +210,18 @@ export function restore(graph: HabitatGraph, data: ReturnType<typeof snapshot>):
 export function reaggregate(oldGraph: HabitatGraph, newGraph: HabitatGraph, state: ModelState): ModelState {
   if (oldGraph.seed !== newGraph.seed || oldGraph.regionToHabitat.size !== newGraph.regionToHabitat.size) {
     throw new Error('Cannot project across different buildings');
+  }
+  if (sharesDerivedPartition(oldGraph, newGraph)) {
+    // Derivation inserts all regions of each habitat together in ascending habitat order.
+    const stocks: Inventory = new Map();
+    for (const id of ordered(state.stocks.keys())) {
+      const stock = state.stocks.get(id)!;
+      if (!oldGraph.habitats[id] || !resources.some(r => stock[r] !== 0)) continue;
+      const projected = emptyStock();
+      for (const r of resources) projected[r] = stock[r];
+      stocks.set(id, projected);
+    }
+    return { ...state, stocks };
   }
   const overlaps = new Map<number, Map<number, number>>();
   for (const [region, oldId] of oldGraph.regionToHabitat) {
