@@ -63,7 +63,9 @@ export function rechargeSite(graph: HabitatGraph, source: Recharge): number {
 }
 
 /** Produce a new committed state and a replayable ledger. Never spend incoming flux twice. */
-export function step(graph: HabitatGraph, previous: ModelState): { state: ModelState; ledger: Entry[] } {
+export type PhaseObserver = (phase: 'inventory' | 'transport' | 'local', units: number) => void;
+
+export function step(graph: HabitatGraph, previous: ModelState, observe?: PhaseObserver): { state: ModelState; ledger: Entry[] } {
   const headroom = validateState(graph, previous);
   const tick = previous.tick + 1;
   if (!Number.isSafeInteger(tick)) throw new Error('Tick outside integer range');
@@ -95,6 +97,7 @@ export function step(graph: HabitatGraph, previous: ModelState): { state: ModelS
       apply('source', 'aquifer/' + source.watershed, 'water', Math.min(headroom, source.rate), null, site, source.connector);
     }
   }
+  observe?.('inventory', stocks.size);
   // Only cuts incident to nonempty habitats can carry anything.
   const active = new Set<number>();
   for (const id of stocks.keys()) for (const cut of graph.incident[id]) active.add(cut);
@@ -109,6 +112,7 @@ export function step(graph: HabitatGraph, previous: ModelState): { state: ModelS
     budget[flux.resource] -= amount;
     apply('transfer', 'transport', flux.resource, amount, flux.from, flux.to, flux.connector);
   }
+  observe?.('transport', proposals.length);
   for (const id of ordered(stocks.keys())) {
     const stock = stocks.get(id)!;
     const mineral = Math.min(p.mineralize, stock.detritus);
@@ -130,6 +134,7 @@ export function step(graph: HabitatGraph, previous: ModelState): { state: ModelS
     }
     if (resources.every(r => stock[r] === 0)) stocks.delete(id);
   }
+  observe?.('local', ledger.length);
   return { state: { ...previous, stocks, tick }, ledger };
 }
 
