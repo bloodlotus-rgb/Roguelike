@@ -1,52 +1,26 @@
-# La Estirpe (Tainted Ancestry)
+# La Estirpe — laboratorio técnico
 
-Roguelike de supervivencia y exploración en tiempo real, para celular y navegador. El concepto está en [`docs/concepto.md`](docs/concepto.md).
+Roguelike gótico de linaje, exploración y supervivencia. **Estado de transición:** este repositorio está siendo preparado para validar el Jenga estructural y la ecología persistente mediante **Estirpe Sim**, antes del futuro juego definitivo en Godot.
 
-## Estado actual
+## Documentación vigente
 
-Etapas 1 (prototipo), 2 (combate) y atmósfera, con arte provisorio:
+- [GDD maestro](docs/GDD.md)
+- [Decisiones y reemplazos](docs/decisiones.md)
+- [Contrato espacial Jenga E0](docs/jenga-contrato.md)
+- [Contrato ecológico Estirpe Sim](docs/ecologia-contrato.md)
+- [Plan de limpieza del repositorio](docs/limpieza-repo.md)
+- [Especificación técnica de simulación](docs/estirpe-sim.md) y [plan](docs/estirpe-sim-plan.md)
 
-- Nivel generado desde una semilla (`?seed=...` en la URL; si no hay, se sortea una).
-- Elección de clase: **Verdugo**, **Saqueador** o **Cirial**, cada una con atributos, combo propio, especial con su forma de cargarse y una pasiva.
-- Joystick virtual (tocando cualquier parte de la pantalla) y tres botones: **Atacar** (golpe o parry), **Especial** y **Esquivar** (mantener: correr, que gasta sed y hambre y hace ruido).
-- Cuatro horrores (Rastrero, Hueco, Plañidera, Apagavelas) que avisan antes de atacar, se alertan entre sí y a veces deambulan entre salas. Tu luz te delata.
-- Salas rectangulares, cavernas y salas con columnas, con decorado, baldosas irregulares y paredes con mugre.
-- Personajes animados por código, con silueta propia por clase y por horror; la llama del héroe con chispas.
-- Atmósfera oscura: solo ves en un cono hacia adelante, dentro de tu luz, recortado por las paredes. Los horrores que te miran desde la oscuridad (o desde atrás) muestran los ojos.
-- Mapa desplegable con lo explorado (botón Mapa o tecla `M`); no pausa el juego.
-- **Motor 3D** (three.js): una sola mazmorra con dos cámaras, cenital inclinada y primera persona (botón Vista o tecla `V`; en primera persona, joystick arriba/abajo camina y a los costados gira). Luz de llama con sombras, paredes que se cortan a la rodilla del lado de la cámara, columnas redondas, decorado en el piso, tramas de tinta donde la luz se apaga y efectos de combate.
-- `?engine=classic` vuelve al motor anterior (vista dibujada en Phaser y raycaster).
-- Sonido generado por código: ambiente, pasos, la llama, latido con poca vida, avisos de cada ataque y horrores que se oyen antes de verse. Botón ♪ para silenciar.
-- Viñeta que se cierra cuando te cazan y se tiñe de rojo con poca vida.
-- Hambre, sed y luz bajan con el tiempo; atacar y esquivar gastan sed.
-- Escalera para bajar al siguiente nivel (`semilla + profundidad`).
-- Pausa al salir de la app o con Escape. Idioma español / inglés.
-- `?debug=1` expone la sesión en `window.estirpe` para probar desde la consola.
+Los demás documentos en `docs/` describen etapas anteriores; ante contradicciones manda el GDD y la decisión más reciente del usuario.
 
-En compu: WASD / flechas, `Espacio` o `J` para atacar, `Q` o `L` para el especial, `Shift` o `K` para esquivar (mantener: correr), `Enter` para bajar.
+## Estado del código
 
-Todavía no hay guardado, linaje, rasgos, jefes, campamentos ni noche. Diseño del combate en [`docs/combate.md`](docs/combate.md).
+Mientras no se fusione el PR de limpieza, `main` conserva la aplicación histórica Three.js/Phaser. Ver el `README.md` de la rama `archive/prototipo-threejs-2026-11-23` para instrucciones del prototipo.
 
-## Desarrollo
+La futura rama activa será **headless**, reproducible y con tests de TypeScript. No incluirá render del juego ni requerirá Godot para ejecutar simulaciones.
 
-```sh
-npm install
-npm run dev        # servidor local
-npm test           # tests de la lógica (vitest)
-npm run build      # typecheck + build de producción en dist/
-```
+**Aviso de despliegue:** actualmente `main` dispara un despliegue de Cloudflare. Antes de fusionar la limpieza que retira la aplicación, habrá que pausar o redirigir ese despliegue.
 
-## Deploy
+## Trabajo
 
-Cloudflare Workers (assets estáticos) con Workers Builds conectado al repo. Config en `wrangler.jsonc` (Worker `roguelike`).
-
-- `main` se publica en producción.
-- Las demás ramas generan una versión de vista previa con su propia URL.
-
-## Estructura
-
-- `src/core/`: lógica del juego en TypeScript puro (semilla, generación, colisiones, visión, supervivencia, atributos, clases, horrores, combate). Sin Phaser ni DOM.
-- `src/game/`: escena de Phaser y arte dibujado por código con Canvas: la mazmorra (`art.ts`) y los personajes animados en hojas de sprites (`sprites.ts`).
-- `src/ui/`: interfaz en HTML/CSS (HUD, controles, selección de clase, pantallas).
-- `src/i18n/`: textos en español e inglés.
-- `src/audio/`: sonido procedural con Web Audio.
+Ramas y PR individuales. No fusionar cambios automáticamente, no codificar una etapa no aprobada. Usar `CLAUDE.md` y `AGENTS.md` como reglas para colaboradores.

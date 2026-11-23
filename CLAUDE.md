@@ -1,42 +1,27 @@
-# La Estirpe (Tainted Ancestry) — instrucciones para Claude
+# La Estirpe — reglas para colaboradores
 
-Roguelike de supervivencia y exploración en tiempo real, para celular y navegador. Mazmorra persistente generada desde una semilla, muerte permanente y un linaje de herederos con rasgos. Proyecto aparte de Graphite (DnD-tools); no usa reglas de D&D.
+Roguelike gótico de supervivencia, exploración y linajes. El repositorio actual se reconvierte en **laboratorio determinista de Jenga y Estirpe Sim**; el juego definitivo se proyecta en Godot como proyecto separado. El prototipo visual anterior está preservado en `archive/prototipo-threejs-2026-11-23`.
+
+## Fuente de verdad
+1. Decisiones explícitas más recientes del usuario.
+2. `docs/GDD.md`, `docs/decisiones.md`.
+3. Contratos `docs/jenga-contrato.md` y `docs/ecologia-contrato.md`.
+4. Los demás documentos, históricos o provisionales, solo donde no contradigan lo anterior.
 
 ## Forma de trabajo
+- **No implementar nuevas etapas sin aprobación explícita**. Marcar supuestos y decisiones abiertas; pedir confirmación cuando sea indispensable.
+- Trabajar siempre en rama y abrir PR; `main` es estable. **No hacer merge a `main` sin autorización del usuario.**
+- Comunicación y documentación de diseño en español rioplatense. Identificadores de TypeScript en inglés.
+- No incluir identificadores de modelos de IA en commits, PRs o código.
 
-- **Preguntar siempre todo lo que sea necesario** antes de asumir. Ante una ambigüedad de diseño, mecánicas o alcance, consultar al usuario; si se avanza con un supuesto, marcarlo explícitamente para que lo valide.
-- No empezar la implementación de una etapa sin aprobación explícita del usuario.
-- Idioma: la conversación y los documentos de diseño son en español (rioplatense). Código e identificadores internos en inglés.
+## Simulación
+- TypeScript puro, desacoplado de Three.js, Phaser, DOM, navegador y Godot.
+- PRNG derivado de semilla mediante `Rng.derive`; nunca `Math.random()` en lógica ecológica.
+- Los grafos espaciales se derivan del plan Jenga, no se crean por separado; los conectores deben ser físicamente realizables.
+- Horrores comunes solo nacen en el Origen; viajes por aristas válidas; no spawn arbitrario; corrupción independiente.
+- Datos persistidos con versión. Guardar/reanudar debe conservar determinismo y contabilidad de individuos.
+- Tests con Vitest, TypeScript estricto. Reportar comandos realmente ejecutados y limitaciones.
+- No mezclar limpieza del prototipo, implementación de Jenga E0 y simulación ecológica en un único PR.
 
-## Diseño
-
-El concepto vigente está en `docs/concepto.md`. Ante contradicciones mandan las decisiones del usuario. Lo marcado ahí como **[Propuesta]** todavía no está aprobado.
-
-## Stack
-
-- Vite + TypeScript, PWA.
-- **three.js** para la mazmorra: un único mundo 3D con dos cámaras (cenital inclinada y primera persona), luz de llama con sombras reales, personajes planos y sombreado de tramas de tinta (`src/game/threeView.ts`, `threeEffects.ts`).
-- Motor clásico (Phaser 2D + raycaster) disponible con `?engine=classic`; se carga aparte y no entra en el paquete por defecto.
-- **HTML/CSS** para la interfaz, encima del canvas.
-- **Lógica en TypeScript puro** (`src/core/`), sin dependencias de motores gráficos ni del DOM, testeada con vitest.
-- IndexedDB para guardar. Sin backend.
-
-## Reglas técnicas
-
-- **Determinismo**: toda la generación (niveles, loot, monstruos, rasgos, herederos) sale de un PRNG con semilla. Nunca `Math.random()` en la lógica del juego.
-- **Guardado**: autoguardado continuo; no tiene que existir forma de volver a un estado anterior.
-- Todo dato persistido lleva versión de esquema y migraciones.
-- Interfaz y contenido en inglés y español: todos los textos son localizables, nada de texto fijo en el código.
-
-## Contenido y derechos
-
-- Todo el contenido es original. Se toman ideas de mecánicas de otros juegos (supervivencia, roguelikes, linajes), pero nunca sus nombres, personajes, arte, música ni su estilo visual reconocible.
-- Arte por código. Estilo objetivo: tinta y papel oscuro (la oscuridad es tinta; el papel solo bajo la llama), con dos vistas: cenital inclinada y primera persona.
-- Sonido generado con Web Audio en `src/audio/`, sin archivos de audio de terceros.
-
-## Git
-
-- `main` es siempre la versión estable.
-- Cada etapa o módulo se trabaja en su propia rama y entra a `main` vía pull request. El usuario aprueba el merge (o pide explícitamente que Claude lo mergee).
-- No commitear directo a `main` salvo pedido explícito del usuario.
-- No incluir identificadores de modelo en commits, PRs ni código.
+## Contenido
+Contenido original, textos del juego localizables en español e inglés. No incorporar material audiovisual de terceros sin permiso y licencias apropiadas.
