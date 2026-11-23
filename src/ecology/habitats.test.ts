@@ -1,4 +1,6 @@
 import { expect, it } from 'vitest';
+import { watershedTrial } from './trophic-contract';
+import { auditTrophic, foundColony, stepTrophic } from './trophic';
 import { assembleZone, CELL, Face } from '../core/jenga';
 import { makePlan } from '../core/plan';
 import { extractGraph, region, type Edge } from '../core/spatial';
@@ -96,5 +98,17 @@ it.each(['estirpe', 'mansion', 'zz'])('accounts for the complete occupied footpr
     }
     state = next.state;
   }
+  // Reuse this complete building to exercise the biological contract without another Jenga build.
+  const trial = watershedTrial(graph, 'periodic');
+  let colony = foundColony(graph, trial).state;
+  for (let hour = 0; hour < 48; hour++) {
+    const next = stepTrophic(graph, colony);
+    auditTrophic(colony.stocks, next.state.stocks, next.ledger);
+    colony = next.state;
+  }
+  const expected: Record<string, [string, number]> = {
+    estirpe: ['1/18/2/3/5', 19], mansion: ['10/55/31/3/5', 29], zz: ['13/32/15/3/5', 37],
+  };
+  expect([trial.connector, colony.stocks.size]).toEqual(expected[seed]);
   console.log(seed, graph.regionToHabitat.size, graph.habitats.length, Math.round(performance.now() - started), 'ms');
 }, 45_000);
