@@ -322,6 +322,15 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
     if (spec.zone % 5 === 0 && !reserveMacro(monumentalAtrium(6, storeys), 80)) {
       throw new Error('Cannot reserve monumental atrium in zone ' + spec.zone);
     }
+    // Reserve AND physically attach the large structures before minor pieces
+    // can seal off the rock around them. A later connectivity repair must never
+    // be permitted to silently discard a planned monument.
+    connect(blocks, cells, { width, depth, storeys, index, inside, place, rng, arrival: arrivalBlock.id });
+    for (const macro of blocks.filter(b => b.def.kind === 'macro')) {
+      if (cells[index(...macro.at)] !== macro.id) {
+        throw new Error('Macropiece discarded during initial connection in zone ' + spec.zone);
+      }
+    }
   }
 
   // The ways between storeys, planted first: for each storey, a few spirals going down.
@@ -497,6 +506,14 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
       way.openings.push({ cell: [exitCell[0], exitCell[1], storeys - 1], face: opposite(face), joined: true });
       exit = way.id;
     } else exit = null;
+  }
+  // Any loss of a macro after ordinary growth is a generation failure, not
+  // an implicit permission to shrink the architectural design.
+  if (width >= 12 && depth >= 12 && storeys >= 2) {
+    const present = blocks.filter(b => b.def.kind === 'macro' && cells[index(...b.at)] === b.id).length;
+    if (present !== (spec.zone % 5 === 0 ? 2 : 1)) {
+      throw new Error('Macropiece reservation lost in zone ' + spec.zone);
+    }
   }
   // Doors that lead nowhere are walled up.
   for (const b of blocks) b.openings = b.openings.filter((o) => o.joined);
