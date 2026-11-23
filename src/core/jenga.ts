@@ -719,7 +719,7 @@ export function zoneText(layout: ZoneLayout): string[][] {
       let row = '';
       for (let x = 0; x < width; x++) {
         const id = layout.cells[x + y * width + z * width * depth];
-        row += id < 0 ? '·' : letter[layout.blocks[id].def.kind];
+        row += id === -2 ? '○' : id < 0 ? '·' : letter[layout.blocks[id].def.kind];
       }
       rows.push(row);
     }
