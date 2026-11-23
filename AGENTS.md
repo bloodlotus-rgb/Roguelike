@@ -58,3 +58,8 @@ El simulador **no** puede inventar conexiones a mitad de una ejecución. Las pue
 - Pruebas ejecutadas y resultados reales; no declarar como ejecutadas las que no se corrieron.
 - Garantías de determinismo, compatibilidad, persistencia y rendimiento.
 - Riesgos observados y cuestiones que requieren aprobación del usuario.
+
+
+## Actualización de estado — noviembre de 2026
+El **GDD actual es `docs/GDD.md`**, no `docs/concepto.md`. Están aprobadas como dirección de diseño la construcción modular de clases, Sustento único como barra de abastecimiento, Archivo, Arcón, logística y refugios; cantidades exactas y catálogos permanecen provisionales. Véase `docs/decisiones.md`.
+La tarea inmediata es **archivo del prototipo y limpieza técnica**, en PR separados de la implementación Jenga E0. No implementar fauna, corrupción ni el catálogo de horrores durante el PR de limpieza. El archivo histórico es `archive/prototipo-threejs-2026-11-23`.
