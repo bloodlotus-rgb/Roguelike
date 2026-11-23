@@ -6,7 +6,8 @@
  *
  * A storey is what the game still calls a depth (1 at the top). Pure data, deterministic.
  */
-import type { KeyKind } from './inventory';
+/** Key material for an inter-zone lock; independent of the legacy inventory. */
+type KeyKind = 'keyIron' | 'keyBronze' | 'keyBone';
 import { Rng } from './rng';
 
 export const STOREYS_PER_ZONE = 4;

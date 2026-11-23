@@ -29,3 +29,6 @@ Rama de archivo inmutable por convenio: `archive/prototipo-threejs-2026-11-23`, 
 - El PR de limpieza es **incompatible con el sitio PWA actual**: fusionarlo dejará `main` como laboratorio sin frontend. Antes de fusionar, pausar o cambiar el despliegue automático de Cloudflare.
 - No afirmar que pasaron tests sin ejecutarlos efectivamente. Mantener un informe de tests pendientes si no hay entorno de ejecución disponible.
 - Si un módulo borrado resulta valioso, recuperarlo desde la rama archivo mediante cherry-pick o reimplementación acotada.
+
+## Estado de esta rama
+La limpieza se propone como PR de **borrador**, dependiente del PR documental #49. Se retiraron los componentes heredados del árbol activo y se dejaron las pruebas del núcleo. **Bloqueantes antes de fusionar:** regeneración de `package-lock.json`, ejecución de `npm run check` y coordinación de despliegue Cloudflare. Ninguno de esos pasos debe declararse completado sin verificarlo.
