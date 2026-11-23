@@ -1,6 +1,6 @@
 # Jenga E0-M — macropiezas que organizan una zona completa
 
-**Estado:** primer prototipo estructural en rama de trabajo, apilado sobre E0 (PR #51). No es arte vóxel ni validación universal de todas las semillas.
+**Estado:** prototipo estructural en PR #52, apilado sobre E0 (PR #51). CI de GitHub con Node 24 aprobó 37 pruebas, compilación y diagnóstico `estirpe`. No es arte vóxel ni validación universal de semillas.
 
 ## Razón arquitectónica
 
@@ -45,4 +45,15 @@ npm run build
 npm run --silent jenga:report -- estirpe mansion zz
 ```
 
-**No declarar los tests como aprobados hasta obtener una ejecución real.** El PR es un borrador hasta verificar y revisar.
+## Ejecución real — CI de GitHub
+
+En el commit `6afd750`, el workflow **Estirpe Sim - TypeScript y Jenga** ejecutó `npm ci`, `npm run check`, `npm run build` y `npm run --silent jenga:report -- estirpe` con resultado correcto.
+
+- **37 tests aprobados**, seis archivos.
+- Semilla `estirpe`: 25 zonas, 30 macropiezas (25 galerías y 5 atrios), 320 celdas vacías reservadas, 123.058 regiones, 127.864 conexiones.
+- Una componente física, cero errores, y el jugador alcanza el Origen.
+- Armado + extracción: 1.615 ms; diagnóstico total: 2.215 ms; pico RSS: 457 MiB en ese proceso.
+
+Los números se refieren exclusivamente a la semilla y entorno de este CI. La comparación con E0 histórico no es un benchmark controlado.
+
+**Pendiente antes de fusionar:** ampliar a 100 semillas y resolver las fallas que surjan, si las hay. El PR permanece en borrador.
