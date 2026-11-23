@@ -61,7 +61,12 @@ function report(seed: string) {
   if (!path) errors.push('Player cannot reach Origin');
   const components = countComponents(graph);
   if (components !== 1) errors.push('Disconnected physical regions: ' + components);
-  return { seed, zones: structure.zones.length,
+  const macroPieces = structure.zones.reduce((n, z) => n + z.blocks.filter(b =>
+    b.def.kind === 'macro' && z.cells[b.at[0] + b.at[1] * z.spec.width +
+      b.at[2] * z.spec.width * z.spec.depth] === b.id).length, 0);
+  const reservedVoidCells = structure.zones.reduce((n, z) =>
+    n + z.cells.filter(id => id === -2).length, 0);
+  return { seed, zones: structure.zones.length, macroPieces, reservedVoidCells,
     pieces: structure.zones.reduce((sum, z) => sum + new Set(z.cells.filter(id => id >= 0)).size, 0),
     regions: graph.adjacent.size, connectors: graph.edges.size, sections, components,
     mansion, origin, playerCrossings: path?.length ?? null, playerRouteMs, routes, buildMs,

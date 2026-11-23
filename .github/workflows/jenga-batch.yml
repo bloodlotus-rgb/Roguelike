@@ -1,0 +1,52 @@
+name: Jenga E0-M - 100 semillas
+on:
+  pull_request:
+    paths:
+      - 'src/core/jenga.ts'
+      - 'src/core/macros.ts'
+      - 'src/core/spatial.ts'
+      - 'src/core/structure.ts'
+      - '.github/workflows/jenga-batch.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Validar veinte edificios por proceso aislado
+        shell: bash
+        run: |
+          for i in $(seq 0 19); do
+            n=$(( ${{ matrix.shard }} * 20 + i ))
+            seed="e0m-$n"
+            output=$(mktemp)
+            if ! node scripts/jenga-report.ts "$seed" > "$output"; then
+              cat "$output"
+              exit 1
+            fi
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const r = JSON.parse(readFileSync(process.argv[1], "utf8"));
+              if (r.errors.length || r.components !== 1 || r.macroPieces !== 30 ||
+                  !r.routes.player.reachesMansion || !r.routes.small.reachesMansion) {
+                console.error("Invalid Jenga seed:", JSON.stringify(r));
+                process.exit(1);
+              }
+              console.log(JSON.stringify({seed:r.seed, pieces:r.pieces,
+                regions:r.regions, connectors:r.connectors, macros:r.macroPieces,
+                voids:r.reservedVoidCells, ms:r.totalMs, rssMiB:r.peakRssMiB}));
+            ' "$output"
+            rm "$output"
+          done

@@ -21,6 +21,7 @@
  * Pure logic, deterministic from the seed.
  */
 import { Rng } from './rng.ts';
+import { monumentalAtrium, processionalGallery } from './macros.ts';
 
 /** Tiles a cell measures a side. */
 export const CELL = 6;
@@ -61,7 +62,7 @@ export interface Opening {
  * halls, which hang from the circulation), or a complex (several rooms round its own
  * circulation, which goes on into the zone's).
  */
-export type BlockKind = 'corridor' | 'room' | 'hall' | 'vertical' | 'well' | 'tunnel' | 'complex';
+export type BlockKind = 'corridor' | 'room' | 'hall' | 'vertical' | 'well' | 'tunnel' | 'complex' | 'macro';
 
 /** Spaces hang from the circulation; everything else is (or carries) circulation. */
 export function isSpace(kind: BlockKind): boolean {
@@ -82,6 +83,8 @@ export interface BlockDef {
   stair?: boolean;
   /** Compound cells are separate chambers. Each cut joins exactly two adjacent chambers. */
   interior?: Opening[];
+  /** Empty volume permanently reserved for a multi-storey macropiece; not a floor. */
+  voidCells?: Array<[number, number, number]>;
 }
 
 /** A piece set in the zone. */
@@ -175,7 +178,7 @@ export const BASIC_BLOCKS: BlockDef[] = [
 ];
 
 /** The well one arrives by, from the zone above (its hatch up is the passage). */
-export const ARRIVAL: BlockDef = { id: 'arrival', kind: 'well', size: [1, 1, 1], openings: [{ at: [0, 0, 0], face: Face.Up }, door(0, 0, 0, Face.E), door(0, 0, 0, Face.W)], weight: 0 };
+export const ARRIVAL: BlockDef = { id: 'arrival', kind: 'well', size: [1, 1, 1], openable: true, openings: [{ at: [0, 0, 0], face: Face.Up }, door(0, 0, 0, Face.E), door(0, 0, 0, Face.W)], weight: 0 };
 /** The well out, to the zone below (its hatch down is the passage, locked). */
 export const EXIT: BlockDef = { id: 'exit', kind: 'well', size: [1, 1, 1], openings: [{ at: [0, 0, 0], face: Face.Down }], weight: 0 };
 const TUNNEL: BlockDef = { id: 'tunnel', kind: 'tunnel', size: [1, 1, 1], openings: [], weight: 0, openable: true };
@@ -247,7 +250,15 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
   const place = (def: BlockDef, p: Omit<Placed, 'id' | 'def'>): Placed => {
     const placed: Placed = { ...p, id: blocks.length, def };
     blocks.push(placed);
-    for (let z = 0; z < p.size[2]; z++) for (let y = 0; y < p.size[1]; y++) for (let x = 0; x < p.size[0]; x++) cells[index(p.at[0] + x, p.at[1] + y, p.at[2] + z)] = placed.id;
+    // -2 means reserved air void: other pieces must not fill it and it has no floor.
+    const reservedVoid = def.voidCells && new Set(def.voidCells.map(local => {
+      const transformed = placeOpening(def, p.at, p.turn, { at: local, face: Face.Up }).cell;
+      return transformed.join('/');
+    }));
+    for (let z = 0; z < p.size[2]; z++) for (let y = 0; y < p.size[1]; y++) for (let x = 0; x < p.size[0]; x++) {
+      const wx = p.at[0] + x, wy = p.at[1] + y, wz = p.at[2] + z;
+      cells[index(wx, wy, wz)] = reservedVoid?.has([wx, wy, wz].join('/')) ? -2 : placed.id;
+    }
     used += p.size[0] * p.size[1] * p.size[2];
     return placed;
   };
@@ -285,6 +296,42 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
   const arrivalBlock = place(ARRIVAL, setAt(ARRIVAL, [ax, ay, 0], rng.int(0, 3)));
   arrivalBlock.openings[0].joined = true;
   const frontier: Array<[number, number]> = join(arrivalBlock);
+
+  // E0-M: architectural anchors reserve their full 3D envelope before the
+  // ordinary circulation/room growth. They cannot cross a sealed zone slab.
+  const reserveMacro = (def: BlockDef, attempts: number, preferred?: 0 | 1): boolean => {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const turn = preferred ?? rng.int(0, 3);
+      const size = turn % 2 === 0 ? def.size : [def.size[1], def.size[0], def.size[2]];
+      const maxX = width - size[0] - 1, maxY = depth - size[1] - 1;
+      if (maxX < 1 || maxY < 1) return false;
+      const candidate = setAt(def, [rng.int(1, maxX), rng.int(1, maxY), 0], turn);
+      if (!fits(candidate)) continue;
+      frontier.push(...join(place(def, candidate)));
+      return true;
+    }
+    return false;
+  };
+  if (width >= 12 && depth >= 12 && storeys >= 2) {
+    const horizontal = width >= depth;
+    const gallery = processionalGallery((horizontal ? width : depth) - 2, storeys);
+    if (!reserveMacro(gallery, 50, horizontal ? 0 : 1)) {
+      throw new Error('Cannot reserve zone-spanning gallery in zone ' + spec.zone);
+    }
+    // Every fifth zone marks an area with a four-storey central void.
+    if (spec.zone % 5 === 0 && !reserveMacro(monumentalAtrium(6, storeys), 80)) {
+      throw new Error('Cannot reserve monumental atrium in zone ' + spec.zone);
+    }
+    // Reserve AND physically attach the large structures before minor pieces
+    // can seal off the rock around them. A later connectivity repair must never
+    // be permitted to silently discard a planned monument.
+    connect(blocks, cells, { width, depth, storeys, index, inside, place, rng, arrival: arrivalBlock.id });
+    for (const macro of blocks.filter(b => b.def.kind === 'macro')) {
+      if (cells[index(...macro.at)] !== macro.id) {
+        throw new Error('Macropiece discarded during initial connection in zone ' + spec.zone);
+      }
+    }
+  }
 
   // The ways between storeys, planted first: for each storey, a few spirals going down.
   const verticals = BASIC_BLOCKS.filter((b) => b.kind === 'vertical');
@@ -354,6 +401,10 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
   const spaces = BASIC_BLOCKS.filter((b) => isSpace(b.kind));
   const all = width * depth * storeys;
   const density = spec.density ?? 0.42;
+  // Macropiece envelopes reserve space *before* corridor growth. Counting them against
+  // the circulation budget suppresses ring formation and starves normal rooms.
+  const architecturalReserve = blocks.filter(b => b.def.kind === 'macro').reduce((sum, b) =>
+    sum + b.size[0] * b.size[1] * b.size[2], 0);
   /**
    * Rooms along the passages: beside a passage (or a tunnel) with free rock on that side,
    * now and then a room, with a door opened in the passage's wall. Then rooms on the
@@ -398,13 +449,13 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
   };
 
   // First the circulation: about a quarter of what will be built.
-  grow(circulation, Math.floor(all * density * 0.28), false);
+  grow(circulation, Math.floor(all * density * 0.28) + architecturalReserve, false);
   // Loops: some dangling passages joined to other circulation close by, so there are ways round.
   closeLoops(blocks, cells, { width, depth, storeys, index, inside, place, rng, arrival: arrivalBlock.id }, 5, Math.max(storeys * 3, Math.round((width * depth * storeys) / 140)));
   // Then the rooms, hung from the circulation.
-  hangRooms(Math.floor(all * density), 0.45);
+  hangRooms(Math.floor(all * density) + architecturalReserve, 0.45);
   // And if the zone is still thin, more circulation and rooms off it, in turn.
-  for (let round = 0; round < 4 && used < Math.floor(all * density * 0.85); round++) {
+  for (let round = 0; round < 4 && used < Math.floor(all * density * 0.85) + architecturalReserve; round++) {
     for (const b of blocks) {
       if (isSpace(b.def.kind)) continue;
       b.openings.forEach((op, i) => {
@@ -412,7 +463,7 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
       });
     }
     grow(circulation, used + Math.floor(all * density * 0.06), false);
-    hangRooms(Math.floor(all * density), 0.45);
+    hangRooms(Math.floor(all * density) + architecturalReserve, 0.45);
   }
 
   // Whatever is not joined to the arrival gets a tunnel to it, through the rock.
@@ -454,7 +505,43 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
       way.openings[0].joined = true;
       way.openings.push({ cell: [exitCell[0], exitCell[1], storeys - 1], face: opposite(face), joined: true });
       exit = way.id;
-    } else exit = null;
+    } else {
+      // Robust, physically grounded fallback: attach the zone exit beside the
+      // already-connected longitudinal gallery. Never accept an absent exit or
+      // invent a graph-only teleport when ordinary packing consumed all exits.
+      const gallery = blocks.find(b => b.def.kind === 'macro' &&
+        b.def.id.startsWith('processional-') && cells[index(...b.at)] === b.id);
+      let reserved: { source: [number, number, number]; target: [number, number, number]; face: Face; score: number } | null = null;
+      if (gallery) {
+        for (let y = 0; y < gallery.size[1]; y++) for (let x = 0; x < gallery.size[0]; x++) {
+          const source: [number, number, number] = [gallery.at[0] + x, gallery.at[1] + y, storeys - 1];
+          if (cells[index(...source)] !== gallery.id) continue;
+          for (const face of [Face.E, Face.S, Face.W, Face.N]) {
+            const [dx, dy] = STEP[face];
+            const target: [number, number, number] = [source[0] + dx, source[1] + dy, source[2]];
+            if (!inside(...target) || cells[index(...target)] !== -1) continue;
+            const score = Math.abs(target[0] - ax) + Math.abs(target[1] - ay);
+            if (!reserved || score > reserved.score) reserved = { source, target, face, score };
+          }
+        }
+      }
+      if (!gallery || !reserved) throw new Error('No physically available exit for zone ' + spec.zone);
+      const { source, target, face } = reserved;
+      gallery.openings.push({ cell: source, face, joined: true });
+      const well = place(EXIT, setAt(EXIT, target, 0));
+      well.openings[0].joined = true; // Real downward passage through this zone's reserved slab.
+      well.openings.push({ cell: target, face: opposite(face), joined: true });
+      exit = well.id;
+      exitCell = [target[0], target[1]];
+    }
+  }
+  // Any loss of a macro after ordinary growth is a generation failure, not
+  // an implicit permission to shrink the architectural design.
+  if (width >= 12 && depth >= 12 && storeys >= 2) {
+    const present = blocks.filter(b => b.def.kind === 'macro' && cells[index(...b.at)] === b.id).length;
+    if (present !== (spec.zone % 5 === 0 ? 2 : 1)) {
+      throw new Error('Macropiece reservation lost in zone ' + spec.zone);
+    }
   }
   // Doors that lead nowhere are walled up.
   for (const b of blocks) b.openings = b.openings.filter((o) => o.joined);
@@ -522,6 +609,8 @@ function connect(
         for (let y = 0; y < b.size[1]; y++)
           for (let x = 0; x < b.size[0]; x++)
             for (const f of sides) {
+              // Do not open a tunnel into a reserved void (no traversable landing).
+              if (cells[g.index(b.at[0] + x, b.at[1] + y, z)] !== b.id) continue;
               const [dx, dy] = STEP[f];
               const nx = b.at[0] + x + dx;
               const ny = b.at[1] + y + dy;
@@ -671,7 +760,7 @@ function closeLoops(
 /** The zone storey by storey in text, for tests and debugging: a letter per cell. */
 export function zoneText(layout: ZoneLayout): string[][] {
   const { width, depth, storeys } = layout.spec;
-  const letter: Record<BlockKind, string> = { corridor: '+', room: 'r', hall: 'H', vertical: 'S', well: 'W', tunnel: 't', complex: 'C' };
+  const letter: Record<BlockKind, string> = { corridor: '+', room: 'r', hall: 'H', vertical: 'S', well: 'W', tunnel: 't', complex: 'C', macro: 'M' };
   const out: string[][] = [];
   for (let z = 0; z < storeys; z++) {
     const rows: string[] = [];
@@ -679,7 +768,7 @@ export function zoneText(layout: ZoneLayout): string[][] {
       let row = '';
       for (let x = 0; x < width; x++) {
         const id = layout.cells[x + y * width + z * width * depth];
-        row += id < 0 ? '·' : letter[layout.blocks[id].def.kind];
+        row += id === -2 ? '○' : id < 0 ? '·' : letter[layout.blocks[id].def.kind];
       }
       rows.push(row);
     }

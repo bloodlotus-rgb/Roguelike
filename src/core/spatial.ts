@@ -100,6 +100,8 @@ export function extractGraph(structure: Pick<Structure, 'zones' | 'passages'>): 
         const [width, depth] = block.def.interior ? block.size : [1, 1];
         for (let y = 0; y < depth; y++) for (let x = 0; x < width; x++) {
           const cell: Cell = [block.at[0] + x, block.at[1] + y, z];
+          // Reserved voids have no walking region even though their envelope is occupied.
+          if (owner(layout, cell) !== block.id) continue;
           adjacent.set(region(layout, { zone, block: block.id, cell }), []);
         }
       }
@@ -109,7 +111,7 @@ export function extractGraph(structure: Pick<Structure, 'zones' | 'passages'>): 
         const { cell, face } = placeOpening(block.def, block.at, block.turn, cut);
         const a: Port = { zone, block: block.id, cell, face };
         const b = { ...a, cell: adjacentCell(cell, face), face: opposite(face) };
-        if (bearing(layout, a) && bearing(layout, b)) add(a, b, 'interior');
+        if (bearing(layout, a) && bearing(layout, b)) add(a, b, face >= Face.Up ? 'stairs' : 'interior');
         else errors.push('Interior cut outside its footprint at ' + region(layout, a));
       }
       if (block.def.stair) {
