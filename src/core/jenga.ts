@@ -21,6 +21,7 @@
  * Pure logic, deterministic from the seed.
  */
 import { Rng } from './rng.ts';
+import { monumentalAtrium, processionalGallery } from './macros.ts';
 
 /** Tiles a cell measures a side. */
 export const CELL = 6;
@@ -61,7 +62,7 @@ export interface Opening {
  * halls, which hang from the circulation), or a complex (several rooms round its own
  * circulation, which goes on into the zone's).
  */
-export type BlockKind = 'corridor' | 'room' | 'hall' | 'vertical' | 'well' | 'tunnel' | 'complex';
+export type BlockKind = 'corridor' | 'room' | 'hall' | 'vertical' | 'well' | 'tunnel' | 'complex' | 'macro';
 
 /** Spaces hang from the circulation; everything else is (or carries) circulation. */
 export function isSpace(kind: BlockKind): boolean {
@@ -82,6 +83,8 @@ export interface BlockDef {
   stair?: boolean;
   /** Compound cells are separate chambers. Each cut joins exactly two adjacent chambers. */
   interior?: Opening[];
+  /** Empty volume permanently reserved for a multi-storey macropiece; not a floor. */
+  voidCells?: Array<[number, number, number]>;
 }
 
 /** A piece set in the zone. */
@@ -247,7 +250,15 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
   const place = (def: BlockDef, p: Omit<Placed, 'id' | 'def'>): Placed => {
     const placed: Placed = { ...p, id: blocks.length, def };
     blocks.push(placed);
-    for (let z = 0; z < p.size[2]; z++) for (let y = 0; y < p.size[1]; y++) for (let x = 0; x < p.size[0]; x++) cells[index(p.at[0] + x, p.at[1] + y, p.at[2] + z)] = placed.id;
+    // -2 means reserved air void: other pieces must not fill it and it has no floor.
+    const reservedVoid = def.voidCells && new Set(def.voidCells.map(local => {
+      const transformed = placeOpening(def, p.at, p.turn, { at: local, face: Face.Up }).cell;
+      return transformed.join('/');
+    }));
+    for (let z = 0; z < p.size[2]; z++) for (let y = 0; y < p.size[1]; y++) for (let x = 0; x < p.size[0]; x++) {
+      const wx = p.at[0] + x, wy = p.at[1] + y, wz = p.at[2] + z;
+      cells[index(wx, wy, wz)] = reservedVoid?.has([wx, wy, wz].join('/')) ? -2 : placed.id;
+    }
     used += p.size[0] * p.size[1] * p.size[2];
     return placed;
   };
@@ -285,6 +296,33 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
   const arrivalBlock = place(ARRIVAL, setAt(ARRIVAL, [ax, ay, 0], rng.int(0, 3)));
   arrivalBlock.openings[0].joined = true;
   const frontier: Array<[number, number]> = join(arrivalBlock);
+
+  // E0-M: architectural anchors reserve their full 3D envelope before the
+  // ordinary circulation/room growth. They cannot cross a sealed zone slab.
+  const reserveMacro = (def: BlockDef, attempts: number, preferred?: 0 | 1): boolean => {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const turn = preferred ?? rng.int(0, 3);
+      const size = turn % 2 === 0 ? def.size : [def.size[1], def.size[0], def.size[2]];
+      const maxX = width - size[0] - 1, maxY = depth - size[1] - 1;
+      if (maxX < 1 || maxY < 1) return false;
+      const candidate = setAt(def, [rng.int(1, maxX), rng.int(1, maxY), 0], turn);
+      if (!fits(candidate)) continue;
+      frontier.push(...join(place(def, candidate)));
+      return true;
+    }
+    return false;
+  };
+  if (width >= 12 && depth >= 12 && storeys >= 2) {
+    const horizontal = width >= depth;
+    const gallery = processionalGallery((horizontal ? width : depth) - 2, storeys);
+    if (!reserveMacro(gallery, 50, horizontal ? 0 : 1)) {
+      throw new Error('Cannot reserve zone-spanning gallery in zone ' + spec.zone);
+    }
+    // Every fifth zone marks an area with a four-storey central void.
+    if (spec.zone % 5 === 0 && !reserveMacro(monumentalAtrium(6, storeys), 80)) {
+      throw new Error('Cannot reserve monumental atrium in zone ' + spec.zone);
+    }
+  }
 
   // The ways between storeys, planted first: for each storey, a few spirals going down.
   const verticals = BASIC_BLOCKS.filter((b) => b.kind === 'vertical');
@@ -522,6 +560,8 @@ function connect(
         for (let y = 0; y < b.size[1]; y++)
           for (let x = 0; x < b.size[0]; x++)
             for (const f of sides) {
+              // Do not open a tunnel into a reserved void (no traversable landing).
+              if (cells[g.index(b.at[0] + x, b.at[1] + y, z)] !== b.id) continue;
               const [dx, dy] = STEP[f];
               const nx = b.at[0] + x + dx;
               const ny = b.at[1] + y + dy;
@@ -671,7 +711,7 @@ function closeLoops(
 /** The zone storey by storey in text, for tests and debugging: a letter per cell. */
 export function zoneText(layout: ZoneLayout): string[][] {
   const { width, depth, storeys } = layout.spec;
-  const letter: Record<BlockKind, string> = { corridor: '+', room: 'r', hall: 'H', vertical: 'S', well: 'W', tunnel: 't', complex: 'C' };
+  const letter: Record<BlockKind, string> = { corridor: '+', room: 'r', hall: 'H', vertical: 'S', well: 'W', tunnel: 't', complex: 'C', macro: 'M' };
   const out: string[][] = [];
   for (let z = 0; z < storeys; z++) {
     const rows: string[] = [];
