@@ -26,7 +26,7 @@ Rama de archivo inmutable por convenio: `archive/prototipo-threejs-2026-11-23`, 
 ## Validación y seguridad
 - No hacer commit directo a main ni merge automático.
 - Verificar que el snapshot de archivo conserva los archivos históricos.
-- El PR de limpieza es **incompatible con el sitio PWA actual**: fusionarlo dejará `main` como laboratorio sin frontend. Antes de fusionar, pausar o cambiar el despliegue automático de Cloudflare.
+- El PR de limpieza es **incompatible con el sitio PWA anterior** y convertirá `main` en laboratorio sin frontend. El usuario decidió abandonar la demo como producto activo (23/11/2026). El despliegue automático legado de Cloudflare deberá desactivarse por separado: un fallo de ese build no implica un fallo del código headless.
 - No afirmar que pasaron tests sin ejecutarlos efectivamente. Mantener un informe de tests pendientes si no hay entorno de ejecución disponible.
 - Si un módulo borrado resulta valioso, recuperarlo desde la rama archivo mediante cherry-pick o reimplementación acotada.
 
@@ -43,6 +43,10 @@ Con Node.js 24.22.3 y npm 11.19.1 se ejecutaron `npm install` para regenerar el 
 
 Las pruebas coinciden con las del prototipo archivado. Con TypeScript 5.9.3, destino ES2022 y comentarios omitidos, los tres módulos emiten JavaScript idéntico al del archivo. La única diferencia del núcleo es que `plan.ts` declara localmente el tipo de llave que antes importaba del inventario legado.
 
-**Riesgo de despliegue.** El script de build ahora verifica tipos y el árbol activo carece de los assets de la PWA. Antes del merge hay que pausar o reorientar el despliegue automático de Cloudflare. npm también reportó que el postinstall de `esbuild@0.25.12` no figura en su lista de permisos. La instalación limpia, la comprobación de tipos y las pruebas finalizaron correctamente en el entorno verificado.
+**Estado de despliegue.** El script de build ahora verifica tipos y el árbol activo carece de assets PWA. El usuario decidió retirar la demo como objetivo activo. La integración del núcleo headless es independiente del despliegue de Cloudflare; habrá que desconectar la integración legada para evitar señales de CI irrelevantes. npm también reportó que el postinstall de `esbuild@0.25.12` no figura en su lista de permisos. La instalación limpia, la comprobación de tipos y las pruebas finalizaron correctamente en el entorno verificado.
 
 **Candidatos para rescatar del archivo.** `locations.ts` detecta y valida conectores en plantillas y `pieces.ts` conserva el catálogo de piezas. `paths.ts`, `bodies.ts` y `voxels.ts` aportan algoritmos de superficies transitables, colisión y altura, pero sus dependencias del generador legado requieren desacople. `geometry.ts` también depende del mapa legado y sirve como referencia para colisión y visibilidad en 2D.
+
+
+## Decisión final: comienzo desde cero en la rama activa (23/11/2026)
+Por decisión explícita del usuario, se abandona la demo pública como objetivo de mantenimiento. Se integra el PR documental #49 y después el PR de limpieza #50 en `main`. El prototipo queda solo como código de archivo recuperable. **La publicación Cloudflare no se desactivó desde GitHub:** si sigue activa, debe retirarse desde la consola de Cloudflare. No incorporar frontend ni restaurar PWA por un error de despliegue heredado.

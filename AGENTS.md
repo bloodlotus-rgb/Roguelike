@@ -21,4 +21,4 @@ Reconversión del repositorio a simulador headless. Esta rama de limpieza **no e
 - Conservar `rng.ts`, `plan.ts`, `jenga.ts` y sus pruebas.
 - Eliminar del árbol activo el generador de plantas legado y el frontend Three.js/Phaser, sin alterar la referencia archivada.
 - Regenerar `package-lock.json` con `npm install`, verificar `npm run check`, corregir lo necesario.
-- No fusionar sin resolver el despliegue de Cloudflare, dado que `main` actualmente construye una PWA.
+- **Decisión actual:** `main` abandona la PWA y es el laboratorio headless. Los fallos del despliegue de Cloudflare legado deben registrarse y desactivarse por separado; no intentar restaurar una aplicación web para satisfacer ese check.
