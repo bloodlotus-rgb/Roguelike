@@ -8,7 +8,7 @@
  */
 /** Key material for an inter-zone lock; independent of the legacy inventory. */
 type KeyKind = 'keyIron' | 'keyBronze' | 'keyBone';
-import { Rng } from './rng';
+import { Rng } from './rng.ts';
 
 export const STOREYS_PER_ZONE = 4;
 export const ZONES_PER_AREA = 5;
