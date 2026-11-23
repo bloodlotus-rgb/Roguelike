@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test",
     "build": "npm run typecheck",
-    "jenga:report": "node scripts/jenga-report.ts"
+    "jenga:report": "node scripts/jenga-report.ts",
+    "ecology:report": "node scripts/ecology-report.ts"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
