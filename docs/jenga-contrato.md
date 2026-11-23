@@ -1,6 +1,6 @@
 # Jenga E0 — Contrato espacial previo a simulación
 
-**Estado:** contrato funcional de diseño; la implementación E0 se hará en PR separado.
+La implementación y las comprobaciones de este contrato se describen en el [informe de E0](jenga-e0.md).
 
 ## Fuente única de verdad
 `src/core/plan.ts` define estructura global; `src/core/jenga.ts` define la disposición de piezas y aberturas. El grafo ecológico **se deriva** de esos datos; el futuro generador vóxel respeta las mismas aberturas y rutas. No crear un grafo aleatorio paralelo.

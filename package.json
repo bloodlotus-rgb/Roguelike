@@ -7,9 +7,11 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test",
-    "build": "npm run typecheck"
+    "build": "npm run typecheck",
+    "jenga:report": "node scripts/jenga-report.ts"
   },
   "devDependencies": {
+    "@types/node": "24.19.2",
     "typescript": "5.9.3",
     "vitest": "3.2.4"
   }

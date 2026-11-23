@@ -3,16 +3,19 @@
 Laboratorio en **TypeScript sin motor gráfico** para verificar que un edificio Jenga procedural pueda sostener fauna, horrores migratorios, corrupción independiente y persistencia de generaciones.
 
 ## Estado
-**Transición del prototipo:** esta rama retiene únicamente `rng.ts`, `plan.ts`, `jenga.ts` y pruebas asociadas. La ecología y el grafo aún no están implementados. Los módulos retirados continúan íntegros en la rama [archivo del prototipo](https://github.com/bloodlotus-rgb/Roguelike/tree/archive/prototipo-threejs-2026-11-23).
-
-**La limpieza técnica está verificada.** El lockfile está versionado y Codex reportó `npm run check` con 11 pruebas aprobadas. **Decisión del proyecto (23/11/2026):** la demo anterior deja de ser producto activo; `main` pasa a ser el laboratorio Estirpe Sim. El despliegue automático legado de Cloudflare no forma parte de este proyecto y puede fallar mientras siga conectado. Su retiro de Cloudflare debe gestionarse por separado.
+El laboratorio genera el edificio completo de Jenga y permite consultar rutas entre la entrada de la mansión y el Origen. El informe de E0 describe las interfaces, las restricciones de movimiento, la integración de `building3b` y las mediciones. [Informe técnico de Jenga E0](docs/jenga-e0.md)
 
 ## Entorno y comprobación
+
+Con Node.js 24, ejecutá:
+
 ```bash
 npm ci
 npm run check
+npm run --silent jenga:report -- estirpe mansion
 ```
-El flujo de desarrollo usa TypeScript y Vitest. Los resultados y el riesgo de despliegue están registrados en el [informe de limpieza](docs/limpieza-repo.md#verificación-del-pr-50).
+
+El diagnóstico escribe una línea JSON por semilla. Los módulos retirados siguen en la [rama de archivo del prototipo](https://github.com/bloodlotus-rgb/Roguelike/tree/archive/prototipo-threejs-2026-11-23).
 
 ## Especificaciones vigentes
 - [GDD maestro](docs/GDD.md)
@@ -25,7 +28,7 @@ El flujo de desarrollo usa TypeScript y Vitest. Los resultados y el riesgo de de
 
 ## Próximo trabajo
 1. Retirar o desactivar por separado el despliegue automático legado de Cloudflare; no es necesario para el laboratorio.
-2. Aprobar por separado E0: grafo físico derivado de `assembleZone` y conectores entre zonas.
+2. Revisar las reservas geométricas y las hipótesis de movilidad documentadas en E0.
 3. Aprobar E1: recursos/fauna, sin render ni entidades individuales lejanas.
 
 Todas las etapas se trabajan en ramas y PR independientes. `main` nunca se actualiza directamente.
