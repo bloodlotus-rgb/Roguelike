@@ -3,7 +3,7 @@
 Laboratorio en **TypeScript sin motor gráfico** para verificar que un edificio Jenga procedural pueda sostener fauna, horrores migratorios, corrupción independiente y persistencia de generaciones.
 
 ## Estado
-El laboratorio genera el edificio completo de Jenga y permite consultar rutas entre la entrada de la mansión y el Origen. El informe de E0 describe las interfaces, las restricciones de movimiento, la integración de `building3b` y las mediciones. [Informe técnico de Jenga E0](docs/jenga-e0.md)
+El laboratorio genera el edificio completo de Jenga, con grafo físico E0 y reservas de macropiezas E0-M ya integrados en `main`. Permite consultar rutas entre la entrada de la mansión y el Origen, así como modos de locomoción, restricciones de puertas, corredores, galerías multinivel y atrios vacíos. [Informe técnico E0](docs/jenga-e0.md) · [Informe E0-M](docs/jenga-e0-m.md). El CI de E0-M validó 37 pruebas y 100 semillas completas; no equivale a geometría vóxel final ni a equilibrio ecológico.
 
 ## Entorno y comprobación
 
@@ -21,6 +21,8 @@ El diagnóstico escribe una línea JSON por semilla. Los módulos retirados sigu
 - [GDD maestro](docs/GDD.md)
 - [Decisiones](docs/decisiones.md)
 - [Contrato espacial Jenga E0](docs/jenga-contrato.md)
+- [Informe Jenga E0](docs/jenga-e0.md)
+- [Macropiezas E0-M](docs/jenga-e0-m.md)
 - [Contrato ecológico](docs/ecologia-contrato.md)
 - [Plan de limpieza](docs/limpieza-repo.md)
 - [Especificación de Estirpe Sim](docs/estirpe-sim.md)
@@ -28,7 +30,7 @@ El diagnóstico escribe una línea JSON por semilla. Los módulos retirados sigu
 
 ## Próximo trabajo
 1. Retirar o desactivar por separado el despliegue automático legado de Cloudflare; no es necesario para el laboratorio.
-2. Revisar las reservas geométricas y las hipótesis de movilidad documentadas en E0.
-3. Aprobar E1: recursos/fauna, sin render ni entidades individuales lejanas.
+2. Implementar [E1-A: hábitats y recursos conservativos](https://github.com/bloodlotus-rgb/Roguelike/issues/53) en PR independiente (sin fauna ni horrores).
+3. Continuar después con E1-B (fauna/reproducción/migración) cuando E1-A esté validado. Conservar como pendientes la materialización vóxel y los umbrales monumentales inter-zona.
 
 Todas las etapas se trabajan en ramas y PR independientes. `main` nunca se actualiza directamente.

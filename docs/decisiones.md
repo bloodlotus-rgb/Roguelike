@@ -21,13 +21,14 @@
 | Sin arcón ni Archivo | Arcón limitado y Archivo de técnicas que exige regreso vivo a mansión |
 | Prototipo Three.js como juego definitivo | Repositorio actual como banco técnico; Godot futuro separado |
 
-## Decisiones estructurales pendientes para E0
-- Esquema de conectores físicos con dimensiones, niveles, estado y compatibilidad locomotora.
-- Conexiones realizables entre zonas, sin perforar arbitrariamente losas selladas.
-- Garantizar ruta jugable al Origen y rutas ecológicas distinguibles según especie.
-- Definir el nivel de refinamiento: un nodo grande puede necesitar subnodos si un obstáculo separa superficies.
+## E0 completado; reservas y límites actuales
+- E0 (#51): conectores verificables con dimensiones y movilidad, losas entre zonas, rutas al Origen y prueba de rutas para criaturas pequeñas.
+- E0-M (#52): reservas de galerías longitudinales y atrios de varias plantas, con vacíos no transitables y conectores internos. CI: 37 pruebas y lote de 100 semillas.
+- **No confundir la reserva estructural con un edificio vóxel renderizable:** están pendientes los soportes, puentes, secciones monumentales, redes aéreas 3D, costos físicos y umbrales excepcionales que atraviesen varias zonas.
+- La biblioteca actual de 25 galerías y 5 atrios por edificio es una prueba técnica de escala; no es decisión final de composición artística.
+- Próximo hito autorizado para Codex: [E1-A](https://github.com/bloodlotus-rgb/Roguelike/issues/53), recursos conservativos y hábitats derivados de Jenga, sin fauna.
 
-## Provisional y NO bloquear E0 por ello
+## Provisional y NO bloquear E1-A por ello
 Balance de reproducción y depredación; cantidades y velocidades de horrores; parámetros del Origen; cronología entre generaciones; todos los prefabs vóxel; habilidades y equipamiento definitivo.
 
 ## Política de migración

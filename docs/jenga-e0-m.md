@@ -1,6 +1,6 @@
 # Jenga E0-M — macropiezas que organizan una zona completa
 
-**Estado:** implementación E0-M verificada en PR #52, apilado sobre E0 (PR #51). CI de Node 24 aprobó 37 pruebas y un lote de 100 semillas completas. No es geometría vóxel definitiva.
+**Estado:** E0-M integrado en `main` mediante PR #52 (después de E0, PR #51). Node 24 aprobó 37 pruebas y 100 semillas completas. No es geometría vóxel definitiva.
 
 ## Razón arquitectónica
 
@@ -76,4 +76,4 @@ Todas las ejecuciones tuvieron una componente física, ruta jugador-Origen y rut
 
 El lote inicial reveló dos errores resueltos antes del resultado anterior: pérdidas silenciosas de galerías aisladas, y generación ocasional de zonas sin salida. Las macropiezas ahora se conectan al pozo de llegada antes de colocar el relleno secundario; el pozo permite abrir pasos físicos; una macropieza perdida hace fallar la generación; si no cabe una salida convencional, se usa un pozo de reserva conectado físicamente junto a la galería longitudinal.
 
-**Pendiente de revisión humana:** criterios artísticos de distribución de macropiezas, realización vóxel de puentes y pisos, conectividad tridimensional aérea, contratos inter-zona y políticas de versión para persistencia. El PR permanece sin fusionar.
+**Pendientes de diseño para trabajos futuros:** distribución artística de macropiezas, realización vóxel de puentes y pisos, conectividad aérea tridimensional, contratos inter-zona y política de versiones para persistencia. La integración estructural ya está completada.

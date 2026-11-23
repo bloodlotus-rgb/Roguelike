@@ -2,6 +2,7 @@ name: Estirpe Sim - TypeScript y Jenga
 on:
   push:
     branches:
+      - main
       - 'feat/**'
       - 'chore/**'
   pull_request:

@@ -1,12 +1,12 @@
 # Estirpe Sim — Plan de implementación y primer encargo de Codex
 
-**Estado:** preparado para planificación. **No comenzar a implementar hasta que el usuario apruebe explícitamente el Hito 1.**
+**Estado (23/11/2026):** E0 integrado mediante PR #51 y E0-M mediante PR #52; se aprobaron 37 pruebas y 100 semillas para E0-M. El siguiente encargo es [E1-A: hábitats y recursos, sin fauna](https://github.com/bloodlotus-rgb/Roguelike/issues/53). El texto original de Hito 1 se conserva como especificación histórica de aceptación.
 
 ## Propósito
 
 Validar la geografía y la conectividad ecológica de `src/core/jenga.ts` sin render ni Godot; el diseño integral se encuentra en `docs/estirpe-sim.md`.
 
-## Hito 1 — Grafo del Jenga
+## Hito 1 — Grafo del Jenga (completado en E0 y E0-M)
 
 ### Trabajo permitido después de aprobación
 1. Leer `CLAUDE.md`, `AGENTS.md`, `docs/edificio.md`, `docs/estirpe-sim.md`, `src/core/plan.ts`, `jenga.ts`, `rng.ts` y `docs/jenga-contrato.md` y tests existentes.
@@ -43,7 +43,7 @@ Validar la geografía y la conectividad ecológica de `src/core/jenga.ts` sin re
 
 **Hito 6 — Balance:** CLI, escenarios, 100+ semillas, métricas de rendimiento y conservación.
 
-## Prompt sugerido para Codex
+## Prompt histórico para Codex (E0 ya completado; no reutilizar)
 
 > Trabajá sobre `bloodlotus-rgb/Roguelike`. Leé `AGENTS.md`, `CLAUDE.md`, `docs/estirpe-sim.md` y `docs/estirpe-sim-plan.md`. Tu tarea es **planificar el Hito 1 del grafo ecológico Jenga** y señalar interfaces, pruebas, riesgos y cambios necesarios en la generación entre zonas. Presentá la propuesta antes de implementar: el proyecto exige aprobación explícita por etapa. No toques `main`; cualquier implementación autorizada debe ir a una rama separada y PR. Mantené la lógica en TypeScript puro y determinista, sin render.
 
