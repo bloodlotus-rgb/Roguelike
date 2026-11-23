@@ -505,7 +505,35 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
       way.openings[0].joined = true;
       way.openings.push({ cell: [exitCell[0], exitCell[1], storeys - 1], face: opposite(face), joined: true });
       exit = way.id;
-    } else exit = null;
+    } else {
+      // Robust, physically grounded fallback: attach the zone exit beside the
+      // already-connected longitudinal gallery. Never accept an absent exit or
+      // invent a graph-only teleport when ordinary packing consumed all exits.
+      const gallery = blocks.find(b => b.def.kind === 'macro' &&
+        b.def.id.startsWith('processional-') && cells[index(...b.at)] === b.id);
+      let reserved: { source: [number, number, number]; target: [number, number, number]; face: Face; score: number } | null = null;
+      if (gallery) {
+        for (let y = 0; y < gallery.size[1]; y++) for (let x = 0; x < gallery.size[0]; x++) {
+          const source: [number, number, number] = [gallery.at[0] + x, gallery.at[1] + y, storeys - 1];
+          if (cells[index(...source)] !== gallery.id) continue;
+          for (const face of [Face.E, Face.S, Face.W, Face.N]) {
+            const [dx, dy] = STEP[face];
+            const target: [number, number, number] = [source[0] + dx, source[1] + dy, source[2]];
+            if (!inside(...target) || cells[index(...target)] !== -1) continue;
+            const score = Math.abs(target[0] - ax) + Math.abs(target[1] - ay);
+            if (!reserved || score > reserved.score) reserved = { source, target, face, score };
+          }
+        }
+      }
+      if (!gallery || !reserved) throw new Error('No physically available exit for zone ' + spec.zone);
+      const { source, target, face } = reserved;
+      gallery.openings.push({ cell: source, face, joined: true });
+      const well = place(EXIT, setAt(EXIT, target, 0));
+      well.openings[0].joined = true; // Real downward passage through this zone's reserved slab.
+      well.openings.push({ cell: target, face: opposite(face), joined: true });
+      exit = well.id;
+      exitCell = [target[0], target[1]];
+    }
   }
   // Any loss of a macro after ordinary growth is a generation failure, not
   // an implicit permission to shrink the architectural design.
