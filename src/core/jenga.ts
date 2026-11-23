@@ -392,6 +392,10 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
   const spaces = BASIC_BLOCKS.filter((b) => isSpace(b.kind));
   const all = width * depth * storeys;
   const density = spec.density ?? 0.42;
+  // Macropiece envelopes reserve space *before* corridor growth. Counting them against
+  // the circulation budget suppresses ring formation and starves normal rooms.
+  const architecturalReserve = blocks.filter(b => b.def.kind === 'macro').reduce((sum, b) =>
+    sum + b.size[0] * b.size[1] * b.size[2], 0);
   /**
    * Rooms along the passages: beside a passage (or a tunnel) with free rock on that side,
    * now and then a room, with a door opened in the passage's wall. Then rooms on the
@@ -436,13 +440,13 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
   };
 
   // First the circulation: about a quarter of what will be built.
-  grow(circulation, Math.floor(all * density * 0.28), false);
+  grow(circulation, Math.floor(all * density * 0.28) + architecturalReserve, false);
   // Loops: some dangling passages joined to other circulation close by, so there are ways round.
   closeLoops(blocks, cells, { width, depth, storeys, index, inside, place, rng, arrival: arrivalBlock.id }, 5, Math.max(storeys * 3, Math.round((width * depth * storeys) / 140)));
   // Then the rooms, hung from the circulation.
-  hangRooms(Math.floor(all * density), 0.45);
+  hangRooms(Math.floor(all * density) + architecturalReserve, 0.45);
   // And if the zone is still thin, more circulation and rooms off it, in turn.
-  for (let round = 0; round < 4 && used < Math.floor(all * density * 0.85); round++) {
+  for (let round = 0; round < 4 && used < Math.floor(all * density * 0.85) + architecturalReserve; round++) {
     for (const b of blocks) {
       if (isSpace(b.def.kind)) continue;
       b.openings.forEach((op, i) => {
@@ -450,7 +454,7 @@ export function assembleZone(spec: ZoneSpec): ZoneLayout {
       });
     }
     grow(circulation, used + Math.floor(all * density * 0.06), false);
-    hangRooms(Math.floor(all * density), 0.45);
+    hangRooms(Math.floor(all * density) + architecturalReserve, 0.45);
   }
 
   // Whatever is not joined to the arrival gets a tunnel to it, through the rock.
