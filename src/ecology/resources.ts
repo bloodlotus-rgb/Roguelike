@@ -1,9 +1,10 @@
 import { generatorVersion, modelVersion, type HabitatGraph } from './habitats.ts';
-import { emptyStock, parameters as p, resources, type Resource, type Stock } from './parameters.ts';
+import { emptyStock, parameters as p, resourceSignature, resources, type Recharge, type Resource, type Stock } from './parameters.ts';
 import { fluxes } from './transport.ts';
 
 export type Inventory = Map<number, Stock>;
 export interface ModelState {
+  recharge: Recharge | null;
   tick: number;
   /** Closed disables external inputs and passive losses. Growth still pays its energy cost. */
   closed: boolean;
@@ -27,10 +28,11 @@ export function totals(stocks: Inventory): Stock {
   for (const stock of stocks.values()) for (const r of resources) sum[r] += stock[r];
   return sum;
 }
-export function initialState(closed = false): ModelState {
-  return { tick: 0, closed, stocks: new Map() };
+export function initialState(closed = false, recharge: Recharge | null = null): ModelState {
+  return { tick: 0, closed, recharge: recharge && { ...recharge }, stocks: new Map() };
 }
 
+/** Validate the state and return headroom after reserving future surface inputs. */
 function validateState(graph: HabitatGraph, state: ModelState) {
   if (!Number.isSafeInteger(state.tick) || state.tick < 0 || typeof state.closed !== 'boolean') throw new Error('Invalid clock or scenario');
   let total = 0;
@@ -43,11 +45,26 @@ function validateState(graph: HabitatGraph, state: ModelState) {
   }
   const remainingInput = state.closed ? 0 : Math.max(0, p.surfaceTicks - state.tick) * (p.runoff + p.litter + p.irradiance);
   if (total + remainingInput > p.inventoryLimit) throw new Error('Inventory exceeds scenario budget');
+  return p.inventoryLimit - total - remainingInput;
+}
+
+export function rechargeSite(graph: HabitatGraph, source: Recharge): number {
+  if (!source || typeof source !== 'object') throw new Error('Invalid external recharge');
+  const site = graph.regionToHabitat.get(source.region);
+  if (source.seed !== graph.seed || typeof source.watershed !== 'string' || !source.watershed.trim() ||
+      !Number.isSafeInteger(source.rate) || source.rate <= 0 || source.rate > p.inventoryLimit ||
+      !Number.isSafeInteger(source.period) || !Number.isSafeInteger(source.activeHours) ||
+      source.activeHours <= 0 || source.activeHours > source.period || site === undefined ||
+      !graph.incident[site].some(i => {
+        const cut = graph.boundaries[i];
+        return cut.id === source.connector && cut.kind === 'watercourse' && cut.from === site;
+      })) throw new Error('Invalid external recharge or watercourse inlet');
+  return site;
 }
 
 /** Produce a new committed state and a replayable ledger. Never spend incoming flux twice. */
 export function step(graph: HabitatGraph, previous: ModelState): { state: ModelState; ledger: Entry[] } {
-  validateState(graph, previous);
+  const headroom = validateState(graph, previous);
   const tick = previous.tick + 1;
   if (!Number.isSafeInteger(tick)) throw new Error('Tick outside integer range');
   const stocks: Inventory = new Map([...previous.stocks].map(([id, stock]) => [id, { ...stock }]));
@@ -70,6 +87,13 @@ export function step(graph: HabitatGraph, previous: ModelState): { state: ModelS
     apply('source', 'surface-runoff', 'water', p.runoff, null, graph.entrance);
     apply('source', 'root-litter', 'detritus', p.litter, null, graph.entrance);
     apply('source', 'surface-light', 'energy', p.irradiance, null, graph.entrance);
+  }
+  if (previous.recharge) {
+    const source = previous.recharge;
+    const site = rechargeSite(graph, source);
+    if (!previous.closed && previous.tick % source.period < source.activeHours) {
+      apply('source', 'aquifer/' + source.watershed, 'water', Math.min(headroom, source.rate), null, site, source.connector);
+    }
   }
   // Only cuts incident to nonempty habitats can carry anything.
   const active = new Set<number>();
@@ -106,15 +130,17 @@ export function step(graph: HabitatGraph, previous: ModelState): { state: ModelS
     }
     if (resources.every(r => stock[r] === 0)) stocks.delete(id);
   }
-  return { state: { stocks, tick, closed: previous.closed }, ledger };
+  return { state: { ...previous, stocks, tick }, ledger };
 }
 
 export function snapshot(graph: HabitatGraph, state: ModelState) {
   return { version: modelVersion, generator: generatorVersion, seed: graph.seed, signature: graph.signature,
+    resourceContract: resourceSignature(state.recharge), recharge: state.recharge && { ...state.recharge },
     barriers: graph.barriers.map(([id, value]) => [id, value] as const), tick: state.tick, closed: state.closed,
     stocks: ordered(state.stocks.keys()).map(id => [id, { ...state.stocks.get(id)! }] as const) };
 }
 export function restore(graph: HabitatGraph, data: ReturnType<typeof snapshot>): ModelState {
+  if (data.recharge === undefined || data.resourceContract !== resourceSignature(data.recharge)) throw new Error('Incompatible resource contract');
   if (data.version !== modelVersion || data.generator !== generatorVersion || data.seed !== graph.seed ||
       data.signature !== graph.signature || JSON.stringify(data.barriers) !== JSON.stringify(graph.barriers) ||
       !Number.isSafeInteger(data.tick) || data.tick < 0 || typeof data.closed !== 'boolean') {
@@ -125,7 +151,8 @@ export function restore(graph: HabitatGraph, data: ReturnType<typeof snapshot>):
     if (stocks.has(id)) throw new Error('Duplicate habitat in snapshot');
     stocks.set(id, { ...value });
   }
-  const restored = { tick: data.tick, closed: data.closed, stocks };
+  if (data.recharge !== null) rechargeSite(graph, data.recharge);
+  const restored = { tick: data.tick, closed: data.closed, recharge: data.recharge && { ...data.recharge }, stocks };
   validateState(graph, restored);
   return restored;
 }

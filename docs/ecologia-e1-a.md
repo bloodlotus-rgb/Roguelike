@@ -75,3 +75,70 @@ En los tres edificios el balance final fue exacto para cada recurso. En `estirpe
 ## Límites y decisiones pendientes
 
 Conservar cada puente y umbral reduce el número de nodos aproximadamente un 18 %. Los stocks dispersos evitan asignar cinco cuentas activas a cada hábitat vacío. La mezcla local, la permeabilidad por tipo, el sesgo por ID al competir por stock, los sumideros discretos y los aportes limitados a la entrada requieren calibración. La geometría actual representa el agua y la barrera mediante un solo estado efectivo por conector. Un cambio simultáneo de nivel de agua y cerradura requerirá ampliar ese contrato. Las pocas regiones activas al cabo de 240 horas delimitan el alcance de este escenario superficial. Introducir fuentes profundas necesitará una procedencia física y su propio presupuesto.
+
+## Revisión técnica del PR #55
+
+### Compatibilidad y energía
+
+El snapshot guarda dos firmas. La del hábitat identifica la agregación y sus cortes. La del contrato de recursos es el SHA-256 de la revisión de reglas, todos los parámetros numéricos, el orden de recursos y canales, las permeabilidades por tipo, los caudales inundados y la configuración de recarga. Cambiar una fórmula, el orden de fases o la interpretación de un estado requiere subir la revisión de reglas. Las pruebas alteran el presupuesto de escorrentía y la permeabilidad de una compuerta y verifican el rechazo del mismo guardado. Los snapshots anteriores a la firma carecen de evidencia sobre sus parámetros y requieren regeneración o una migración explícita desde una versión conocida.
+
+`energy` es un presupuesto abstracto de energía aprovechable. El asiento histórico `surface-light` representa su entrada por la superficie. El modelo consume esos créditos en el crecimiento y sólo permite intercambiarlos por cortes físicos permeables según un gradiente. Alcanzar 25 zonas en la consulta de conectividad energética expresa una posibilidad de intercambio. No mide iluminación a esa profundidad. Identificar un portador real, acoplar su transporte con el de materia o agua e introducir disipación requieren datos y calibración.
+
+### Compuertas
+
+Caudales máximos por hora en sentido descendente, antes de aplicar disponibilidad y gradiente:
+
+| Estado efectivo | Agua | Detritos | Nutrientes | Energía | Interpretación |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Cerrada o bloqueada | 0 | 0 | 0 | 0 | El sello corta todo intercambio. |
+| Abierta o destruida, seca | 0 | 0 | 0 | 1 | Se retiró la barrera mecánica. El umbral seco conserva su geometría. |
+| Inundada | 8 | 3 | 3 | 1 | El agua salva el umbral y admite arrastre. Los nutrientes requieren agua en el donante. |
+
+Hacia arriba sólo puede intercambiarse energía en una compuerta abierta, destruida o inundada. Una compuerta rota que se moja pasa del estado efectivo `destroyed` a `flooded`. Al secarse, quien conozca el daño debe suministrar `destroyed` de nuevo. El dato E0 contiene un solo estado y por sí solo no permite reconstruir esa historia. Si el sello sigue cerrado incluso bajo el agua, corresponde `closed`. El ensayo comprueba por separado caudales en ambas direcciones, ausencia de flujo sin stocks y dos cambios de estado en un edificio completo.
+
+### Recarga renovable de prueba
+
+El escenario de referencia sigue importando recursos por la mansión durante 240 horas. Opcionalmente se puede declarar **una cuenca externa** que descarga agua en la región de entrada de un cauce subterráneo existente. El autor del escenario identifica la cuenca, la semilla y el punto de infiltración. La mera presencia de un cauce no activa una fuente. La cuota del ciclo representa recarga suministrada desde fuera del dominio simulado. Esta primera versión carece de reserva acumulable. El sobrante de una hora no se puede reclamar después.
+
+Para reproducir la corrida, guardar este JSON como `recarga.json` y usar el comando siguiente. Los números son un fixture.
+
+```json
+{"seed":"estirpe","watershed":"cuenca-externa-de-prueba","region":"1/252/3","connector":"1/18/2/3/5","rate":3,"activeHours":2,"period":4}
+```
+
+```sh
+npm run --silent ecology:report -- --ticks 288 --recharge recarga.json estirpe
+```
+
+La función `initialState(false, recarga)` usa el mismo contrato. Cada ciclo de cuatro horas admite hasta tres unidades en cada una de las dos primeras horas. Sólo se acredita el agua efectivamente admitida dentro del límite contable global. El asiento identifica cuenca, corte y hábitat receptor. El ingreso sucede aguas arriba del corte y el movimiento posterior obedece a su estado. El modo cerrado suprime el aporte. Guardar la fase temporal y el anclaje en la región fina permite reanudar o reagregar sin duplicar el ingreso.
+
+En 288 horas ingresaron 432 unidades por esa cuenca y 5.760 por superficie. Se evaporaron 1.516 y quedaron 4.676. Una futura fuente de detritos requerirá un área aportante y un flujo externo de materia declarados. Una fuente quimiosintética requerirá donante, aceptor, presupuesto energético y sumideros. La profundidad por sí sola no justifica ninguno de esos aportes.
+
+### Carga distribuida y segunda escala
+
+El ensayo usa el edificio completo y el mismo `step` y auditor que la simulación ordinaria. Una permutación derivada de la semilla selecciona los hábitats con inventario inicial. Cada uno recibe 160 unidades de agua, 100 de detritos, 60 de nutrientes, 12 de biomasa y 120 de energía. Se corren 48 horas en modo cerrado y se reconcilia cada asiento. Se ejecutó una corrida por tamaño en un proceso Node independiente. El tiempo por tick excluye auditoría y armado. El pico de RSS incluye el proceso completo y el máximo de heap es el mayor valor muestreado al final de un tick.
+
+```sh
+for n in 1000 5000 10000; do
+  npm run --silent ecology:load -- --seed estirpe --active "$n" --ticks 48
+done
+for seed in estirpe mansion; do
+  npm run --silent ecology:load -- --seed "$seed" --active 5000 --ticks 48 --barriers
+done
+```
+
+| Iniciales | Activos medios | Activos finales | Step medio / p95 (ms) | Auditoría media (ms) | RSS inicial / pico (MiB) | Heap muestreado máx. (MiB) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1.000 | 15.844 | 22.981 | 47 / 82 | 13 | 429 / 494 | 316 |
+| 5.000 | 55.498 | 72.555 | 197 / 324 | 56 | 439 / 780 | 493 |
+| 10.000 | 78.264 | 93.021 | 264 / 408 | 81 | 415 / 790 | 570 |
+
+Entre extremos hubo 4,94 veces más hábitats activos en promedio y el costo medio de `step` creció 5,62 veces. La corrida mayor procesó 7.871.706 asientos. Son observaciones de una máquina y un horizonte, con variación por GC y carga del host.
+
+En el ensayo multisemilla se destruyó una compuerta en la hora 16 y se inundó en la 32. En cada cambio se reconstruyó el grafo, se exigió conservación exacta de los cinco stocks al proyectarlos y se comparó el estado y el libro de la hora siguiente con y sin reanudación JSON. En `estirpe` finalizaron activos 72.555 hábitats, con pico de 1.138 MiB. En `mansion` fueron 73.671 y 1.097 MiB. Las cuatro transiciones costaron 3,86–4,72 s cada una incluyendo reconstrucción, proyección y comprobación del checkpoint.
+
+**Decisión de escala.** Con miles de hábitats repartidos, generación de propuestas, movimiento de inventarios y auditoría ya cuestan centenares de milisegundos por hora simulada. Conviene evaluar una segunda escala para lotes largos antes de sumar otros sistemas. El primer candidato es agrupar *trabajo* en zonas inactivas y saltar intervalos sólo cuando se pueda demostrar ausencia de cambios hasta un evento conocido. El reloj, la fase de recarga y las pérdidas periódicas deben avanzar exactamente. Para zonas activas, probar cálculo por bloques manteniendo stocks propietarios y todos los cortes dirigidos de frontera con sus IDs. Unir zonas o repartir uniformemente su stock alteraría gradientes, bloqueos y tiempos de viaje. El criterio para aceptar una optimización exacta será reproducir las mismas cuentas por hábitat y corte, incluidos cierres y reaperturas, en este benchmark. Una aproximación que altere esos resultados necesitará un error admisible acordado y mediciones independientes.
+
+### Comprobaciones ejecutadas
+
+Pasaron `npm run check` (50 pruebas en ocho archivos) y `npm run build`. El diagnóstico Jenga terminó sin errores en `estirpe`, `mansion` y `zz`. Al repetir 240 horas del escenario de referencia, las tres semillas cerraron con los stocks de la tabla de ejecución original, incluidas 2.820 unidades de materia por edificio. La carga distribuida mide costo y conservación. La viabilidad de un suministro geológico sostenido sigue siendo una pregunta de diseño.

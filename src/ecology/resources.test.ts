@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { audit } from './audit';
 import { type HabitatGraph, type Boundary } from './habitats';
-import { emptyStock, parameters, type Stock, resources } from './parameters';
+import { channels, conductance, emptyStock, parameters, type Stock, resources } from './parameters';
 import { initialState, step, snapshot, restore, totals } from './resources';
-import { fluxes } from './transport';
+import { channelLimit, fluxes } from './transport';
 
 function chain(kind: Boundary['kind'] = 'opening', state: Boundary['state'] = 'open'): HabitatGraph {
   const boundaries: Boundary[] = [0, 1].map(i => ({ id: 'cut-' + i, from: i, to: i + 1, kind, state }));
@@ -88,4 +88,71 @@ describe('resource accounts', () => {
     }
     expect(() => audit(new Map(), next.state.stocks, next.ledger.slice(1))).toThrow();
   });
+});
+
+it('rejects unsigned saves and changes in resource budgets or aperture rates', () => {
+  const graph = chain();
+  const saved = snapshot(graph, initialState());
+  const unsigned = { ...saved, resourceContract: '' };
+  expect(() => restore(graph, unsigned)).toThrow('resource contract');
+  const rate = parameters.runoff;
+  const table = conductance.gate;
+  try {
+    Object.assign(parameters, { runoff: rate + 1 });
+    expect(() => restore(graph, saved)).toThrow('resource contract');
+    Object.assign(parameters, { runoff: rate });
+    conductance.gate = [1, 0, 0, 1];
+    expect(() => restore(graph, saved)).toThrow('resource contract');
+  } finally {
+    Object.assign(parameters, { runoff: rate });
+    conductance.gate = table;
+  }
+  expect(restore(graph, saved)).toEqual(initialState());
+});
+
+it('applies the effective dry or wet gate state in both directions', () => {
+  const graph = chain('gate'), cut = graph.boundaries[0];
+  for (const [state, down, up] of [
+    ['closed', [0,0,0,0], [0,0,0,0]],
+    ['destroyed', [0,0,0,1], [0,0,0,1]],
+    ['flooded', [8,3,3,1], [0,0,0,1]],
+    ['open', [0,0,0,1], [0,0,0,1]],
+    ['blocked', [0,0,0,0], [0,0,0,0]],
+  ] as const) {
+    const gate = { ...cut, state };
+    expect(channels.map(r => channelLimit(graph, gate, gate.from, r))).toEqual(down);
+    expect(channels.map(r => channelLimit(graph, gate, gate.to, r))).toEqual(up);
+    expect(fluxes(graph, gate, emptyStock(), emptyStock())).toEqual([]);
+  }
+});
+
+it('meters declared external recharge at the physical inlet across cycles and restart', () => {
+  const graph = chain('watercourse');
+  graph.regionToHabitat.set('inlet', 0);
+  const source = { seed: graph.seed, watershed: 'fixture-catchment', region: 'inlet', connector: 'cut-0', rate: 3, period: 4, activeHours: 2 };
+  let state = initialState(false, source);
+  state.tick = 240;
+  let total = 0;
+  for (let hour = 0; hour < 9; hour++) {
+    const next = step(graph, state);
+    const book = audit(state.stocks, next.state.stocks, next.ledger);
+    expect(book.sources.water).toBe(hour % 4 < 2 ? 3 : 0);
+    total += book.sources.water;
+    for (const event of next.ledger.filter(e => e.kind === 'source')) {
+      expect(event).toMatchObject({ connector: 'cut-0', to: 0, process: 'aquifer/fixture-catchment' });
+    }
+    const resumed = restore(graph, JSON.parse(JSON.stringify(snapshot(graph, next.state))));
+    expect(step(graph, resumed)).toEqual(step(graph, next.state));
+    state = next.state;
+  }
+  expect(total).toBe(15);
+  const saved = snapshot(graph, state);
+  expect(() => restore(graph, { ...saved, recharge: { ...source, rate: 4 } })).toThrow('resource contract');
+  const capped = initialState(false, source);
+  capped.tick = 240;
+  capped.stocks.set(0, { ...emptyStock(), water: parameters.inventoryLimit - 1 });
+  expect(step(graph, capped).ledger.find(e => e.kind === 'source')?.amount).toBe(1);
+  expect(step(graph, initialState(true, source)).ledger).toEqual([]);
+  expect(() => step(graph, initialState(false, { ...source, connector: 'cut-1' }))).toThrow('inlet');
+  expect(() => step(graph, initialState(false, { ...source, rate: Infinity }))).toThrow('recharge');
 });

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Kind } from '../core/spatial.ts';
 
 // Integer quanta per ecological hour. Calibration fixture, versioned with the model.
@@ -35,3 +36,21 @@ export const conductance: Record<Kind, readonly [number, number, number, number]
   shaft: [6, 3, 2, 2], watercourse: [12, 4, 4, 1],
 };
 export const flooded = [8, 3, 3, 1] as const;
+
+/** An external watershed supplying a specific upstream watercourse region. */
+export interface Recharge {
+  seed: string;
+  watershed: string;
+  region: string;
+  connector: string;
+  rate: number;
+  activeHours: number;
+  period: number;
+}
+
+// Bump the rules revision when a phase, direction, gate interpretation or source rule changes.
+export function resourceSignature(source: Recharge | null) {
+  const recharge = source && [source.seed, source.watershed, source.region, source.connector, source.rate, source.activeHours, source.period];
+  const contract = { rules: 2, parameters, resources, channels, conductance, flooded, recharge };
+  return createHash('sha256').update(JSON.stringify(contract)).digest('hex');
+}

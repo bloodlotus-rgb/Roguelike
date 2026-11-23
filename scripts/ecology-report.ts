@@ -1,15 +1,17 @@
+import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { buildHabitatGraph } from '../src/ecology/habitats.ts';
 import { audit, ledgerSummary } from '../src/ecology/audit.ts';
 import { channelReach } from '../src/ecology/transport.ts';
-import { channels, resources } from '../src/ecology/parameters.ts';
-import { initialState, step, totals } from '../src/ecology/resources.ts';
+import { channels, resources, type Recharge } from '../src/ecology/parameters.ts';
+import { initialState, rechargeSite, step, totals } from '../src/ecology/resources.ts';
 
-function report(seed: string, ticks: number) {
+function report(seed: string, ticks: number, recharge: Recharge | null) {
   const start = performance.now(), cpu = process.cpuUsage();
   const graph = buildHabitatGraph(seed);
   const built = performance.now();
-  let state = initialState();
+  if (recharge !== null) rechargeSite(graph, recharge);
+  let state = initialState(false, recharge);
   const ledger = ledgerSummary();
   const processes: Record<string, number> = {};
   for (let tick = 0; tick < ticks; tick++) {
@@ -42,16 +44,17 @@ function report(seed: string, ticks: number) {
     cpuMs: Math.round((elapsed.user + elapsed.system) / 1000), processPeakRssMiB: Math.round(process.resourceUsage().maxRSS / 1024) };
 }
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
-  ticks: { type: 'string', default: '48' }, format: { type: 'string', default: 'jsonl' },
+  recharge: { type: 'string' }, ticks: { type: 'string', default: '48' }, format: { type: 'string', default: 'jsonl' },
 } });
 const ticks = Number(values.ticks);
 if (!Number.isSafeInteger(ticks) || ticks < 0 || !['jsonl','json'].includes(values.format!)) {
-  throw new Error('Usage: ecology:report -- [--ticks N] [--format json|jsonl] [seed ...]');
+  throw new Error('Usage: ecology:report -- [--ticks N] [--format json|jsonl] [--recharge file.json] [seed ...]');
 }
+const recharge = values.recharge ? JSON.parse(readFileSync(values.recharge, 'utf8')) as Recharge : null;
 const batch = [];
 for (const seed of positionals.length ? positionals : ['estirpe']) {
   try {
-    const result = report(seed, ticks);
+    const result = report(seed, ticks, recharge);
     if (values.format === 'jsonl') console.log(JSON.stringify(result));
     else batch.push(result);
   } catch (error) {

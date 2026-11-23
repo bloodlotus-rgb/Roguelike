@@ -29,6 +29,9 @@ it('keeps partition and checkpoint independent of Map order, and conserves stock
   const projected = reaggregate(first, blocked, state);
   expect(totals(projected.stocks)).toEqual(totals(state.stocks));
   expect(totals(reaggregate(blocked, first, projected).stocks)).toEqual(totals(state.stocks));
+  const epoch = snapshot(blocked, projected);
+  const rebuilt = deriveHabitats(structure, fine, new Map(epoch.barriers));
+  expect(step(rebuilt, restore(rebuilt, JSON.parse(JSON.stringify(epoch))))).toEqual(step(blocked, projected));
   for (let t = 0; t < 10; t++) state = step(first, state).state;
   let resumed = restore(reordered, JSON.parse(JSON.stringify(snapshot(first, state))));
   for (let t = 0; t < 24; t++) {
