@@ -7,6 +7,8 @@ El laboratorio genera el edificio completo de Jenga, con grafo físico E0 y rese
 
 E1-A deriva hábitats de las superficies transitables y lleva cuentas separadas de agua, materia y energía por hora ecológica. [Modelo y diagnóstico E1-A](docs/ecologia-e1-a.md)
 
+E1-B0 optimiza el transporte horario y los cambios de compuerta. [Equivalencia con E1-A y mediciones de carga](docs/ecologia-e1-b0.md)
+
 ## Entorno y comprobación
 
 Con Node.js 24, ejecutá:
