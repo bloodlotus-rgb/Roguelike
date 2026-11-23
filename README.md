@@ -5,6 +5,8 @@ Laboratorio en **TypeScript sin motor gráfico** para verificar que un edificio 
 ## Estado
 El laboratorio genera el edificio completo de Jenga, con grafo físico E0 y reservas de macropiezas E0-M ya integrados en `main`. Permite consultar rutas entre la entrada de la mansión y el Origen, así como modos de locomoción, restricciones de puertas, corredores, galerías multinivel y atrios vacíos. [Informe técnico E0](docs/jenga-e0.md) · [Informe E0-M](docs/jenga-e0-m.md). El CI de E0-M validó 37 pruebas y 100 semillas completas; no equivale a geometría vóxel final ni a equilibrio ecológico.
 
+E1-A deriva hábitats de las superficies transitables y lleva cuentas separadas de agua, materia y energía por hora ecológica. [Modelo y diagnóstico E1-A](docs/ecologia-e1-a.md)
+
 ## Entorno y comprobación
 
 Con Node.js 24, ejecutá:
@@ -13,6 +15,7 @@ Con Node.js 24, ejecutá:
 npm ci
 npm run check
 npm run --silent jenga:report -- estirpe mansion
+npm run --silent ecology:report -- --ticks 240 estirpe mansion zz
 ```
 
 El diagnóstico escribe una línea JSON por semilla. Los módulos retirados siguen en la [rama de archivo del prototipo](https://github.com/bloodlotus-rgb/Roguelike/tree/archive/prototipo-threejs-2026-11-23).
@@ -30,7 +33,7 @@ El diagnóstico escribe una línea JSON por semilla. Los módulos retirados sigu
 
 ## Próximo trabajo
 1. Retirar o desactivar por separado el despliegue automático legado de Cloudflare; no es necesario para el laboratorio.
-2. Implementar [E1-A: hábitats y recursos conservativos](https://github.com/bloodlotus-rgb/Roguelike/issues/53) en PR independiente (sin fauna ni horrores).
+2. Revisar las mediciones y los parámetros provisionales del transporte de recursos. [Informe E1-A](docs/ecologia-e1-a.md)
 3. Continuar después con E1-B (fauna/reproducción/migración) cuando E1-A esté validado. Conservar como pendientes la materialización vóxel y los umbrales monumentales inter-zona.
 
 Todas las etapas se trabajan en ramas y PR independientes. `main` nunca se actualiza directamente.
