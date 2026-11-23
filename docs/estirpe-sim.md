@@ -4,7 +4,7 @@
 
 ## Objetivo
 
-Validar antes de migrar a Godot que una mazmorra construida con Jenga pueda sostener **una ecología persistente**, una invasión ascendente de horrores y una progresión familiar viable, **sin render, DOM ni motor gráfico**. Reutilizar `src/core/plan.ts`, `jenga.ts`, `rng.ts`, `dynasty.ts` y las pruebas Vitest.
+Validar antes de migrar a Godot que una mazmorra construida con Jenga pueda sostener **una ecología persistente**, una invasión ascendente de horrores y una progresión familiar viable, **sin render, DOM ni motor gráfico**. Reutilizar `src/core/plan.ts`, `jenga.ts`, `rng.ts` y las pruebas Vitest. El sistema antiguo de dinastía queda archivado; su integración futura se diseñará por separado.
 
 El Jenga Ed3a arma planos de zonas; la geometría voxel final todavía no está integrada. El simulador debe trabajar sobre un **grafo derivado de las conexiones del Jenga**, no esperar a que se dibujen todas las habitaciones.
 

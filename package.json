@@ -1,25 +1,16 @@
 {
-  "name": "la-estirpe",
+  "name": "la-estirpe-sim",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "deploy": "npm run build && wrangler deploy"
+    "check": "npm run typecheck && npm test",
+    "build": "npm run typecheck"
   },
   "devDependencies": {
-    "@types/three": "0.187.0",
     "typescript": "5.9.3",
-    "vite": "7.1.12",
-    "vitest": "3.2.4",
-    "wrangler": "4.156.0"
-  },
-  "dependencies": {
-    "phaser": "4.2.1",
-    "three": "0.187.0"
+    "vitest": "3.2.4"
   }
 }
