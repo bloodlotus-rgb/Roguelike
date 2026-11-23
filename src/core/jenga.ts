@@ -178,7 +178,7 @@ export const BASIC_BLOCKS: BlockDef[] = [
 ];
 
 /** The well one arrives by, from the zone above (its hatch up is the passage). */
-export const ARRIVAL: BlockDef = { id: 'arrival', kind: 'well', size: [1, 1, 1], openings: [{ at: [0, 0, 0], face: Face.Up }, door(0, 0, 0, Face.E), door(0, 0, 0, Face.W)], weight: 0 };
+export const ARRIVAL: BlockDef = { id: 'arrival', kind: 'well', size: [1, 1, 1], openable: true, openings: [{ at: [0, 0, 0], face: Face.Up }, door(0, 0, 0, Face.E), door(0, 0, 0, Face.W)], weight: 0 };
 /** The well out, to the zone below (its hatch down is the passage, locked). */
 export const EXIT: BlockDef = { id: 'exit', kind: 'well', size: [1, 1, 1], openings: [{ at: [0, 0, 0], face: Face.Down }], weight: 0 };
 const TUNNEL: BlockDef = { id: 'tunnel', kind: 'tunnel', size: [1, 1, 1], openings: [], weight: 0, openable: true };
