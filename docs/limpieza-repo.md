@@ -31,4 +31,18 @@ Rama de archivo inmutable por convenio: `archive/prototipo-threejs-2026-11-23`, 
 - Si un módulo borrado resulta valioso, recuperarlo desde la rama archivo mediante cherry-pick o reimplementación acotada.
 
 ## Estado de esta rama
-La limpieza se propone como PR de **borrador**, dependiente del PR documental #49. Se retiraron los componentes heredados del árbol activo y se dejaron las pruebas del núcleo. **Bloqueantes antes de fusionar:** regeneración de `package-lock.json`, ejecución de `npm run check` y coordinación de despliegue Cloudflare. Ninguno de esos pasos debe declararse completado sin verificarlo.
+El PR de limpieza #50 incluye el commit documental del PR #49. El árbol activo conserva los tres módulos del núcleo y sus pruebas. Se regeneró `package-lock.json` desde el manifiesto del laboratorio y el archivo histórico del prototipo apunta a `8624d94`, el mismo snapshot de `main` al momento de la verificación.
+
+## Verificación del PR #50
+
+Con Node.js 24.22.3 y npm 11.19.1 se ejecutaron `npm install` para regenerar el lockfile, `npm ci` para comprobar la instalación limpia y `npm run check` para verificar los tipos y correr Vitest. Pasaron las 11 pruebas de los tres módulos.
+
+- `rng` cubre secuencias reproducibles, derivación de flujos y límites de enteros.
+- `plan` cubre el determinismo, la estructura de 100 plantas y las llaves y nombres de zona.
+- `jenga` cubre el determinismo, la conectividad y reciprocidad de aberturas, la ubicación de la salida y la zona más ancha.
+
+Las pruebas coinciden con las del prototipo archivado. Con TypeScript 5.9.3, destino ES2022 y comentarios omitidos, los tres módulos emiten JavaScript idéntico al del archivo. La única diferencia del núcleo es que `plan.ts` declara localmente el tipo de llave que antes importaba del inventario legado.
+
+**Riesgo de despliegue.** El script de build ahora verifica tipos y el árbol activo carece de los assets de la PWA. Antes del merge hay que pausar o reorientar el despliegue automático de Cloudflare. npm también reportó que el postinstall de `esbuild@0.25.12` no figura en su lista de permisos. La instalación limpia, la comprobación de tipos y las pruebas finalizaron correctamente en el entorno verificado.
+
+**Candidatos para rescatar del archivo.** `locations.ts` detecta y valida conectores en plantillas y `pieces.ts` conserva el catálogo de piezas. `paths.ts`, `bodies.ts` y `voxels.ts` aportan algoritmos de superficies transitables, colisión y altura, pero sus dependencias del generador legado requieren desacople. `geometry.ts` también depende del mapa legado y sirve como referencia para colisión y visibilidad en 2D.
