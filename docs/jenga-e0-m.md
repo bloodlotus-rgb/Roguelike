@@ -1,6 +1,6 @@
 # Jenga E0-M — macropiezas que organizan una zona completa
 
-**Estado:** prototipo estructural en PR #52, apilado sobre E0 (PR #51). CI de GitHub con Node 24 aprobó 37 pruebas, compilación y diagnóstico `estirpe`. No es arte vóxel ni validación universal de semillas.
+**Estado:** implementación E0-M verificada en PR #52, apilado sobre E0 (PR #51). CI de Node 24 aprobó 37 pruebas y un lote de 100 semillas completas. No es geometría vóxel definitiva.
 
 ## Razón arquitectónica
 
@@ -56,4 +56,24 @@ En el commit `6afd750`, el workflow **Estirpe Sim - TypeScript y Jenga** ejecut�
 
 Los números se refieren exclusivamente a la semilla y entorno de este CI. La comparación con E0 histórico no es un benchmark controlado.
 
-**Pendiente antes de fusionar:** ampliar a 100 semillas y resolver las fallas que surjan, si las hay. El PR permanece en borrador.
+## Lote reproducible de 100 semillas
+
+El workflow [Jenga E0-M — 100 semillas](https://github.com/bloodlotus-rgb/Roguelike/actions/runs/45252905870) terminó correctamente en el commit `256e676`. Cada semilla `e0m-0` … `e0m-99` se ejecutó en un proceso Node independiente, distribuidas en cinco grupos de veinte; así la memoria no se acumula entre generaciones.
+
+| Medida | Resultado en 100 edificios |
+| --- | ---: |
+| Semillas completadas sin error | 100 / 100 |
+| Regiones por edificio | 122.462–123.943 |
+| Conectores por edificio | 127.210–128.793 |
+| Piezas por edificio | 89.069–90.669 |
+| Macropiezas preservadas | 30 / edificio (25 galerías + 5 atrios) |
+| Celdas de aire vacío reservado | 320 / edificio |
+| Tiempo medio del informe por edificio | 3.366 ms |
+| Tiempo máximo del informe | 3.993 ms |
+| Pico máximo RSS individual | 489 MiB |
+
+Todas las ejecuciones tuvieron una componente física, ruta jugador-Origen y ruta de la criatura pequeña hasta la mansión. **Esto comprueba los criterios del lote, no demuestra que el vóxel futuro sea automáticamente realizable ni valida el balance ecológico.** No son medidas de un benchmark de hardware aislado.
+
+El lote inicial reveló dos errores resueltos antes del resultado anterior: pérdidas silenciosas de galerías aisladas, y generación ocasional de zonas sin salida. Las macropiezas ahora se conectan al pozo de llegada antes de colocar el relleno secundario; el pozo permite abrir pasos físicos; una macropieza perdida hace fallar la generación; si no cabe una salida convencional, se usa un pozo de reserva conectado físicamente junto a la galería longitudinal.
+
+**Pendiente de revisión humana:** criterios artísticos de distribución de macropiezas, realización vóxel de puentes y pisos, conectividad tridimensional aérea, contratos inter-zona y políticas de versión para persistencia. El PR permanece sin fusionar.
