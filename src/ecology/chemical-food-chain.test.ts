@@ -407,3 +407,53 @@ it('rejects an identical geometry with another seed across the food-chain operat
   const {rules, founded} = checkFoodEpoch(original,other);
   expect(() => projectFoodChain(original,other,[],rules,founded)).toThrow(/building/);
 });
+
+it.each([
+  {reservePerMatter:6, initialReserve:3, foodEnergy:4, retained:1, paid:1, heat:1},
+  {reservePerMatter:6, initialReserve:3, foodEnergy:5, retained:2, paid:2, heat:2},
+  {reservePerMatter:2, initialReserve:2, foodEnergy:5, retained:1, paid:1, heat:4},
+])('funds growth only when the surviving reserve can pay the full interval ($reservePerMatter, $foodEnergy)', example => {
+  const world = fixture('closed'), base = configuration();
+  const rules = {...base,fungus:{...base.fungus,regulation:'growth-budget' as const,
+    reservePerMatter:example.reservePerMatter,
+    feeding:{...base.fungus.feeding,interval:3,biteMatter:2,retainedMatterPermille:1000,reservePermille:1000}}};
+  const before = foundFoodChain(world,[],rules,{inventory:new Map([[0,stock(2,example.foodEnergy,1)]]),
+    fungus:new Map([[0,body(1,example.initialReserve,example.initialReserve)]]),animals:[]});
+  const ready = step(world,rules,step(world,rules,before).state).state;
+  const result = step(world,rules,ready);
+  expect(result.state.fungus.get(0)?.matter).toBe(example.retained);
+  expect(result.state.chemical.inventory.get(0)?.mineralMatter).toBe(3-example.retained);
+  expect(result.entries[1].heat.energy).toBe(example.paid);
+  expect(result.audit.dissipated).toBe(BigInt(example.heat));
+});
+
+it.each([
+  {cap:3, maintenance:2, matter:2, livingEnergy:2, reserve:1, lost:2, lostEnergy:1, heat:4, phase:'regress'},
+  {cap:2, maintenance:2, matter:2, livingEnergy:1, reserve:0, lost:2, lostEnergy:2, heat:4, phase:'regress'},
+  {cap:2, maintenance:3, matter:0, livingEnergy:0, reserve:0, lost:4, lostEnergy:2, heat:5, phase:'die'},
+])('accounts for all retired tissue and caps remaining reserve ($cap, $maintenance)', e => {
+  const world = fixture('closed'), base = configuration();
+  const rules = {...base,fungus:{...base.fungus,regulation:'partial-regression' as const,
+    reservePerMatter:e.cap,maintenance:e.maintenance}};
+  const initial = foundFoodChain(world,[],rules,{inventory:new Map(),fungus:new Map([[0,body(4,7,5)]]),animals:[]});
+  const result = step(world,rules,initial);
+  expect(result.state.fungus.get(0) ?? body(0,0,0)).toEqual(body(e.matter,e.livingEnergy,e.reserve));
+  expect(result.state.chemical.inventory.get(0)?.detritus).toEqual({matter:e.lost,chemicalEnergy:e.lostEnergy});
+  expect(result.entries.map(entry=>entry.phase)).toEqual([e.phase]);
+  expect(result.audit.dissipated).toBe(BigInt(e.heat));
+  const snapshot = JSON.parse(JSON.stringify(saveFoodChain(world,[],rules,initial)));
+  const restored = restoreFoodChain(world,[],rules,snapshot);
+  expect(foodChain.serializeFoodLedger(step(world,rules,restored))).toBe(foodChain.serializeFoodLedger(result));
+  expect(() => restoreFoodChain(world,[],base,snapshot)).toThrow(/contract/);
+});
+
+it('keeps the original fungal maintenance rule and rejects mixed or unknown regulation modes', () => {
+  const world = fixture('closed'), rules = configuration();
+  const founder = {inventory:new Map(),fungus:new Map([[0,body(4,5,3)]]),animals:[]};
+  const result = step(world,rules,foundFoodChain(world,[],rules,founder));
+  expect(result.entries[0].phase).toBe('die');
+  expect(result.state.fungus.size).toBe(0);
+  expect(result.state.chemical.inventory.get(0)?.detritus).toEqual({matter:4,chemicalEnergy:2});
+  const invalid = {...rules,fungus:{...rules.fungus,regulation:['growth-budget','partial-regression']}} as unknown as FoodChainRules;
+  expect(() => foundFoodChain(world,[],invalid,founder)).toThrow(/Unknown fungal regulation/);
+});
