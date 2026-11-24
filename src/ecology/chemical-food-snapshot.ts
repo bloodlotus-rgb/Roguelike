@@ -2,14 +2,14 @@ import { chemicalDigest, type ChemicalSupply } from './chemical-ledger.ts';
 import { projectChemicalState, restoreChemical, saveChemical } from './chemical-snapshot.ts';
 import { apportion } from './chemical-transport.ts';
 import { splitLiving } from './chemical-food-chain.ts';
-import { decodeAnimal, decodeBody, encodeAnimal, encodeBody, foodChainVersion as version, foodGeometrySignature,
+import { decodeAnimal, decodeBody, encodeAnimal, encodeBody, foodChainVersion as version, foodWorldIdentity,
   quantum, regionCapacity, validateFoodState, type BodyRow, type FoodChainRules, type FoodChainState, type LivingStock } from './chemical-food-contract.ts';
 import type { DispersalWorld } from './dispersal-world.ts';
 
 export function saveFoodChain(world: DispersalWorld, sources: readonly ChemicalSupply[], rules: FoodChainRules,
   state: FoodChainState) {
-  validateFoodState(world, sources, rules, state);
-  const payload = {version, contract: state.contract, geometry: state.geometry, chemical: saveChemical(world, sources, state.chemical),
+  const {identity} = validateFoodState(world, sources, rules, state);
+  const payload = {version, contract: state.contract, geometry: identity.fine, chemical: saveChemical(world, sources, state.chemical),
     fungus: [...state.fungus].sort(([a],[b]) => a - b).map(([id, body]): [number, BodyRow] => [id, encodeBody(body)]),
     animals: [...state.animals].sort(([a],[b]) => a - b)
       .map(([,animal]) => encodeAnimal(animal)),
@@ -24,6 +24,8 @@ export function restoreFoodChain(world: DispersalWorld, sources: readonly Chemic
   }
   const {integrity, ...payload} = saved as ReturnType<typeof saveFoodChain>;
   if (integrity !== chemicalDigest(payload)) throw new Error('Food-chain snapshot integrity mismatch');
+  const identity = foodWorldIdentity(world);
+  if (payload.geometry !== identity.fine) throw new Error('Incompatible food-chain geometry epoch');
   const chemical = restoreChemical(world, sources, payload.chemical);
   const fungus = new Map(payload.fungus.map(([id, body]) => [id, decodeBody(body)]));
   const animals = new Map(payload.animals.map(row => [row[0], decodeAnimal(row)]));
@@ -31,7 +33,7 @@ export function restoreFoodChain(world: DispersalWorld, sources: readonly Chemic
     throw new Error('Duplicate food-chain snapshot account');
   }
   const state = {chemical, fungus, animals, nextAnimalId: payload.nextAnimalId, contract: payload.contract,
-    geometry: payload.geometry};
+    geometry: identity.signature};
   if (saveFoodChain(world, sources, rules, state).integrity !== integrity) throw new Error('Noncanonical food-chain snapshot');
   return state;
 }
@@ -67,7 +69,7 @@ export function projectFoodChain(oldWorld: DispersalWorld, newWorld: DispersalWo
     [0n,0n,0n]);
   const before = totals(state.fungus), after = totals(fungus);
   if (before.some((amount, i) => amount !== after[i])) throw new Error('Unbalanced fungal projection');
-  const projected = {...state, chemical, fungus, geometry: foodGeometrySignature(newWorld)};
+  const projected = {...state, chemical, fungus, geometry: foodWorldIdentity(newWorld).signature};
   validateFoodState(newWorld, sources, rules, projected);
   return projected;
 }

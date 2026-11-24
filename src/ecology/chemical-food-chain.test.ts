@@ -369,3 +369,41 @@ it('excludes auxiliary animal and nested body fields from journal entries and re
   expect(foodLedgerDigest(continuous)).toBe(foodLedgerDigest(replay));
   expect(saveFoodChain(w,[],rules,continuous.state)).toEqual(saveFoodChain(w,[],rules,replay.state));
 });
+
+function checkFoodEpoch(original: DispersalWorld, different: DispersalWorld) {
+  const rules = configuration();
+  const founded = foundFoodChain(original,[],rules,{inventory:new Map(),fungus:new Map(),animals:[]});
+  const saved = saveFoodChain(original,[],rules,founded);
+  expect(() => restoreFoodChain(different,[],rules,saved)).toThrow(/epoch/);
+  const restored = restoreFoodChain(original,[],rules,saved);
+  for (const state of [founded,restored,step(original,rules,restored).state]) {
+    expect(() => saveFoodChain(different,[],rules,state)).toThrow(/epoch/);
+    expect(() => step(different,rules,state)).toThrow(/epoch/);
+    expect(() => projectFoodChain(different,original,[],rules,state)).toThrow(/epoch/);
+    expect(saveFoodChain(original,[],rules,state).chemical.epoch).toEqual(saved.chemical.epoch);
+  }
+  return {rules, founded, saved};
+}
+
+it('binds an explicit closed barrier independently of mansion’s unchanged physical topology', () => {
+  const original = buildDispersalWorld('mansion');
+  const connector = '0/3/8/3/5';
+  expect(original.graph.boundaries.find(cut => cut.id === connector)?.state).toBe('closed');
+  expect(new Map(original.graph.barriers).has(connector)).toBe(false);
+  const explicit = changeDispersalBarrier(original,connector,'closed');
+  expect(explicit.graph.signature).toBe(original.graph.signature);
+  const {rules, founded, saved} = checkFoodEpoch(original,explicit);
+  const projected = projectFoodChain(original,explicit,[],rules,founded);
+  expect(() => saveFoodChain(original,[],rules,projected)).toThrow(/epoch/);
+  const moved = saveFoodChain(explicit,[],rules,projected);
+  expect(new Map(moved.chemical.epoch.barriers).get(connector)).toBe('closed');
+  expect(restoreFoodChain(explicit,[],rules,moved)).toEqual(projected);
+  expect(saveFoodChain(original,[],rules,projectFoodChain(explicit,original,[],rules,projected))).toEqual(saved);
+}, 30000);
+
+it('rejects an identical geometry with another seed across the food-chain operations', () => {
+  const original = fixture();
+  const other = {...original,graph:{...original.graph,seed:'another-seed'}};
+  const {rules, founded} = checkFoodEpoch(original,other);
+  expect(() => projectFoodChain(original,other,[],rules,founded)).toThrow(/building/);
+});

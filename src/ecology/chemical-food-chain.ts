@@ -384,7 +384,7 @@ export function foodBalances(world: DispersalWorld, state: FoodChainState) {
 
 export function stepFoodChain(world: DispersalWorld, sources: readonly ChemicalSupply[], rules: FoodChainRules,
   before: FoodChainState, input: FoodHourInput) {
-  const occupancy = validateFoodState(world, sources, rules, before);
+  const {occupancy} = validateFoodState(world, sources, rules, before);
   if (input.chemical.some(posting => posting.kind === 'conversion')) throw new Error('Use food-chain processes for conversions');
   const chemical = applyChemicalHour(world, sources, before.chemical, input.chemical, 'proportional');
   const hour = new Hour(world, rules, before, chemical, occupancy);

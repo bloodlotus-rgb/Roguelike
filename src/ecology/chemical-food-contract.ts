@@ -1,6 +1,7 @@
 import { sections, type Mode } from '../core/spatial.ts';
 import { chemicalDigest, validateChemicalState, type ChemicalState, type ChemicalSupply,
   type OrganicStock } from './chemical-ledger.ts';
+import { chemicalWorldEpoch } from './chemical-snapshot.ts';
 import { compareChemicalIds } from './chemical-transport.ts';
 import type { DispersalWorld } from './dispersal-world.ts';
 
@@ -137,18 +138,20 @@ export function regionCapacity(world: DispersalWorld, region: string) {
   return quantum(capacity);
 }
 
-export function foodGeometrySignature(world: DispersalWorld) {
+export function foodWorldIdentity(world: DispersalWorld) {
   const byId = ([a]: readonly [string, unknown], [b]: readonly [string, unknown]) => compareChemicalIds(a,b);
-  return chemicalDigest([
+  const fine = chemicalDigest([
     [...world.graph.regionToHabitat].sort(byId),
     [...world.capacities].sort(byId),
     [...world.ports].sort(byId),
     [...(world.connectorKinds ?? new Map(world.graph.boundaries.map(cut => [cut.id, cut.kind])))].sort(byId),
   ]);
+  return {fine, signature: chemicalDigest([chemicalWorldEpoch(world), fine])};
 }
 export function validateFoodState(world: DispersalWorld, sources: readonly ChemicalSupply[], rules: FoodChainRules,
   state: FoodChainState) {
-  if (state.geometry !== foodGeometrySignature(world)) throw new Error('Incompatible food-chain geometry epoch');
+  const identity = foodWorldIdentity(world);
+  if (state.geometry !== identity.signature) throw new Error('Incompatible food-chain geometry epoch');
   const {contract} = validateChemicalState(world, sources, state.chemical);
   if (state.chemical.topology !== world.graph.signature || state.chemical.contract !== contract ||
       state.contract !== chemicalDigest([contract, foodRulesSignature(rules)])) throw new Error('Incompatible food-chain contract or epoch');
@@ -168,7 +171,7 @@ export function validateFoodState(world: DispersalWorld, sources: readonly Chemi
     if (occupied > regionCapacity(world, animal.region)) throw new Error('Animal capacity exceeded');
     occupancy.set(animal.region, occupied);
   }
-  return occupancy;
+  return {occupancy, identity};
 }
 
 export interface FoodFoundation {
@@ -187,7 +190,7 @@ export function foundFoodChain(world: DispersalWorld, sources: readonly Chemical
   if (animals.size !== foundation.animals.length) throw new Error('Duplicate founder animal');
   const nextAnimalId = foundation.animals.reduce((next, animal) => Math.max(next, animal.id + 1), 0);
   const state = {chemical: {...opening, contract}, fungus: structuredClone(new Map(foundation.fungus)),
-    animals, nextAnimalId, geometry: foodGeometrySignature(world), contract: chemicalDigest([contract, foodRulesSignature(rules)])};
+    animals, nextAnimalId, geometry: foodWorldIdentity(world).signature, contract: chemicalDigest([contract, foodRulesSignature(rules)])};
   validateFoodState(world, sources, rules, state);
   return state;
 }
