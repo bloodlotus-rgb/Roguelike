@@ -126,7 +126,8 @@ it('restores checkpoints actually emitted by E1-C and E1-D and reproduces their 
   const {default:fixtures}=await import('./fixtures/e1-food-web-checkpoints.json');
   for (const fixture of fixtures) {
     const world=trial(),state=restoreWeb(world,JSON.parse(JSON.stringify(fixture.snapshot)));
-    expect(state.diet).toBe('specialists');
+    expect(state.diet).toBe('diet' in fixture.snapshot ? fixture.snapshot.diet : 'specialists');
+    expect(state.movement).toBe('dispersal');
     const next=stepWeb(world,state);
     auditWeb(world,state,next.state,next.ledger);
     expect(next.ledger).toEqual(fixture.nextLedger);
@@ -146,4 +147,44 @@ it('retains each consumer on its founding region when two habitats join and then
   expect(separated.residents).toEqual(state.residents);
   expect(separated.residents.get('near')).toEqual({prey:0,predator:2});
   expect(separated.residents.get('home')).toEqual({prey:4,predator:0});
+});
+
+it('allows neighboring singletons to form a pair by one paid crossing, and keeps a fed pair together',()=>{
+  const world=trial();
+  const founders=[{...census[0],count:1},{...census[0],region:'near',count:1}];
+  let state=foundWeb(world,setup,founders,[],'specialists','local-foraging').state;
+  let firstArrival:string|undefined;
+  for (let tick=1;tick<=12;tick++) {
+    const next=stepWeb(world,state);
+    auditWeb(world,state,next.state,next.ledger);
+    if (tick===6) {
+      const movement=next.ledger.filter(e=>e.kind==='transfer' && e.resource==='prey');
+      expect(movement).toHaveLength(1);
+      expect(movement[0].connector).toBe('bridge');
+      firstArrival=[...next.state.residents.keys()][0];
+      expect(next.state.residents.get(firstArrival)?.prey).toBe(2);
+      state=restoreWeb(world,JSON.parse(JSON.stringify(saveWeb(world,next.state))));
+      continue;
+    }
+    state=next.state;
+  }
+  expect(state.residents.get(firstArrival!)?.prey).toBe(2);
+});
+
+it('lets an unfed solitary hunter reach local prey through an open bridge and records the same isolation when sealed',()=>{
+  const open=trial(),closed=trial(true);
+  const founders=[{...census[0],region:'near',count:1},{...census[0],group:'predator' as const,count:1}];
+  const deposits=[{region:'near',connector:'bridge',origin:'historical sediment',stock:{...setup.founders,fungalBiomass:12}}];
+  const original=foundWeb(open,setup,founders,deposits,'specialists','local-foraging').state;
+  for (const world of [closed,open]) {
+    let state=projectWeb(open,world,original);
+    let crossings=0;
+    for (let tick=1;tick<=24;tick++) {
+      const next=stepWeb(world,state);
+      auditWeb(world,state,next.state,next.ledger);
+      crossings+=next.ledger.filter(e=>e.process==='predator-migration' && e.kind==='transfer' && e.connector==='bridge').length;
+      state=next.state;
+    }
+    expect(crossings).toBe(world===open ? 1 : 0);
+  }
 });

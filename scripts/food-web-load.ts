@@ -7,7 +7,9 @@ import {colonyHome} from '../src/ecology/trophic-contract.ts';
 import {surveyReserve} from './dispersal-trials.ts';
 import {viabilityTrial} from './viability-trials.ts';
 
-const [seed='mansion',size='100',hours='96']=process.argv.slice(2);
+const [seed='mansion',size='100',hours='96',movement='dispersal',diet='specialists']=process.argv.slice(2);
+if (movement!=='dispersal' && movement!=='local-foraging') throw new Error('Expected movement policy');
+if (diet!=='specialists' && diet!=='generalist-predator') throw new Error('Expected a benchmark diet');
 const count=Number(size), ticks=Number(hours);
 if (![count,ticks].every(n=>Number.isSafeInteger(n) && n>0)) throw new Error('Expected positive census size and hours');
 const start=performance.now(),world=buildDispersalWorld(seed),buildMs=performance.now()-start;
@@ -29,7 +31,7 @@ for (const id of queue) {
   if (deposits.length===count) break;
 }
 assert.equal(deposits.length,count);
-const initial=foundWeb(world,setup,founders,deposits);
+const initial=foundWeb(world,setup,founders,deposits,diet,movement);
 auditWeb(world,null,initial.state,initial.ledger);
 let state=initial.state, active=0;
 const step:number[]=[],audit:number[]=[];
@@ -46,5 +48,5 @@ function stats(times:number[]) {
   times.sort((a,b)=>a-b);
   return {mean:times.reduce((a,b)=>a+b,0)/times.length,p95:times[Math.ceil(times.length*.95)-1]};
 }
-console.log(JSON.stringify({seed,count,ticks,meanOccupiedRegions:active/ticks,finalOccupiedRegions:state.residents.size,
+console.log(JSON.stringify({seed,movement,diet,count,ticks,meanOccupiedRegions:active/ticks,finalOccupiedRegions:state.residents.size,
   buildMs,stepMs:stats(step),auditMs:stats(audit),peakRssMiB:process.resourceUsage().maxRSS/1024}));

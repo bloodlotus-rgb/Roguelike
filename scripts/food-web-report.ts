@@ -5,25 +5,28 @@ import { auditWeb, diets, foundWeb, groups, inventory, projectWeb, restoreWeb, s
 import { enclosure } from './dispersal-trials.ts';
 
 const args=process.argv.slice(2);
+const movementArgs=args.filter(arg=>arg.startsWith('--movement='));
+const movement=movementArgs[0]?.slice('--movement='.length) ?? 'dispersal';
+if (movementArgs.length>1 || (movement!=='dispersal' && movement!=='local-foraging')) throw new Error('Expected one supported movement policy');
 const menus=args.filter(arg=>arg.startsWith('--diet='));
 const dietName=menus[0]?.slice('--diet='.length) ?? 'specialists';
 const diet=diets.find(name=>name===dietName);
 if (!diet || menus.length>1) throw new Error('Expected a single supported diet');
-const [hours='8760',scenario='open',...seeds]=args.filter(arg=>!arg.startsWith('--diet='));
+const [hours='8760',scenario='open',...seeds]=args.filter(arg=>!arg.startsWith('--diet=') && !arg.startsWith('--movement='));
 const ticks=Number(hours);
 const cases=['open','scarce','sealed','reopen','isolated','one-hunter','whole','recovery','dense'];
 if (!Number.isSafeInteger(ticks) || ticks<1 || (scenario!=='matrix' && !cases.includes(scenario))) throw new Error('Expected hours, scenario and seeds');
 for (const seed of seeds.length ? seeds : ['mansion']) {
   const building=buildDispersalWorld(seed);
   const trial=enclosure(building);
-  for (const name of scenario==='matrix' ? cases : [scenario]) run(seed,building,trial,name,diet);
+  for (const name of scenario==='matrix' ? cases : [scenario]) run(seed,building,trial,name,diet,movement);
 }
-function run(seed:string,building:ReturnType<typeof buildDispersalWorld>,trial:ReturnType<typeof enclosure>,scenario:string,diet:typeof diets[number]) {
+function run(seed:string,building:ReturnType<typeof buildDispersalWorld>,trial:ReturnType<typeof enclosure>,scenario:string,diet:typeof diets[number],movement:'dispersal'|'local-foraging') {
   let world=scenario==='whole' ? building : trial.open;
   const setup=structuredClone(trial.setup);
   if (scenario==='scarce') setup.source=null;
   const founders:Founder[]=groups.map(group=>({group,count:group==='prey' ? (scenario==='dense' ? 10 : 6) : (scenario==='one-hunter' ? 1 : 2),region:trial.source,connector:trial.bridge,origin:'historical lateral entry'}));
-  const initial=foundWeb(world,setup,founders,[],diet);
+  const initial=foundWeb(world,setup,founders,[],diet,movement);
   auditWeb(world,null,initial.state,initial.ledger);
   let state=initial.state;
   const events:Record<string,number>={}, windows=[], durations:number[]=[];
@@ -86,6 +89,6 @@ function run(seed:string,building:ReturnType<typeof buildDispersalWorld>,trial:R
     }
   }
   durations.sort((a,b)=>a-b);
-  console.log(JSON.stringify({seed,scenario,diet,ticks,bridge:trial.bridge,founders,windows,events,targetHistory,
+  console.log(JSON.stringify({seed,scenario,diet,movement,ticks,bridge:trial.bridge,founders,windows,events,targetHistory,
     removed,extinctAt,peakActiveRegionsFirst240:Math.max(...sample),cpuMs:Object.values(process.cpuUsage(cpu)).reduce((a,b)=>a+b,0)/1000,elapsedMs:performance.now()-start,p95TickMs:durations[Math.ceil(ticks*.95)-1],peakRssMiB:process.resourceUsage().maxRSS/1024}));
 }
