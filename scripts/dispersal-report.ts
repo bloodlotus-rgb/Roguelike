@@ -47,7 +47,7 @@ function experiment(base: DispersalWorld, name: string, buildMs: number, lab?: R
     stock: { ...setup.founders } }];
   const founded = foundMeta(world, setup, deposits, name !== 'stationary');
   let reference = name === 'stationary' ? foundColony(world.graph,setup).state : undefined;
-  const book = auditMeta(new Map(), founded.state.stocks, founded.ledger);
+  const book = auditMeta(world,new Map(), founded.state.stocks, founded.ledger);
   let state = founded.state;
   const initial = occupancy(world, state.stocks);
   const history = { fungalBiomass: new Set<string>(), detritivores: new Set<string>() };
@@ -85,7 +85,7 @@ function experiment(base: DispersalWorld, name: string, buildMs: number, lab?: R
     const next = stepMeta(world,state);
     const stepped = performance.now(), duration = stepped - started;
     stepMs += duration; samples.push(duration);
-    const balance = auditMeta(state.stocks,next.state.stocks,next.ledger);
+    const balance = auditMeta(world,state.stocks,next.state.stocks,next.ledger);
     const auditDuration = performance.now()-stepped;
     auditMs += auditDuration;
     auditSamples.push(auditDuration);

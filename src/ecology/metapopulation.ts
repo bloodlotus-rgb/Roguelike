@@ -27,8 +27,26 @@ export interface MetaState {
   // Spatial decomposition of the three living accounts. Never added a second time to totals.
   anchors: Map<string, Tissue>;
 }
-export const auditMeta = (before: MetaState['stocks'], after: MetaState['stocks'], ledger: MetaPosting[]) =>
-  auditAccounts(before, after, ledger, metaAccounts, emptyMeta, metaMatter);
+export function auditMeta(world: DispersalWorld, before: MetaState['stocks'], after: MetaState['stocks'], ledger: MetaPosting[]) {
+  const crossed = new Set<string>();
+  for (const e of ledger) {
+    if (e.kind !== 'transfer' || (e.resource !== 'propagules' && e.resource !== 'detritivores' && e.resource !== 'fungalBiomass')) continue;
+    if (e.resource === 'fungalBiomass' || e.from === null || e.to === null || !e.connector || e.amount !== 1) {
+      throw new Error('Invalid organism transfer');
+    }
+    const graph = world.graph;
+    const index = graph.incident[e.from]?.find(i => graph.boundaries[i].id === e.connector);
+    const cut = index === undefined ? undefined : graph.boundaries[index];
+    const key = e.resource + '/' + e.connector;
+    // Water has its final hourly value when dispersal starts.
+    if (!cut || crossed.has(key) || (e.from === cut.from ? cut.to : cut.from) !== e.to ||
+        !organismPass(graph,cut,e.from,e.resource,(after.get(e.from)?.water ?? 0) > 0)) {
+      throw new Error('Incompatible organism crossing: ' + e.connector);
+    }
+    crossed.add(key);
+  }
+  return auditAccounts(before, after, ledger, metaAccounts, emptyMeta, metaMatter);
+}
 
 function validateDeposits(world: DispersalWorld, setup: TrophicScenario, deposits: readonly Deposit[]) {
   validateScenario(world.graph, setup);

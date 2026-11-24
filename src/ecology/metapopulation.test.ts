@@ -38,7 +38,7 @@ it('prices a propagule, crosses a physical port, and establishes only from arriv
         world = next;
       }
       const next = stepMeta(world,state);
-      auditMeta(state.stocks,next.state.stocks,next.ledger);
+      auditMeta(world,state.stocks,next.state.stocks,next.ledger);
       const target = next.state.stocks.get(2);
       if (t===4) {
         expect(next.ledger.filter(e => e.process === 'propagule-production').map(e => [e.kind,e.resource,e.amount])).toEqual([
@@ -137,7 +137,7 @@ it('delays onward movement and recycles an ungerminated packet with no water or 
   let decayed=false;
   for (let t=1;t<=24;t++) {
     const next=stepMeta(world,state);
-    auditMeta(state.stocks,next.state.stocks,next.ledger);
+    auditMeta(world,state.stocks,next.state.stocks,next.ledger);
     if(t===4) {
       expect(next.state.stocks.get(2)?.propagules).toBe(1);
       expect(next.state.stocks.get(3)?.propagules ?? 0).toBe(0);
@@ -156,4 +156,28 @@ it('keeps nutrient-rich sterile sites sterile and rejects a checkpoint from the 
   for(let t=0;t<24;t++) state=stepMeta(world,state).state;
   expect(state.anchors.size).toBe(0);
   expect(() => restoreMeta(world,{...saveMeta(world,state),version:'E1-B1/1'})).toThrow();
+});
+
+
+it('reserves the last physical vacancy across competing donors and audits the actual crossing', () => {
+  const world=site();
+  world.graph.boundaries[1].state='open';
+  const supply = { ...setup.founders, energy:100, detritus:100, water:100 };
+  const deposits = [
+    { region:'far',connector:'far-door',origin:'historical-survey',stock:{ ...supply, detritivores:5 } },
+    { region:'bridge-end',connector:'bridge',origin:'historical-survey',stock:{ ...supply, fungalBiomass:35,detritivores:0 } },
+  ];
+  let state=foundMeta(world,setup,deposits).state;
+  for (let tick=1;tick<=4;tick++) {
+    const next=stepMeta(world,state);
+    auditMeta(world,state.stocks,next.state.stocks,next.ledger);
+    if (tick===4) {
+      const migrants = next.ledger.filter(e=>e.process==='grazer-migration' && e.to===2);
+      expect(migrants).toHaveLength(1);
+      expect(next.state.stocks.get(2)!.fungalBiomass + next.state.stocks.get(2)!.detritivores).toBe(36);
+      const mislabeled = next.ledger.map(e=>e===migrants[0] ? { ...e,connector:'inlet' } : e);
+      expect(()=>auditMeta(world,state.stocks,next.state.stocks,mislabeled)).toThrow('crossing');
+    }
+    state=next.state;
+  }
 });
