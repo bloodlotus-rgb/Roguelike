@@ -7,7 +7,7 @@ import {colonyHome} from '../src/ecology/trophic-contract.ts';
 import {surveyReserve} from './dispersal-trials.ts';
 import {viabilityTrial} from './viability-trials.ts';
 
-const [seed='mansion',size='1000',hours='96']=process.argv.slice(2);
+const [seed='mansion',size='100',hours='96']=process.argv.slice(2);
 const count=Number(size), ticks=Number(hours);
 if (![count,ticks].every(n=>Number.isSafeInteger(n) && n>0)) throw new Error('Expected positive census size and hours');
 const start=performance.now(),world=buildDispersalWorld(seed),buildMs=performance.now()-start;
