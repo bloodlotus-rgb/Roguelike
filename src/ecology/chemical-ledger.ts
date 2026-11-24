@@ -1,6 +1,8 @@
 import type { DispersalWorld } from './dispersal-world.ts';
 import { channelLimit } from './transport.ts';
-import { planChemicalTransport } from './chemical-transport.ts';
+import { createHash } from 'node:crypto';
+import { conductance, flooded } from './parameters.ts';
+import { chemicalTransportRules, compareChemicalIds, planChemicalTransport } from './chemical-transport.ts';
 
 export type MatterQ = number;
 export type EnergyQ = number;
@@ -30,11 +32,26 @@ export interface ChemicalSupply {
 }
 export interface ChemicalState {
   topology?: string;
+  readonly contract?: string;
   tick: number;
   inventory: ReadonlyMap<number, ChemicalInventory>;
   heat: ReadonlyMap<number, EnergyQ>;
   lotsUsed: ReadonlyMap<string, number>;
 }
+type ChemicalMode = 'transport' | 'accounting';
+
+export const chemicalDigest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+export function chemicalContract(sources: readonly ChemicalSupply[], mode: ChemicalMode = 'transport') {
+  const rules = chemicalDigest([mode, chemicalTransportRules, conductance, flooded]);
+  const manifest = chemicalDigest([...sources].sort((a,b) => compareChemicalIds(a.id,b.id)).map(s => [
+    s.id, s.origin, s.port.connector, s.port.fromRegion, s.port.toRegion,
+    s.perLot.detritus.matter, s.perLot.detritus.chemicalEnergy, s.perLot.mineralMatter, s.perLot.water,
+    s.rate, s.periodHours, s.activeHours, s.quotaLots,
+  ]));
+  return { rules, manifest, contract: chemicalDigest([rules, manifest]) };
+}
+
 interface Transaction {
   transactionId: string;
   tick: number;
@@ -116,17 +133,25 @@ function habitat(world: DispersalWorld, id: number) {
   if (!Number.isSafeInteger(id) || !world.graph.habitats[id]) throw new Error('Unknown chemical habitat');
 }
 
-function route(world: DispersalWorld, port: ChemicalPort, stock: ChemicalInventory, dormant = false) {
+function route(world: DispersalWorld, port: ChemicalPort, stock: ChemicalInventory): number;
+function route(world: DispersalWorld, port: ChemicalPort, stock: ChemicalInventory,
+  use: 'declaration' | 'delivery' | 'transaction'): number | undefined;
+function route(world: DispersalWorld, port: ChemicalPort, stock: ChemicalInventory,
+  use: 'declaration' | 'delivery' | 'transaction' = 'transaction') {
   const { graph, ports } = world;
   const ends = ports.get(port.connector);
   const from = graph.regionToHabitat.get(port.fromRegion), to = graph.regionToHabitat.get(port.toRegion);
-  if (!ends || from === undefined || to === undefined || from === to ||
+  if (!ends || from === undefined || to === undefined || port.fromRegion === port.toRegion ||
       !((ends[0] === port.fromRegion && ends[1] === port.toRegion) ||
         (ends[1] === port.fromRegion && ends[0] === port.toRegion))) {
     throw new Error('Invalid chemical port');
   }
+  if (from === to) {
+    if (use !== 'transaction') return undefined;
+    throw new Error('Inactive chemical port within one habitat');
+  }
   const cut = graph.incident[from].map(i => graph.boundaries[i]).find(c => c.id === port.connector);
-  const effective = dormant && cut && (cut.state === 'closed' || cut.state === 'blocked')
+  const effective = use === 'declaration' && cut && (cut.state === 'closed' || cut.state === 'blocked')
     ? { ...cut, state: 'flooded' as const } : cut;
   if (!effective || !cut || !((cut.from === from && cut.to === to) || (cut.from === to && cut.to === from)) ||
       (stock.water && !channelLimit(graph, effective, from, 'water')) ||
@@ -144,7 +169,7 @@ function cargoFor(supply: ChemicalSupply, lots: number) {
   return pack(m * count, e * count, n * count, w * count);
 }
 
-export function declareChemicalSupply(world: DispersalWorld, supply: ChemicalSupply, dormant = false) {
+function validateSupply(supply: ChemicalSupply) {
   requireIdentifier(supply.id);
   requireIdentifier(supply.origin);
   if (!quantum(supply.rate) || !quantum(supply.quotaLots) ||
@@ -154,7 +179,11 @@ export function declareChemicalSupply(world: DispersalWorld, supply: ChemicalSup
   const load = total(supply.perLot);
   if (!load.matter && !load.water) throw new Error('Empty chemical lot');
   cargoFor(supply, Math.min(supply.rate, supply.quotaLots));
-  route(world, supply.port, supply.perLot, dormant);
+}
+
+export function declareChemicalSupply(world: DispersalWorld, supply: ChemicalSupply, dormant = false) {
+  validateSupply(supply);
+  route(world, supply.port, supply.perLot, dormant ? 'declaration' : 'transaction');
   return supply;
 }
 
@@ -163,7 +192,8 @@ function nextLots(supply: ChemicalSupply, before: ChemicalState) {
   const hours = quantum(before.tick), period = BigInt(supply.periodHours), active = BigInt(supply.activeHours);
   const tail = hours % period;
   const eligible = hours / period * active + (tail < active ? tail : active);
-  if (quantum(used) > BigInt(supply.quotaLots) || BigInt(used) > eligible * BigInt(supply.rate)) {
+  const count = quantum(used), rate = BigInt(supply.rate), quota = BigInt(supply.quotaLots);
+  if (count > quota || count > eligible * rate || (count !== quota && count % rate !== 0n)) {
     throw new Error('Invalid chemical supply meter');
   }
   return tail < active ? Math.min(supply.rate, supply.quotaLots - used) : 0;
@@ -171,14 +201,21 @@ function nextLots(supply: ChemicalSupply, before: ChemicalState) {
 
 export function chemicalDelivery(world: DispersalWorld, supply: ChemicalSupply, before: ChemicalState,
   transactionId: string): ChemicalPosting | undefined {
-  declareChemicalSupply(world, supply);
+  validateSupply(supply);
+  if (route(world, supply.port, supply.perLot, 'delivery') === undefined) return undefined;
   requireIdentifier(transactionId);
   const tick = checked(quantum(before.tick) + 1n), lots = nextLots(supply, before);
   if (lots) return { kind: 'source', tick, transactionId, process: 'delivery', supply: supply.id, lots };
 }
 
-export function validateChemicalState(world: DispersalWorld, declarations: readonly ChemicalSupply[], before: ChemicalState) {
+export function validateChemicalState(world: DispersalWorld, declarations: readonly ChemicalSupply[], before: ChemicalState,
+  mode: ChemicalMode = 'transport') {
   quantum(before.tick);
+  const signature = chemicalContract(declarations, mode);
+  if (before.contract !== signature.contract &&
+      (before.contract !== undefined || before.tick !== 0 || before.lotsUsed.size !== 0)) {
+    throw new Error('Incompatible chemical state contract');
+  }
   if (before.topology !== world.graph.signature && (before.topology !== undefined || before.tick !== 0)) {
     throw new Error('Wrong chemical geometry epoch');
   }
@@ -201,17 +238,18 @@ export function validateChemicalState(world: DispersalWorld, declarations: reado
     if (!source) throw new Error('Undeclared chemical supply meter');
     nextLots(source, before);
   }
-  return supplies;
+  return { supplies, ...signature };
 }
 
-export function applyChemicalHour(world: DispersalWorld, declarations: readonly ChemicalSupply[],
-  before: ChemicalState, postings: readonly ChemicalPosting[]) {
-  const supplies = validateChemicalState(world, declarations, before);
+function applyHour(world: DispersalWorld, declarations: readonly ChemicalSupply[],
+  before: ChemicalState, postings: readonly ChemicalPosting[], mode: ChemicalMode) {
+  const {supplies, contract} = validateChemicalState(world, declarations, before, mode);
   const tick = checked(quantum(before.tick) + 1n);
   const inventory = new Map(before.inventory), heat = new Map(before.heat), lotsUsed = new Map(before.lotsUsed);
   const transfers = postings.filter((entry): entry is ChemicalTransfer => entry.kind === 'transfer');
   const internalIn = new Map<number, Total>(), internalOut = new Map<number, Total>();
-  if (transfers.length) {
+  if (mode === 'accounting' && transfers.length) throw new Error('Transfers require the chemical transport mode');
+  if (mode === 'transport') {
     const planned = planChemicalTransport(world, { ...before, topology: world.graph.signature });
     const key = (t: ChemicalTransfer) => JSON.stringify([t.transactionId,t.tick,t.process,t.connector,
       t.fromHabitat,t.toHabitat,...bins(t.cargo).map(Number)]);
@@ -288,8 +326,18 @@ export function applyChemicalHour(world: DispersalWorld, declarations: readonly 
     dissipated += delta;
   }
   balance(open, close, imported, exported, dissipated);
-  const state: ChemicalState = { topology: world.graph.signature, tick, inventory, heat, lotsUsed };
+  const state: ChemicalState = { topology: world.graph.signature, contract, tick, inventory, heat, lotsUsed };
   return { state, byHabitat, cutFlows, transfers, internalIn, internalOut, imported, exported, dissipated };
+}
+
+export function applyChemicalHour(world: DispersalWorld, declarations: readonly ChemicalSupply[],
+  before: ChemicalState, postings: readonly ChemicalPosting[]) {
+  return applyHour(world, declarations, before, postings, 'transport');
+}
+
+export function applyChemicalAccountingHour(world: DispersalWorld, declarations: readonly ChemicalSupply[],
+  before: ChemicalState, postings: readonly ChemicalPosting[]) {
+  return applyHour(world, declarations, before, postings, 'accounting');
 }
 
 /** Canonical comparison of fixture state, without a persistence format. */
@@ -302,9 +350,20 @@ export function serializeChemicalState(state: ChemicalState): string {
   ]);
 }
 
+function auditLedger(world: DispersalWorld, declarations: readonly ChemicalSupply[],
+  before: ChemicalState, postings: readonly ChemicalPosting[], after: ChemicalState, mode: ChemicalMode) {
+  const report = applyHour(world, declarations, before, postings, mode);
+  if (report.state.topology !== after.topology || report.state.contract !== after.contract ||
+      serializeChemicalState(report.state) !== serializeChemicalState(after)) throw new Error('Chemical closing state mismatch');
+  return report;
+}
+
 export function auditChemicalLedger(world: DispersalWorld, declarations: readonly ChemicalSupply[],
   before: ChemicalState, postings: readonly ChemicalPosting[], after: ChemicalState) {
-  const report = applyChemicalHour(world, declarations, before, postings);
-  if (report.state.topology !== after.topology || serializeChemicalState(report.state) !== serializeChemicalState(after)) throw new Error('Chemical closing state mismatch');
-  return report;
+  return auditLedger(world, declarations, before, postings, after, 'transport');
+}
+
+export function auditChemicalAccountingLedger(world: DispersalWorld, declarations: readonly ChemicalSupply[],
+  before: ChemicalState, postings: readonly ChemicalPosting[], after: ChemicalState) {
+  return auditLedger(world, declarations, before, postings, after, 'accounting');
 }

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { expect, it } from 'vitest';
-import { applyChemicalHour, auditChemicalLedger, chemicalDelivery, type ChemicalState, type ChemicalSupply } from './chemical-ledger';
+import { applyChemicalAccountingHour, applyChemicalHour, auditChemicalLedger, chemicalContract, chemicalDelivery, type ChemicalState, type ChemicalSupply } from './chemical-ledger';
 import { buildDispersalWorld, changeDispersalBarrier, indexWorld } from './dispersal-world';
 import { apportion, planChemicalTransport } from './chemical-transport';
 import { projectChemicalState, restoreChemical, saveChemical } from './chemical-snapshot';
@@ -8,7 +8,7 @@ import type { Boundary, HabitatGraph } from './habitats';
 
 const regions = ['a','b','c','d'];
 const edges = [['alpha','a','b'],['beta','a','c'],['next','b','d']] as const;
-function world(seed: string, closed = false, mixed = false, reverse = false) {
+function world(seed: string, closed = false, mixed = false, reverse = false, flat = false) {
   const partition = mixed ? [0,0,0,1] : [0,1,2,3];
   const index = new Map(regions.map((r,i) => [r,partition[i]]));
   const edgesOrdered = reverse ? [...edges].reverse() : edges;
@@ -16,7 +16,7 @@ function world(seed: string, closed = false, mixed = false, reverse = false) {
     [{ id, from:index.get(a)!, to:index.get(b)!, kind:'watercourse', state:closed && id==='alpha'?'closed':'open' }]);
   const graph: HabitatGraph = { seed, signature: JSON.stringify([seed,closed,mixed]), entrance:0,
     barriers:closed?[['alpha','closed']]:[], boundaries, regionToHabitat:index,
-    habitats: Array.from({length:mixed?2:4}, (_,i) => ({zone:1,depthM:i,areaM2:10,capacity:10,humidity:1,morphology:[]})),
+    habitats: Array.from({length:mixed?2:4}, (_,i) => ({zone:1,depthM:flat ? 0 : i,areaM2:10,capacity:10,humidity:1,morphology:[]})),
     incident: Array.from({length:mixed?2:4}, (_,i) => boundaries.flatMap((c,j) => c.from===i || c.to===i ? [j] : [])) };
   return indexWorld(graph,new Map(edges.map(([id,a,b]) => [id,[a,b] as const])),new Map(regions.map(r=>[r,10])));
 }
@@ -72,14 +72,14 @@ it('rejects invented, inverted, duplicated, detached and closed crossings before
 });
 
 it('splits and merges using fine-region overlap and keeps heat as heat', () => {
-  const a=world('fixture',false,true), b=world('fixture');
-  const before={...opening(a,1),heat:new Map([[0,5]]),tick:2,lotsUsed:new Map([['prior',1]])};
+  const a=world('fixture',false,true,false,true), b=world('fixture',false,false,false,true);
+  const before={...opening(a,1),contract:chemicalContract([]).contract,heat:new Map([[0,5]]),tick:2};
   const divided=projectChemicalState(a,b,before);
   expect(divided.inventory.get(0)?.detritus).toEqual({matter:1,chemicalEnergy:7});
   expect(divided.inventory.get(1)?.detritus).toEqual({matter:0,chemicalEnergy:0});
   expect([...divided.heat.values()]).toEqual([2,2,1]);
   expect(projectChemicalState(b,a,divided)).toEqual(before);
-  expect(projectChemicalState(a,a,before)).toEqual(before);
+  expect(projectChemicalState(a,a, before)).toEqual(before);
   expect(()=>projectChemicalState(b,a,before)).toThrow(/epoch/);
   expect(()=>projectChemicalState(a,world('other'),before)).toThrow(/building/);
   const missing=world('fixture');
@@ -94,8 +94,8 @@ it.each(['mansion','estirpe','zz'])('replays exact snapshots and ledgers on fixt
   for (const [hour,w] of [[1,open],[2,open],[3,closed],[4,closed],[5,open]] as const) {
     if (hour===3 || hour===5) {
       const previous=hour===3?open:closed;
-      continuous=projectChemicalState(previous,w,continuous);
-      replay=projectChemicalState(previous,w,replay);
+      continuous=projectChemicalState(previous,w,continuous,[supply]);
+      replay=projectChemicalState(previous,w,replay,[supply]);
     }
     const entries=(s:ChemicalState) => {
       const delivery=w===open?chemicalDelivery(w,supply,s,'supply'):undefined;
@@ -113,7 +113,7 @@ it.each(['mansion','estirpe','zz'])('replays exact snapshots and ledgers on fixt
 
 it('rejects legacy formats, altered contract and malformed accounts even with recalculated integrity', () => {
   const w=world('fixture'), saved=saveChemical(w,[supply],opening(w));
-  for (const version of ['E1-B1/1','E1-B2/1','E1-C/1','E1-D/1']) {
+  for (const version of ['E1-B1/1','E1-B2/1','E1-C/1','E1-D/1','E1-Chemical-Transport/1']) {
     expect(()=>restoreChemical(w,[supply],{version})).toThrow(/version/);
   }
   expect(()=>restoreChemical(w,[{...supply,perLot:stock(2,6,1)}],saved)).toThrow(/contract/);
@@ -151,4 +151,85 @@ it.each(['mansion','zz'])('resumes across a barrier on generated Jenga geometry 
   expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   expect(JSON.stringify(saveChemical(closed,[],applyChemicalHour(closed,[],projected,a).state)))
     .toBe(JSON.stringify(saveChemical(closed,[],applyChemicalHour(closed,[],replay,b).state)));
+}, 25000);
+
+it('rejects an omitted physical crossing atomically', () => {
+  const w = world('fixture'), before = opening(w);
+  expect(planChemicalTransport(w, before).length).toBeGreaterThan(0);
+  const checkpoint = saveChemical(w, [], before);
+  expect(() => applyChemicalHour(w, [], before, [])).toThrow(/physical opening plan/);
+  expect(saveChemical(w, [], before)).toEqual(checkpoint);
+  expect(() => applyChemicalAccountingHour(w, [], before, planChemicalTransport(w, before))).toThrow(/transport mode/);
+  const accounted = applyChemicalAccountingHour(w, [], before, []).state;
+  expect(() => applyChemicalHour(w, [], accounted, planChemicalTransport(w, accounted))).toThrow(/contract/);
+});
+
+const meteredSupply = {...supply, perLot: stock(1, 2), rate: 2, quotaLots: 5};
+function deliverFirstLots(w: ReturnType<typeof world>) {
+  const before = {...opening(w), inventory: new Map()};
+  return applyChemicalHour(w, [meteredSupply], before, [chemicalDelivery(w, meteredSupply, before, 'in')!]).state;
+}
+
+it('binds confirmed state to the original source manifest', () => {
+  const w = world('fixture'), after = deliverFirstLots(w);
+  const changed = {...meteredSupply, perLot: stock(1, 99)};
+  expect(after.inventory.get(0)).toEqual(stock(2, 4));
+  expect(() => saveChemical(w, [changed], after)).toThrow(/contract/);
+  expect(() => applyChemicalHour(w, [changed], after, planChemicalTransport(w, after))).toThrow(/contract/);
+  expect(() => projectChemicalState(w, world('fixture', true), after, [changed])).toThrow(/contract/);
+});
+
+it('rejects a quota meter unreachable by complete scheduled lots', () => {
+  const w = world('fixture'), after = deliverFirstLots(w);
+  const saved = saveChemical(w, [meteredSupply], after);
+  const {integrity: _, ...payload} = structuredClone(saved);
+  payload.accounts[3][0][1] = 1;
+  const integrity = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  expect(() => restoreChemical(w, [meteredSupply], {...payload, integrity})).toThrow(/supply meter/);
+  const second = applyChemicalHour(w, [meteredSupply], after,
+    [...planChemicalTransport(w, after), chemicalDelivery(w, meteredSupply, after, 'second')!]).state;
+  const last = chemicalDelivery(w, meteredSupply, second, 'last')!;
+  expect(last).toMatchObject({lots: 1});
+  const exhausted = applyChemicalHour(w, [meteredSupply], second, [...planChemicalTransport(w, second), last]).state;
+  expect(exhausted.lotsUsed.get(meteredSupply.id)).toBe(5);
+  expect(restoreChemical(w, [meteredSupply], saveChemical(w, [meteredSupply], exhausted))).toEqual(exhausted);
+});
+
+it('rejects a depth edit disguised as a change of barrier', () => {
+  const a = world('fixture'), b = world('fixture', true);
+  b.graph.habitats[1].depthM = 0;
+  expect(() => projectChemicalState(a, b, opening(a))).toThrow(/building/);
+});
+
+it('keeps the barriers in a checkpoint detached from the live world', () => {
+  const w = world('fixture', true);
+  const checkpoint = saveChemical(w, [], opening(w));
+  checkpoint.epoch.barriers[0][1] = 'open';
+  expect(w.graph.barriers[0][1]).toBe('closed');
+});
+
+it('resumes mansion after a used source becomes internal to a merged habitat', () => {
+  const connector = '0/12/12/0/1';
+  const open = buildDispersalWorld('mansion');
+  const split = changeDispersalBarrier(open, connector, 'flooded');
+  const [fromRegion, toRegion] = split.ports.get(connector)!;
+  const source = {...meteredSupply, port: {connector, fromRegion, toRegion}};
+  const before = {...opening(split), inventory: new Map()};
+  const after = applyChemicalHour(split, [source], before, [chemicalDelivery(split, source, before, 'in')!]).state;
+  expect(open.graph.regionToHabitat.get(fromRegion)).toBe(open.graph.regionToHabitat.get(toRegion));
+  const merged = projectChemicalState(split, open, after, [source]);
+  const saved = saveChemical(open, [source], merged);
+  const restored = restoreChemical(open, [source], JSON.parse(JSON.stringify(saved)));
+  expect(restored.lotsUsed.get(source.id)).toBe(2);
+  expect(chemicalDelivery(open, source, restored, 'inactive')).toBeUndefined();
+  const plan = planChemicalTransport(open, restored);
+  expect(() => applyChemicalHour(open, [source], restored, [...plan, {
+    kind: 'source', tick: 2, transactionId: 'invalid', process: 'delivery', supply: source.id, lots: 2,
+  }])).toThrow();
+  const advanced = applyChemicalHour(open, [source], restored, plan);
+  expect(advanced.imported.chemicalEnergy).toBe(0n);
+  expect(advanced.state.lotsUsed.get(source.id)).toBe(2);
+  expect(advanced.state.tick).toBe(2);
+  const reopened = projectChemicalState(open, split, advanced.state, [source]);
+  expect(chemicalDelivery(split, source, reopened, 'return')).toMatchObject({lots: 2});
 }, 25000);

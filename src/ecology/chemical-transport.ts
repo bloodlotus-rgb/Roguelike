@@ -4,7 +4,7 @@ import { channelLimit } from './transport.ts';
 import type { ChemicalInventory, ChemicalState, ChemicalTransfer } from './chemical-ledger.ts';
 
 export const chemicalTransportRules = {
-  revision: 1, phase: 'before external and local transactions', mixing: 'homogeneous detritus per habitat',
+  revision: 2, phase: 'before external and local transactions', mixing: 'homogeneous detritus per habitat',
   flux: 'historical material gradient and cut limits', allocation: 'largest remainder in canonical order',
   projection: 'material by fine-region overlap, energy by allocated detritus',
 } as const;

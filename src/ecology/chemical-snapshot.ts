@@ -1,26 +1,16 @@
-import { createHash } from 'node:crypto';
 import type { DispersalWorld } from './dispersal-world.ts';
 import { generatorVersion } from './habitats.ts';
-import { conductance, flooded } from './parameters.ts';
-import { serializeChemicalState, validateChemicalState, type ChemicalState, type ChemicalSupply,
+import { chemicalDigest as digest, serializeChemicalState, validateChemicalState, type ChemicalState, type ChemicalSupply,
   type ChemicalInventory } from './chemical-ledger.ts';
-import { apportion, chemicalTransportRules, compareChemicalIds } from './chemical-transport.ts';
+import { apportion, compareChemicalIds } from './chemical-transport.ts';
 
-const version = 'E1-Chemical-Transport/1';
-const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-
-function manifestHash(sources: readonly ChemicalSupply[]) {
-  return digest([...sources].sort((a,b) => compareChemicalIds(a.id,b.id)).map(s => [
-    s.id, s.origin, s.port.connector, s.port.fromRegion, s.port.toRegion,
-    s.perLot.detritus.matter, s.perLot.detritus.chemicalEnergy, s.perLot.mineralMatter, s.perLot.water,
-    s.rate, s.periodHours, s.activeHours, s.quotaLots,
-  ]));
-}
+const version = 'E1-Chemical-Transport/2';
 
 function epoch(world: DispersalWorld) {
   return {
     seed: world.graph.seed, generator: generatorVersion, topology: world.graph.signature,
-    barriers: [...world.graph.barriers].sort(([a],[b]) => compareChemicalIds(a,b)),
+    barriers: world.graph.barriers.map(([id,state]): [string, typeof state] => [id,state])
+      .sort(([a],[b]) => compareChemicalIds(a,b)),
   };
 }
 
@@ -28,9 +18,8 @@ type SerializedState = [number, [number, number, number, number, number][], [num
 
 export function saveChemical(world: DispersalWorld, sources: readonly ChemicalSupply[], state: ChemicalState) {
   if (state.topology !== world.graph.signature) throw new Error('Wrong chemical geometry epoch');
-  validateChemicalState(world,sources,state);
-  const payload = { version, epoch: epoch(world),
-    rules: digest([chemicalTransportRules,conductance,flooded]), manifest: manifestHash(sources),
+  const {rules, manifest} = validateChemicalState(world,sources,state);
+  const payload = { version, epoch: epoch(world), rules, manifest,
     accounts: JSON.parse(serializeChemicalState(state)) as SerializedState };
   return { ...payload, integrity: digest(payload) };
 }
@@ -48,21 +37,38 @@ export function restoreChemical(world: DispersalWorld, sources: readonly Chemica
   if (inventory.size !== rows.length || heat.size !== heatRows.length || lotsUsed.size !== meterRows.length) {
     throw new Error('Duplicate chemical snapshot account');
   }
-  const state = { topology: world.graph.signature,tick,inventory,heat,lotsUsed };
+  const state = { topology: world.graph.signature, contract: digest([payload.rules, payload.manifest]), tick, inventory, heat, lotsUsed };
   if (saveChemical(world,sources,state).integrity !== integrity) throw new Error('Incompatible chemical snapshot contract or epoch');
   return state;
 }
 
-export function projectChemicalState(oldWorld: DispersalWorld, newWorld: DispersalWorld, state: ChemicalState) {
+function immutableConnectorKinds(world: DispersalWorld) {
+  const kinds = world.connectorKinds ?? new Map(world.graph.boundaries.map(cut => [cut.id,cut.kind]));
+  const visible = new Set<string>();
+  for (const cut of world.graph.boundaries) {
+    const port = world.ports.get(cut.id);
+    if (!port || visible.has(cut.id) || cut.from === cut.to || world.graph.regionToHabitat.get(port[0]) !== cut.from ||
+        world.graph.regionToHabitat.get(port[1]) !== cut.to || kinds.get(cut.id) !== cut.kind) {
+      throw new Error('Invalid chemical building connector');
+    }
+    visible.add(cut.id);
+  }
+  for (const [id,[a,b]] of world.ports) {
+    const from = world.graph.regionToHabitat.get(a), to = world.graph.regionToHabitat.get(b);
+    if (from === undefined || to === undefined) throw new Error('Missing chemical region at a building port');
+    if (from !== to && !visible.has(id)) throw new Error('Missing chemical building cut');
+  }
+  return kinds;
+}
+
+export function projectChemicalState(oldWorld: DispersalWorld, newWorld: DispersalWorld, state: ChemicalState,
+  sources: readonly ChemicalSupply[] = []) {
   const old = oldWorld.graph, next = newWorld.graph;
   if (state.topology !== old.signature) throw new Error('Wrong chemical geometry epoch');
+  const {contract} = validateChemicalState(oldWorld,sources,state);
   if (old.seed !== next.seed || old.regionToHabitat.size !== next.regionToHabitat.size ||
       oldWorld.ports.size !== newWorld.ports.size || oldWorld.capacities.size !== newWorld.capacities.size) {
     throw new Error('Different chemical building');
-  }
-  for (const [key,[a,b]] of oldWorld.ports) {
-    const port = newWorld.ports.get(key);
-    if (!port || port[0] !== a || port[1] !== b) throw new Error('Different chemical building ports');
   }
   for (const [id,capacity] of oldWorld.capacities) {
     if (newWorld.capacities.get(id) !== capacity) throw new Error('Different chemical building capacity');
@@ -72,10 +78,21 @@ export function projectChemicalState(oldWorld: DispersalWorld, newWorld: Dispers
   for (const [region,from] of old.regionToHabitat) {
     const to = next.regionToHabitat.get(region);
     if (to === undefined) throw new Error('Missing chemical region');
+    const a = old.habitats[from], b = next.habitats[to];
+    if (a.zone !== b.zone || a.depthM !== b.depthM) throw new Error('Different chemical building region depth');
     const destinations = overlaps.get(from) ?? new Map<number,number>();
     destinations.set(to,(destinations.get(to) ?? 0)+1);
     overlaps.set(from,destinations);
   }
+  const oldKinds = immutableConnectorKinds(oldWorld), nextKinds = immutableConnectorKinds(newWorld);
+  for (const [key,[a,b]] of oldWorld.ports) {
+    const port = newWorld.ports.get(key);
+    if (!port || port[0] !== a || port[1] !== b) throw new Error('Different chemical building ports');
+    if (oldKinds.has(key) && nextKinds.has(key) && oldKinds.get(key) !== nextKinds.get(key)) {
+      throw new Error('Different chemical building connector kind');
+    }
+  }
+
   const inventory = new Map<number,ChemicalInventory>(), heat = new Map<number,number>();
   function parts(from: number) {
     const edges = overlaps.get(from);
@@ -118,5 +135,7 @@ export function projectChemicalState(oldWorld: DispersalWorld, newWorld: Dispers
   }
   const before = totals(new Map(state.inventory),state.heat), after = totals(inventory,heat);
   if (before.some((n,i) => n !== after[i])) throw new Error('Unbalanced chemical projection');
-  return { ...state, topology:next.signature, inventory, heat };
+  const projected = { ...state, topology:next.signature, contract, inventory, heat };
+  validateChemicalState(newWorld,sources,projected);
+  return projected;
 }

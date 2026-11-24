@@ -1,5 +1,5 @@
 import { makePlan } from '../core/plan.ts';
-import { extractGraph, sections, type State } from '../core/spatial.ts';
+import { extractGraph, sections, type Kind, type State } from '../core/spatial.ts';
 import { buildStructure } from '../core/structure.ts';
 import { deriveHabitats, regionGeometry, updateBarrier, type Boundary, type HabitatGraph } from './habitats.ts';
 import { parameters } from './parameters.ts';
@@ -9,12 +9,13 @@ export interface DispersalWorld {
   ports: ReadonlyMap<string, readonly [string, string]>;
   capacities: ReadonlyMap<string, number>;
   members: string[][];
+  connectorKinds?: ReadonlyMap<string, Kind>;
 }
-export function indexWorld(graph: HabitatGraph, ports: DispersalWorld['ports'], capacities: DispersalWorld['capacities']): DispersalWorld {
+export function indexWorld(graph: HabitatGraph, ports: DispersalWorld['ports'], capacities: DispersalWorld['capacities'], connectorKinds?: DispersalWorld['connectorKinds']): DispersalWorld {
   const members: string[][] = graph.habitats.map(() => []);
   for (const [region, id] of graph.regionToHabitat) members[id].push(region);
   for (const group of members) group.sort();
-  return { graph, ports, capacities, members };
+  return { graph, ports, capacities, members, connectorKinds };
 }
 export function buildDispersalWorld(seed: string, barriers: ReadonlyMap<string, State> = new Map()) {
   const structure = buildStructure(makePlan(seed));
@@ -23,14 +24,14 @@ export function buildDispersalWorld(seed: string, barriers: ReadonlyMap<string, 
   const ports = new Map([...fine.edges.values()].map(e => [e.id, [e.from, e.to] as const]));
   const capacities = new Map<string, number>();
   for (const region of fine.adjacent.keys()) capacities.set(region, regionGeometry(structure, region).cells * parameters.capacityPerCell);
-  return indexWorld(graph, ports, capacities);
+  return indexWorld(graph, ports, capacities, new Map([...fine.edges.values()].map(e => [e.id, e.kind])));
 }
 
 export function changeDispersalBarrier(world: DispersalWorld, connector: string, state: State): DispersalWorld {
   const graph = updateBarrier(world.graph, connector, state);
   return graph.regionToHabitat === world.graph.regionToHabitat
     ? { ...world, graph }
-    : indexWorld(graph, world.ports, world.capacities);
+    : indexWorld(graph, world.ports, world.capacities, world.connectorKinds);
 }
 
 // A passive packet can traverse a narrow slit. The grazer is a terrestrial crawler.
