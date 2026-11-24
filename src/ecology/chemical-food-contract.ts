@@ -65,7 +65,7 @@ export interface AnimalRules extends Metabolism {
 export interface FoodChainRules {
   readonly fungus: Metabolism & {
     readonly feeding: Feeding;
-    readonly regulation?: 'growth-budget' | 'partial-regression';
+    readonly regulation?: 'growth-budget' | 'partial-regression' | 'growth-budget-and-regression';
   };
   readonly prey: AnimalRules & { readonly feeding: Feeding };
   readonly predator: AnimalRules;
@@ -125,7 +125,8 @@ export function foodRulesSignature(rules: FoodChainRules) {
     animalRules(rules.predator)];
   const {regulation} = rules.fungus;
   if (regulation === undefined) return chemicalDigest(signature);
-  if (regulation !== 'growth-budget' && regulation !== 'partial-regression') {
+  if (regulation !== 'growth-budget' && regulation !== 'partial-regression' &&
+      regulation !== 'growth-budget-and-regression') {
     throw new Error('Unknown fungal regulation');
   }
   return chemicalDigest([...signature, regulation]);
