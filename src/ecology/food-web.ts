@@ -11,6 +11,7 @@ import { accounts, cargo, natural, type TrophicScenario } from './trophic-contra
 
 export const profiles = {
   prey: { width: 0.25, height: 0.18, mealPeriod: 12, birthPeriod: 48, movePeriod: 6, diet:'fungalBiomass' },
+  predator: { width: 0.65, height: 0.45, mealPeriod: 72, birthPeriod: 240, movePeriod: 24, diet:'prey' },
 } as const;
 export type Animal = keyof typeof profiles;
 export const groups = Object.keys(profiles) as Animal[];
@@ -133,8 +134,12 @@ export function stepWeb(world: DispersalWorld, previous: Web) {
     for (const group of groups) {
       const profile=profiles[group];
       const food=profile.diet;
-      const foodAt=(id:number) => stocks.get(id)?.[food] ?? 0;
-      const feed=(id:number) => debit(id,food,1);
+      const preyRegion=(id:number) => world.members[id].find(r => (residents.get(r)?.prey ?? 0)>0);
+      const foodAt=(id:number) => food==='prey' ? preyRegion(id)!==undefined : !!stocks.get(id)?.[food];
+      const feed=(id:number) => {
+        if (food==='prey') change(preyRegion(id)!,food,-1);
+        else debit(id,food,1);
+      };
       for (const region of regions) {
         const count=residents.get(region)?.[group] ?? 0;
         if (!count) continue;
@@ -193,15 +198,17 @@ export function projectWeb(old:DispersalWorld,next:DispersalWorld,state:Web):Web
 
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function saveWeb(world:DispersalWorld,state:Web) {
-  const data={version:'E1-C/1',base:saveMeta(world,state.base),founders:structuredClone(state.founders),
+  const data={version:'E1-D/1',base:saveMeta(world,state.base),founders:structuredClone(state.founders),
     residents:[...state.residents.keys()].sort().map(r=>[r,{...state.residents.get(r)!}] as const)};
   return {...data,signature:digest([profiles,data])};
 }
 export function restoreWeb(world:DispersalWorld,saved:ReturnType<typeof saveWeb>):Web {
   const {signature,...data}=saved;
-  if (data.version!=='E1-C/1' || digest([profiles,data])!==signature) throw new Error('Invalid food web snapshot');
+  const legacy=data.version==='E1-C/1';
+  const rules=legacy ? {prey:profiles.prey} : profiles;
+  if ((!legacy && data.version!=='E1-D/1') || digest([rules,data])!==signature) throw new Error('Invalid food web snapshot');
   const initial=founderBudget(world,data.base.setup,data.founders);
-  const residents=new Map(data.residents.map(([r,t])=>[r,{...t}]));
+  const residents=new Map(data.residents.map(([r,t])=>[r,legacy ? {...t,predator:0} : {...t}]));
   if (residents.size!==data.residents.length) throw new Error('Duplicate occupied region');
   const total=[...residents.values()].reduce((n,t)=>n+population(t),0);
   const base=restoreMetaWithMatter(world,data.base,total-initial);

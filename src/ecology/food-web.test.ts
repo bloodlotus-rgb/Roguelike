@@ -43,3 +43,22 @@ it('charges founders, meals and births, respects isolation and resumes after a b
   expect(seen.has('prey-migration')).toBe(true);
   for (const kind of ['fissure','watercourse','shaft'] as const) expect(pass(open,{...open.graph.boundaries[0],kind},0,'prey')).toBe(false);
 });
+
+it('charges each kill to living prey, recycles deaths and rejects narrow or flooded hunting routes',()=>{
+  const world=trial(), initial=foundWeb(world,setup,[{...census[0],count:4},{...census[0],group:'predator',count:2}]);
+  const sealed=trial(true);
+  let state=projectWeb(world,sealed,initial.state);
+  const seen=new Set<string>();
+  for (let hour=1;hour<=480;hour++) {
+    const next=stepWeb(sealed,state);
+    auditWeb(sealed,state,next.state,next.ledger);
+    for (const e of next.ledger) {
+      if (e.resource==='prey' && e.kind==='conversion' && e.from!==null) seen.add(e.process);
+    }
+    if (hour===73) expect(stepWeb(sealed,restoreWeb(sealed,JSON.parse(JSON.stringify(saveWeb(sealed,state)))))).toEqual(next);
+    state=next.state;
+  }
+  expect(seen.has('predator-feeding')).toBe(true);
+  expect(pass(world,{...world.graph.boundaries[0],kind:'duct'},0,'predator')).toBe(false);
+  expect(pass(world,{...world.graph.boundaries[0],state:'flooded'},0,'predator')).toBe(false);
+});

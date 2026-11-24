@@ -1,0 +1,9 @@
+# E1-D · Depredador terrestre
+
+En el laboratorio una unidad viva equivale a una unidad contable de tejido. El perfil representa grupos funcionales y sus densidades agregadas. La masa de un adulto real y la equivalencia calórica entre especies quedan abiertas. El depredador sólo come presas presentes en su hábitat. Cada 72 horas necesita agua, energía y una presa. Cada 240 horas una pareja puede destinar otra presa y energía a reproducción si tiene espacio. Una ingesta de mantenimiento convierte la masa de la presa en nutrientes. La mortalidad del consumidor devuelve detritos. El agua habilita la alimentación y la energía metabólica se debita de la cuenta del hábitat. Los períodos más largos permiten ensayar una población cazadora de menor productividad. Son hipótesis y requieren sensibilidad.
+
+El movimiento emplea un paso mínimo de 0,65 × 0,45 m con las restricciones terrestres de E1-B2 y una oportunidad cada 24 horas. Los individuos en tránsito ya están debitados del donante. Todos los créditos de migración de consumidores se aplican después de la última interacción local. El snapshot E1-D/1 incluye ambos grupos y acepta la firma histórica E1-C/1 agregando cero depredadores.
+
+En los tres recintos abiertos de las semillas mansion, estirpe y zz, seis presas y dos depredadores fundaron la red. Se observaron respectivamente 2, 3 y 2 nacimientos de presas, y 4, 6 y 4 ingestas de depredadores. Ambos consumidores se extinguieron antes del primer año. La capacidad y la distribución espacial importan incluso con una entrada continua durante el año. La prueba controlada con cuatro presas verificó el débito de presas vivas y su guardado. Al ensayar diez presas en el mismo recinto de prueba se agotó el alimento basal antes de la primera comida de los cazadores.
+
+Pasaron 73 pruebas y el build. Reproducir con `npm run --silent ecology:web -- 8760 open mansion estirpe zz`. [Registro por semilla](benchmarks/e1-d-anual.jsonl)
