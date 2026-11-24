@@ -9,6 +9,8 @@ E1-A deriva hábitats de las superficies transitables y lleva cuentas separadas 
 
 E1-B0 optimiza el transporte horario y los cambios de compuerta. [Equivalencia con E1-A y mediciones de carga](docs/ecologia-e1-b0.md)
 
+El escenario E1-B1 simula colonias fúngicas y detritívoros inmóviles con aportes profundos trazables. [Contrato E1-B1](docs/ecologia-e1-b1.md) · [Viabilidad anual y causas de extinción](docs/ecologia-e1-b1-viabilidad.md)
+
 ## Entorno y comprobación
 
 Con Node.js 24, ejecutá:
@@ -18,6 +20,7 @@ npm ci
 npm run check
 npm run --silent jenga:report -- estirpe mansion
 npm run --silent ecology:report -- --ticks 240 estirpe mansion zz
+npm run --silent ecology:trophic -- --ticks 240 --scenario periodic estirpe mansion
 ```
 
 El diagnóstico escribe una línea JSON por semilla. Los módulos retirados siguen en la [rama de archivo del prototipo](https://github.com/bloodlotus-rgb/Roguelike/tree/archive/prototipo-threejs-2026-11-23).
@@ -36,6 +39,6 @@ El diagnóstico escribe una línea JSON por semilla. Los módulos retirados sigu
 ## Próximo trabajo
 1. Retirar o desactivar por separado el despliegue automático legado de Cloudflare; no es necesario para el laboratorio.
 2. Revisar las mediciones y los parámetros provisionales del transporte de recursos. [Informe E1-A](docs/ecologia-e1-a.md)
-3. Continuar después con E1-B (fauna/reproducción/migración) cuando E1-A esté validado. Conservar como pendientes la materialización vóxel y los umbrales monumentales inter-zona.
+3. Revisar las causas de extinción y las tasas de E1-B1 antes de ampliar la red trófica. Conservar como pendientes la materialización vóxel y los umbrales monumentales inter-zona.
 
 Todas las etapas se trabajan en ramas y PR independientes. `main` nunca se actualiza directamente.

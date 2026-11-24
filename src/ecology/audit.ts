@@ -1,4 +1,4 @@
-import { emptyStock, resources, type Stock } from './parameters.ts';
+import { emptyStock, resources } from './parameters.ts';
 import { type Entry, type Inventory } from './resources.ts';
 
 export function ledgerSummary() {
@@ -7,14 +7,19 @@ export function ledgerSummary() {
 
 /** Reconcile individual accounts, then independently check matter, energy and water budgets. */
 export function audit(before: Inventory, after: Inventory, entries: Entry[]) {
-  const summary = ledgerSummary();
-  const accounts: Inventory = new Map();
+  return auditAccounts(before, after, entries, resources, emptyStock, ['detritus', 'nutrients', 'fungalBiomass']);
+}
+
+export function auditAccounts<R extends string>(before: Map<number, Record<R, number>>, after: Map<number, Record<R, number>>,
+  entries: Entry<R>[], fields: readonly R[], createStock: () => Record<R, number>, matter: readonly R[]) {
+  const summary = { sources: createStock(), sinks: createStock(), converted: createStock(), transported: createStock() };
+  const accounts: Map<number, Record<R, number>> = new Map();
   before.forEach((stock, id) => accounts.set(id, { ...stock }));
-  const zero = emptyStock();
-  function book(id: number, r: keyof Stock, change: number) {
+  const zero = createStock();
+  function book(id: number, r: R, change: number) {
     let stock = accounts.get(id);
     if (!stock) {
-      stock = emptyStock();
+      stock = createStock();
       accounts.set(id, stock);
     }
     stock[r] += change;
@@ -40,12 +45,14 @@ export function audit(before: Inventory, after: Inventory, entries: Entry[]) {
   }
   accounts.forEach((expected, id) => {
     const actual = after.get(id) ?? zero;
-    for (const r of resources) if (expected[r] !== actual[r]) throw new Error('Unbalanced account ' + id + '/' + r);
+    for (const r of fields) if (expected[r] !== actual[r]) throw new Error('Unbalanced account ' + id + '/' + r);
   });
   after.forEach((stock, id) => {
-    if (!accounts.has(id) && resources.some(r => stock[r] !== 0)) throw new Error('Unbalanced account ' + id);
+    if (!accounts.has(id) && fields.some(r => stock[r] !== 0)) throw new Error('Unbalanced account ' + id);
   });
   const c = summary.converted;
-  if (c.water || c.energy || c.detritus + c.nutrients + c.fungalBiomass !== 0) throw new Error('Unbalanced conversion');
+  if (matter.reduce((n, r) => n + c[r], 0) !== 0 || fields.some(r => !matter.includes(r) && c[r] !== 0)) {
+    throw new Error('Unbalanced conversion');
+  }
   return summary;
 }

@@ -10,12 +10,12 @@ export interface ModelState {
   closed: boolean;
   stocks: Inventory;
 }
-export interface Entry {
+export interface Entry<R extends string = Resource> {
   kind: 'source' | 'sink' | 'transfer' | 'conversion';
   process: string;
   from: number | null;
   to: number | null;
-  resource: Resource;
+  resource: R;
   amount: number;
   connector?: string;
 }
@@ -64,6 +64,57 @@ export function rechargeSite(graph: HabitatGraph, source: Recharge): number {
 
 export type PhaseObserver = (phase: 'inventory' | 'transport' | 'local', units: number) => void;
 
+export function transportStocks<S extends Stock>(graph: HabitatGraph, opening: ReadonlyMap<number, S>,
+  supplied: ReadonlyMap<number, S>, stocks: Map<number, S>, ledger: Entry[], createStock: () => S) {
+  const transferStart = ledger.length;
+  let proposals = 0;
+  const post: VisitFlux = (from, to, resource, proposed, connector) => {
+    proposals++;
+    const donor = stocks.get(from)!;
+    const amount = Math.min(proposed, donor[resource]);
+    if (!amount) return;
+    donor[resource] -= amount;
+    if (!stocks.has(to)) stocks.set(to, createStock());
+    ledger.push({ kind: 'transfer', process: 'transport', resource, amount, from, to, connector });
+  };
+  function visit(index: number) {
+    const cut = graph.boundaries[index];
+    const a = supplied.get(cut.from) ?? opening.get(cut.from) ?? none;
+    const b = supplied.get(cut.to) ?? opening.get(cut.to) ?? none;
+    visitFluxes(graph, cut, a, b, post);
+  }
+  // A dry nutrient-only or biomass-only account cannot initiate a transfer. Its
+  // incoming cuts still run when a neighbour can send; local events run below.
+  const mobile = (s: Stock) => s.water || s.detritus || s.energy;
+  if (stocks.size < graph.habitats.length / 8) {
+    const cuts = new Set<number>();
+    for (const [id, stock] of stocks) if (mobile(stock)) {
+      for (const index of graph.incident[id]) cuts.add(index);
+    }
+    for (const index of ordered(cuts)) visit(index);
+  } else {
+    // One bit per physical boundary avoids sorting a dense set of cut indices.
+    const bits = new Uint32Array(Math.ceil(graph.boundaries.length / 32));
+    for (const [id, stock] of stocks) if (mobile(stock)) {
+      for (const index of graph.incident[id]) bits[index >>> 5] |= 1 << (index & 31);
+    }
+    for (let word = 0; word < bits.length; word++) {
+      let mask = bits[word];
+      while (mask) {
+        visit(word * 32 + 31 - Math.clz32(mask & -mask));
+        mask &= mask - 1;
+      }
+    }
+  }
+  // Debits used only the opening balance. Apply credits after the last proposal
+  // so an arrival cannot fund another crossing in the same hour.
+  for (let i = transferStart; i < ledger.length; i++) {
+    const credit = ledger[i];
+    stocks.get(credit.to!)![credit.resource] += credit.amount;
+  }
+  return proposals;
+}
+
 /** Produce a new committed state and a replayable ledger. Never spend incoming flux twice. */
 export function step(graph: HabitatGraph, previous: ModelState, observe?: PhaseObserver): { state: ModelState; ledger: Entry[] } {
   const headroom = validateState(graph, previous);
@@ -103,52 +154,7 @@ export function step(graph: HabitatGraph, previous: ModelState, observe?: PhaseO
   for (const entry of ledger) supplied.set(entry.to!, { ...stocks.get(entry.to!)! });
   observe?.('inventory', stocks.size);
 
-  const transferStart = ledger.length;
-  let proposals = 0;
-  const post: VisitFlux = (from, to, resource, proposed, connector) => {
-    proposals++;
-    const donor = stocks.get(from)!;
-    const amount = Math.min(proposed, donor[resource]);
-    if (!amount) return;
-    donor[resource] -= amount;
-    if (!stocks.has(to)) stocks.set(to, emptyStock());
-    ledger.push({ kind: 'transfer', process: 'transport', resource, amount, from, to, connector });
-  };
-  function visit(index: number) {
-    const cut = graph.boundaries[index];
-    const a = supplied.get(cut.from) ?? previous.stocks.get(cut.from) ?? none;
-    const b = supplied.get(cut.to) ?? previous.stocks.get(cut.to) ?? none;
-    visitFluxes(graph, cut, a, b, post);
-  }
-  // A dry nutrient-only or biomass-only account cannot initiate a transfer. Its
-  // incoming cuts still run when a neighbour can send; local events run below.
-  const mobile = (s: Stock) => s.water || s.detritus || s.energy;
-  if (stocks.size < graph.habitats.length / 8) {
-    const cuts = new Set<number>();
-    for (const [id, stock] of stocks) if (mobile(stock)) {
-      for (const index of graph.incident[id]) cuts.add(index);
-    }
-    for (const index of ordered(cuts)) visit(index);
-  } else {
-    // One bit per physical boundary avoids sorting a dense set of cut indices.
-    const bits = new Uint32Array(Math.ceil(graph.boundaries.length / 32));
-    for (const [id, stock] of stocks) if (mobile(stock)) {
-      for (const index of graph.incident[id]) bits[index >>> 5] |= 1 << (index & 31);
-    }
-    for (let word = 0; word < bits.length; word++) {
-      let mask = bits[word];
-      while (mask) {
-        visit(word * 32 + 31 - Math.clz32(mask & -mask));
-        mask &= mask - 1;
-      }
-    }
-  }
-  // Debits used only the opening balance. Apply credits after the last proposal
-  // so an arrival cannot fund another crossing in the same hour.
-  for (let i = transferStart; i < ledger.length; i++) {
-    const credit = ledger[i];
-    stocks.get(credit.to!)![credit.resource] += credit.amount;
-  }
+  const proposals = transportStocks(graph, previous.stocks, supplied, stocks, ledger, emptyStock);
   observe?.('transport', proposals);
   function local(id: number, stock: Stock) {
     const mineral = Math.min(p.mineralize, stock.detritus);
@@ -208,45 +214,50 @@ export function restore(graph: HabitatGraph, data: ReturnType<typeof snapshot>):
 
 /** Redistribute a mixed stock on a barrier epoch change. Overlap is measured in fine regions. */
 export function reaggregate(oldGraph: HabitatGraph, newGraph: HabitatGraph, state: ModelState): ModelState {
+  return { ...state, stocks: projectInventory(oldGraph, newGraph, state.stocks, resources, emptyStock) };
+}
+
+export function projectInventory<R extends string>(oldGraph: HabitatGraph, newGraph: HabitatGraph,
+  original: Map<number, Record<R, number>>, fields: readonly R[], createStock: () => Record<R, number>) {
   if (oldGraph.seed !== newGraph.seed || oldGraph.regionToHabitat.size !== newGraph.regionToHabitat.size) {
     throw new Error('Cannot project across different buildings');
   }
   if (sharesDerivedPartition(oldGraph, newGraph)) {
     // Derivation inserts all regions of each habitat together in ascending habitat order.
-    const stocks: Inventory = new Map();
-    for (const id of ordered(state.stocks.keys())) {
-      const stock = state.stocks.get(id)!;
-      if (!oldGraph.habitats[id] || !resources.some(r => stock[r] !== 0)) continue;
-      const projected = emptyStock();
-      for (const r of resources) projected[r] = stock[r];
+    const stocks: Map<number, Record<R, number>> = new Map();
+    for (const id of ordered(original.keys())) {
+      const stock = original.get(id)!;
+      if (!oldGraph.habitats[id] || !fields.some(r => stock[r] !== 0)) continue;
+      const projected = createStock();
+      for (const r of fields) projected[r] = stock[r];
       stocks.set(id, projected);
     }
-    return { ...state, stocks };
+    return stocks;
   }
   const overlaps = new Map<number, Map<number, number>>();
   for (const [region, oldId] of oldGraph.regionToHabitat) {
     const newId = newGraph.regionToHabitat.get(region);
     if (newId === undefined) throw new Error('Missing fine region: ' + region);
-    if (!state.stocks.has(oldId)) continue;
+    if (!original.has(oldId)) continue;
     if (!overlaps.has(oldId)) overlaps.set(oldId, new Map());
     const counts = overlaps.get(oldId)!;
     counts.set(newId, (counts.get(newId) ?? 0) + 1);
   }
-  const stocks: Inventory = new Map();
+  const stocks: Map<number, Record<R, number>> = new Map();
   for (const [oldId, counts] of overlaps) {
-    const stock = state.stocks.get(oldId)!;
+    const stock = original.get(oldId)!;
     const count = [...counts.values()].reduce((a, b) => a + b, 0);
     let preceding = 0;
     for (const id of ordered(counts.keys())) {
       const end = preceding + counts.get(id)!;
-      if (!stocks.has(id)) stocks.set(id, emptyStock());
+      if (!stocks.has(id)) stocks.set(id, createStock());
       const dest = stocks.get(id)!;
-      for (const r of resources) {
+      for (const r of fields) {
         dest[r] += Math.floor(stock[r] * end / count) - Math.floor(stock[r] * preceding / count);
       }
       preceding = end;
     }
   }
-  for (const [id, s] of stocks) if (resources.every(r => s[r] === 0)) stocks.delete(id);
-  return { ...state, stocks };
+  for (const [id, s] of stocks) if (fields.every(r => s[r] === 0)) stocks.delete(id);
+  return stocks;
 }
