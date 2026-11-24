@@ -1,5 +1,6 @@
 import type { DispersalWorld } from './dispersal-world.ts';
 import { channelLimit } from './transport.ts';
+import { planChemicalTransport } from './chemical-transport.ts';
 
 export type MatterQ = number;
 export type EnergyQ = number;
@@ -28,6 +29,7 @@ export interface ChemicalSupply {
   quotaLots: number;
 }
 export interface ChemicalState {
+  topology?: string;
   tick: number;
   inventory: ReadonlyMap<number, ChemicalInventory>;
   heat: ReadonlyMap<number, EnergyQ>;
@@ -38,7 +40,10 @@ interface Transaction {
   tick: number;
   process: string;
 }
-export type ChemicalPosting = Transaction & (
+export type ChemicalTransfer = Transaction & {
+  kind: 'transfer'; fromHabitat: number; toHabitat: number; connector: string; cargo: ChemicalInventory;
+};
+export type ChemicalPosting = ChemicalTransfer | Transaction & (
   | { kind: 'source'; supply: string; lots: number }
   | { kind: 'export'; port: ChemicalPort; destination: string; cargo: ChemicalInventory }
   | { kind: 'conversion'; habitat: number; debit: ChemicalInventory; credit: ChemicalInventory; heat: EnergyQ }
@@ -111,7 +116,7 @@ function habitat(world: DispersalWorld, id: number) {
   if (!Number.isSafeInteger(id) || !world.graph.habitats[id]) throw new Error('Unknown chemical habitat');
 }
 
-function route(world: DispersalWorld, port: ChemicalPort, stock: ChemicalInventory) {
+function route(world: DispersalWorld, port: ChemicalPort, stock: ChemicalInventory, dormant = false) {
   const { graph, ports } = world;
   const ends = ports.get(port.connector);
   const from = graph.regionToHabitat.get(port.fromRegion), to = graph.regionToHabitat.get(port.toRegion);
@@ -121,10 +126,12 @@ function route(world: DispersalWorld, port: ChemicalPort, stock: ChemicalInvento
     throw new Error('Invalid chemical port');
   }
   const cut = graph.incident[from].map(i => graph.boundaries[i]).find(c => c.id === port.connector);
-  if (!cut || !((cut.from === from && cut.to === to) || (cut.from === to && cut.to === from)) ||
-      (stock.water && !channelLimit(graph, cut, from, 'water')) ||
-      (stock.mineralMatter && !channelLimit(graph, cut, from, 'nutrients')) ||
-      (stock.detritus.matter && !channelLimit(graph, cut, from, 'detritus'))) {
+  const effective = dormant && cut && (cut.state === 'closed' || cut.state === 'blocked')
+    ? { ...cut, state: 'flooded' as const } : cut;
+  if (!effective || !cut || !((cut.from === from && cut.to === to) || (cut.from === to && cut.to === from)) ||
+      (stock.water && !channelLimit(graph, effective, from, 'water')) ||
+      (stock.mineralMatter && !channelLimit(graph, effective, from, 'nutrients')) ||
+      (stock.detritus.matter && !channelLimit(graph, effective, from, 'detritus'))) {
     throw new Error('Chemical cargo incompatible with cut or direction');
   }
   // The external account is metered at the upstream-side port (or the
@@ -137,7 +144,7 @@ function cargoFor(supply: ChemicalSupply, lots: number) {
   return pack(m * count, e * count, n * count, w * count);
 }
 
-export function declareChemicalSupply(world: DispersalWorld, supply: ChemicalSupply) {
+export function declareChemicalSupply(world: DispersalWorld, supply: ChemicalSupply, dormant = false) {
   requireIdentifier(supply.id);
   requireIdentifier(supply.origin);
   if (!quantum(supply.rate) || !quantum(supply.quotaLots) ||
@@ -147,7 +154,7 @@ export function declareChemicalSupply(world: DispersalWorld, supply: ChemicalSup
   const load = total(supply.perLot);
   if (!load.matter && !load.water) throw new Error('Empty chemical lot');
   cargoFor(supply, Math.min(supply.rate, supply.quotaLots));
-  route(world, supply.port, supply.perLot);
+  route(world, supply.port, supply.perLot, dormant);
   return supply;
 }
 
@@ -170,28 +177,54 @@ export function chemicalDelivery(world: DispersalWorld, supply: ChemicalSupply, 
   if (lots) return { kind: 'source', tick, transactionId, process: 'delivery', supply: supply.id, lots };
 }
 
-export function applyChemicalHour(world: DispersalWorld, declarations: readonly ChemicalSupply[],
-  before: ChemicalState, postings: readonly ChemicalPosting[]) {
-  const tick = checked(quantum(before.tick) + 1n);
+export function validateChemicalState(world: DispersalWorld, declarations: readonly ChemicalSupply[], before: ChemicalState) {
+  quantum(before.tick);
+  if (before.topology !== world.graph.signature && (before.topology !== undefined || before.tick !== 0)) {
+    throw new Error('Wrong chemical geometry epoch');
+  }
   const supplies = new Map<string, ChemicalSupply>();
   for (const source of declarations) {
-    declareChemicalSupply(world, source);
+    declareChemicalSupply(world, source, true);
     if (supplies.has(source.id)) throw new Error('Duplicate chemical supply');
     supplies.set(source.id, source);
   }
-  const inventory = new Map(before.inventory), heat = new Map(before.heat), lotsUsed = new Map(before.lotsUsed);
-  for (const [id, stock] of inventory) {
+  for (const [id, stock] of before.inventory) {
     habitat(world, id);
     bins(stock);
   }
-  for (const [id, value] of heat) {
+  for (const [id, value] of before.heat) {
     habitat(world, id);
     quantum(value);
   }
-  for (const id of lotsUsed.keys()) {
+  for (const id of before.lotsUsed.keys()) {
     const source = supplies.get(id);
     if (!source) throw new Error('Undeclared chemical supply meter');
     nextLots(source, before);
+  }
+  return supplies;
+}
+
+export function applyChemicalHour(world: DispersalWorld, declarations: readonly ChemicalSupply[],
+  before: ChemicalState, postings: readonly ChemicalPosting[]) {
+  const supplies = validateChemicalState(world, declarations, before);
+  const tick = checked(quantum(before.tick) + 1n);
+  const inventory = new Map(before.inventory), heat = new Map(before.heat), lotsUsed = new Map(before.lotsUsed);
+  const transfers = postings.filter((entry): entry is ChemicalTransfer => entry.kind === 'transfer');
+  const internalIn = new Map<number, Total>(), internalOut = new Map<number, Total>();
+  if (transfers.length) {
+    const planned = planChemicalTransport(world, { ...before, topology: world.graph.signature });
+    const key = (t: ChemicalTransfer) => JSON.stringify([t.transactionId,t.tick,t.process,t.connector,
+      t.fromHabitat,t.toHabitat,...bins(t.cargo).map(Number)]);
+    if (planned.length !== transfers.length || planned.some((t,i) => key(t) !== key(transfers[i])) ||
+        transfers.some((t,i) => postings[i] !== t)) throw new Error('Transfer batch differs from physical opening plan');
+    for (const {fromHabitat, cargo} of transfers) {
+      inventory.set(fromHabitat, change(inventory.get(fromHabitat) ?? empty, cargo, empty));
+      internalOut.set(fromHabitat, add(internalOut.get(fromHabitat) ?? zero, total(cargo)));
+    }
+    for (const {toHabitat, cargo} of transfers) {
+      inventory.set(toHabitat, change(inventory.get(toHabitat) ?? empty, empty, cargo));
+      internalIn.set(toHabitat, add(internalIn.get(toHabitat) ?? zero, total(cargo)));
+    }
   }
   const inputs = new Map<number, Total>(), outputs = new Map<number, Total>();
   const cutFlows: CutFlow[] = [];
@@ -202,6 +235,7 @@ export function applyChemicalHour(world: DispersalWorld, declarations: readonly 
     if (entry.tick !== tick || seen.has(entry.transactionId)) throw new Error('Wrong hour or duplicate chemical transaction');
     seen.add(entry.transactionId);
     switch (entry.kind) {
+      case 'transfer': break;
       case 'source': {
         const source = supplies.get(entry.supply);
         if (!source || delivered.has(source.id) || !quantum(entry.lots) || entry.lots !== nextLots(source, before)) {
@@ -245,7 +279,7 @@ export function applyChemicalHour(world: DispersalWorld, declarations: readonly 
     const start = total(before.inventory.get(id) ?? empty), end = total(inventory.get(id) ?? empty);
     const input = inputs.get(id) ?? zero, output = outputs.get(id) ?? zero;
     const delta = quantum(heat.get(id) ?? 0) - quantum(before.heat.get(id) ?? 0);
-    balance(start, end, input, output, delta);
+    balance(start, end, add(input, internalIn.get(id) ?? zero), add(output, internalOut.get(id) ?? zero), delta);
     byHabitat.set(id, { imported: input, exported: output, dissipated: delta });
     open = add(open, start);
     close = add(close, end);
@@ -254,8 +288,8 @@ export function applyChemicalHour(world: DispersalWorld, declarations: readonly 
     dissipated += delta;
   }
   balance(open, close, imported, exported, dissipated);
-  const state: ChemicalState = { tick, inventory, heat, lotsUsed };
-  return { state, byHabitat, cutFlows, imported, exported, dissipated };
+  const state: ChemicalState = { topology: world.graph.signature, tick, inventory, heat, lotsUsed };
+  return { state, byHabitat, cutFlows, transfers, internalIn, internalOut, imported, exported, dissipated };
 }
 
 /** Canonical comparison of fixture state, without a persistence format. */
@@ -271,6 +305,6 @@ export function serializeChemicalState(state: ChemicalState): string {
 export function auditChemicalLedger(world: DispersalWorld, declarations: readonly ChemicalSupply[],
   before: ChemicalState, postings: readonly ChemicalPosting[], after: ChemicalState) {
   const report = applyChemicalHour(world, declarations, before, postings);
-  if (serializeChemicalState(report.state) !== serializeChemicalState(after)) throw new Error('Chemical closing state mismatch');
+  if (report.state.topology !== after.topology || serializeChemicalState(report.state) !== serializeChemicalState(after)) throw new Error('Chemical closing state mismatch');
   return report;
 }
