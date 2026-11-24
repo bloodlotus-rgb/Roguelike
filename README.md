@@ -46,3 +46,5 @@ El diagnóstico escribe una línea JSON por semilla. Los módulos retirados sigu
 Todas las etapas se trabajan en ramas y PR independientes. `main` nunca se actualiza directamente.
 
 La red trófica experimental incorpora presas y depredadores terrestres. [Reglas de presas](docs/ecologia-e1-c.md) · [Depredación](docs/ecologia-e1-d.md) · [Ensayos de viabilidad y carga](docs/ecologia-e1-validacion.md)
+
+El ensayo de amplitud de dieta contrasta especialistas y generalistas en edificios completos y verifica el guardado anual. [Resultados por dieta y lote de cien semillas](docs/ecologia-e1-dietas.md)
