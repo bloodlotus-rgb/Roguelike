@@ -336,3 +336,36 @@ it('serializes the food journal canonically across save and restore', () => {
   expect(serialize(continuous)).toBe(serialize(replay));
   expect(JSON.parse(serialize(replay))[0][0]).toMatchObject({phase:'maintain'});
 });
+
+it('rejects saving, advancing or projecting a state under a different fine geometry', () => {
+  const base = fixture('open',true), rules = configuration();
+  const w = indexWorld(base.graph,base.ports,new Map([['a',10],['b',10],['c',20]]),base.connectorKinds);
+  const changed = indexWorld(base.graph,base.ports,new Map([['a',19],['b',1],['c',20]]),base.connectorKinds);
+  const founded = foundFoodChain(w,[],rules,{inventory:new Map(),fungus:new Map(),animals:[animal(0,'prey','c',body(2,6,6))]});
+  const saved = saveFoodChain(w,[],rules,founded);
+  const restored = restoreFoodChain(w,[],rules,saved);
+  for (const state of [founded,restored,step(w,rules,restored).state]) {
+    expect(() => saveFoodChain(changed,[],rules,state)).toThrow(/geometry epoch/);
+    expect(() => step(changed,rules,state,{moves:[{animal:0,connector:'bc'}]})).toThrow(/geometry epoch/);
+    expect(() => projectFoodChain(changed,w,[],rules,state)).toThrow(/geometry epoch/);
+    expect(() => projectFoodChain(w,changed,[],rules,state)).toThrow(/capacity/);
+    expect(() => saveFoodChain(w,[],rules,state)).not.toThrow();
+  }
+});
+
+it('excludes auxiliary animal and nested body fields from journal entries and replay digests', () => {
+  const w = fixture('closed'), rules = configuration();
+  const founder = {...animal(0,'predator','a',body(1,4,4)),founderLabel:'fixture'};
+  const founded = foundFoodChain(w,[],rules,{inventory:new Map(),fungus:new Map(),animals:[founder]});
+  const confirmed = step(w,rules,founded).state;
+  const resident = confirmed.animals.get(0)!;
+  const decorated = {...confirmed,animals:new Map([[0,{...resident,founderLabel:'fixture',
+    body:{...resident.body,note:'auxiliary'}}]])};
+  const checkpoint = saveFoodChain(w,[],rules,decorated);
+  const restored = restoreFoodChain(w,[],rules,checkpoint);
+  const continuous = step(w,rules,decorated), replay = step(w,rules,restored);
+  expect(continuous.entries).toEqual(replay.entries);
+  expect(foodChain.serializeFoodLedger(continuous)).toBe(foodChain.serializeFoodLedger(replay));
+  expect(foodLedgerDigest(continuous)).toBe(foodLedgerDigest(replay));
+  expect(saveFoodChain(w,[],rules,continuous.state)).toEqual(saveFoodChain(w,[],rules,replay.state));
+});

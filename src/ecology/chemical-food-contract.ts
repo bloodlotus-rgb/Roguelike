@@ -1,6 +1,7 @@
 import { sections, type Mode } from '../core/spatial.ts';
 import { chemicalDigest, validateChemicalState, type ChemicalState, type ChemicalSupply,
   type OrganicStock } from './chemical-ledger.ts';
+import { compareChemicalIds } from './chemical-transport.ts';
 import type { DispersalWorld } from './dispersal-world.ts';
 
 export interface LivingStock extends OrganicStock {
@@ -14,12 +15,32 @@ export interface ChemicalAnimal {
   readonly bornAt: number;
   readonly body: LivingStock;
 }
+export type BodyRow = [number, number, number];
+export function encodeBody(body: LivingStock): BodyRow {
+  return [body.matter, body.chemicalEnergy, body.storedEnergy];
+}
+export function decodeBody([matter, chemicalEnergy, storedEnergy]: BodyRow): LivingStock {
+  return {matter, chemicalEnergy, storedEnergy};
+}
+type AnimalRow = [number, AnimalKind, string, number, BodyRow];
+
+export function encodeAnimal(animal: ChemicalAnimal): AnimalRow {
+  return [animal.id, animal.kind, animal.region, animal.bornAt, encodeBody(animal.body)];
+}
+export function decodeAnimal([id, kind, region, bornAt, body]: AnimalRow): ChemicalAnimal {
+  return {id, kind, region, bornAt, body: decodeBody(body)};
+}
+export function copyAnimal(animal: ChemicalAnimal): ChemicalAnimal {
+  return decodeAnimal(encodeAnimal(animal));
+}
+
 export interface FoodChainState {
   readonly chemical: ChemicalState;
   readonly fungus: ReadonlyMap<number, LivingStock>;
   readonly animals: ReadonlyMap<number, ChemicalAnimal>;
   readonly nextAnimalId: number;
   readonly contract: string;
+  readonly geometry: string;
 }
 export interface Feeding {
   readonly interval: number;
@@ -116,8 +137,18 @@ export function regionCapacity(world: DispersalWorld, region: string) {
   return quantum(capacity);
 }
 
+export function foodGeometrySignature(world: DispersalWorld) {
+  const byId = ([a]: readonly [string, unknown], [b]: readonly [string, unknown]) => compareChemicalIds(a,b);
+  return chemicalDigest([
+    [...world.graph.regionToHabitat].sort(byId),
+    [...world.capacities].sort(byId),
+    [...world.ports].sort(byId),
+    [...(world.connectorKinds ?? new Map(world.graph.boundaries.map(cut => [cut.id, cut.kind])))].sort(byId),
+  ]);
+}
 export function validateFoodState(world: DispersalWorld, sources: readonly ChemicalSupply[], rules: FoodChainRules,
   state: FoodChainState) {
+  if (state.geometry !== foodGeometrySignature(world)) throw new Error('Incompatible food-chain geometry epoch');
   const {contract} = validateChemicalState(world, sources, state.chemical);
   if (state.chemical.topology !== world.graph.signature || state.chemical.contract !== contract ||
       state.contract !== chemicalDigest([contract, foodRulesSignature(rules)])) throw new Error('Incompatible food-chain contract or epoch');
@@ -152,11 +183,11 @@ export function foundFoodChain(world: DispersalWorld, sources: readonly Chemical
   const opening = {topology: world.graph.signature, tick: 0, inventory: structuredClone(new Map(foundation.inventory)),
     heat: new Map<number, number>(), lotsUsed: new Map<string, number>()};
   const {contract} = validateChemicalState(world, sources, opening);
-  const animals = new Map(foundation.animals.map(animal => [animal.id, structuredClone(animal)]));
+  const animals = new Map(foundation.animals.map(animal => [animal.id, copyAnimal(animal)]));
   if (animals.size !== foundation.animals.length) throw new Error('Duplicate founder animal');
   const nextAnimalId = foundation.animals.reduce((next, animal) => Math.max(next, animal.id + 1), 0);
   const state = {chemical: {...opening, contract}, fungus: structuredClone(new Map(foundation.fungus)),
-    animals, nextAnimalId, contract: chemicalDigest([contract, foodRulesSignature(rules)])};
+    animals, nextAnimalId, geometry: foodGeometrySignature(world), contract: chemicalDigest([contract, foodRulesSignature(rules)])};
   validateFoodState(world, sources, rules, state);
   return state;
 }

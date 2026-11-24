@@ -3,7 +3,7 @@ import { sections } from '../core/spatial.ts';
 import { applyChemicalHour, type ChemicalInventory, type ChemicalPosting,
   type ChemicalSupply } from './chemical-ledger.ts';
 import { apportion, compareChemicalIds } from './chemical-transport.ts';
-import { checkLiving, fungalCapacity, permille, quantum, regionCapacity, regionHabitat, reserveCapacity, validateFoodState,
+import { checkLiving, copyAnimal, fungalCapacity, permille, quantum, regionCapacity, regionHabitat, reserveCapacity, validateFoodState,
   zeroLiving, type AnimalRules, type ChemicalAnimal, type Feeding, type FoodChainRules, type FoodChainState,
   type LivingStock } from './chemical-food-contract.ts';
 import type { DispersalWorld } from './dispersal-world.ts';
@@ -109,7 +109,7 @@ class Hour {
     this.inventory = new Map(chemical.state.inventory);
     this.heat = new Map(chemical.state.heat);
     this.fungus = new Map(before.fungus);
-    this.animals = new Map(before.animals);
+    this.animals = new Map([...before.animals].map(([id, animal]) => [id, copyAnimal(animal)]));
     this.nextAnimalId = before.nextAnimalId;
     this.occupancy = occupancy;
   }
