@@ -12,7 +12,8 @@
     "ecology:report": "node scripts/ecology-report.ts",
     "ecology:load": "node --expose-gc scripts/ecology-load.ts",
     "ecology:trophic": "node scripts/trophic-report.ts",
-    "ecology:dispersal": "node scripts/dispersal-report.ts"
+    "ecology:dispersal": "node scripts/dispersal-report.ts",
+    "ecology:web": "node scripts/food-web-report.ts"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

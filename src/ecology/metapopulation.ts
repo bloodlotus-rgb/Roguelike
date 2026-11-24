@@ -27,7 +27,7 @@ export interface MetaState {
   // Spatial decomposition of the three living accounts. Never added a second time to totals.
   anchors: Map<string, Tissue>;
 }
-export function auditMeta(world: DispersalWorld, before: MetaState['stocks'], after: MetaState['stocks'], ledger: MetaPosting[]) {
+export function auditMetaTransfers(world: DispersalWorld, after: MetaState['stocks'], ledger: readonly MetaPosting[]) {
   const crossed = new Set<string>();
   for (const e of ledger) {
     if (e.kind !== 'transfer' || (e.resource !== 'propagules' && e.resource !== 'detritivores' && e.resource !== 'fungalBiomass')) continue;
@@ -45,6 +45,10 @@ export function auditMeta(world: DispersalWorld, before: MetaState['stocks'], af
     }
     crossed.add(key);
   }
+}
+
+export function auditMeta(world: DispersalWorld, before: MetaState['stocks'], after: MetaState['stocks'], ledger: MetaPosting[]) {
+  auditMetaTransfers(world, after, ledger);
   return auditAccounts(before, after, ledger, metaAccounts, emptyMeta, metaMatter);
 }
 
@@ -97,14 +101,14 @@ export function foundMeta(world: DispersalWorld, setup: TrophicScenario, deposit
 
 // The fine position matters at a later split. Space inside a mixed habitat is contiguous
 // by construction; use its physical port first and overflow only within the same habitat.
-function locate(world: DispersalWorld, anchors: MetaState['anchors'], id: number, r: Living, delta: number, preferred?: string) {
+function locate(world: DispersalWorld, anchors: MetaState['anchors'], id: number, r: Living, delta: number, preferred?: string, occupied?: ReadonlyMap<string, number>) {
   const members = world.members[id];
   const regions = preferred ? [preferred, ...members.filter(m => m !== preferred)] : members;
   let remaining = Math.abs(delta);
   let first: string | undefined;
   for (const region of regions) {
     const t = anchors.get(region) ?? bare();
-    const amount = Math.min(remaining, delta < 0 ? t[r] : world.capacities.get(region)! - biomass(t));
+    const amount = Math.min(remaining, delta < 0 ? t[r] : world.capacities.get(region)! - biomass(t) - (occupied?.get(region) ?? 0));
     if (!amount) continue;
     first ??= region;
     t[r] += delta < 0 ? -amount : amount;
@@ -116,26 +120,48 @@ function locate(world: DispersalWorld, anchors: MetaState['anchors'], id: number
   throw new Error('Fine stock or capacity mismatch');
 }
 
-export function stepMeta(world: DispersalWorld, previous: MetaState) {
+export interface CompanionPhase {
+  occupied: Map<string, number>;
+  afterMetabolism(stocks: MetaState['stocks'], anchors: ReadonlyMap<string,Tissue>, offset: number, debit: (id: number, account: Living, amount: number) => void): void;
+}
+
+export function stepMeta(world: DispersalWorld, previous: MetaState, companion?: CompanionPhase) {
   const graph = world.graph, tick = previous.tick + 1;
   if (previous.topology !== graph.signature || !natural(tick)) throw new Error('Invalid structural epoch or clock');
   const { stocks, lotsUsed, input } = advanceResources(graph, previous, emptyMeta);
   const ledger: MetaPosting[] = input;
   const anchors = new Map<string, Tissue>();
   for (const [region, t] of previous.anchors) anchors.set(region, { ...t });
+  const occupied = new Map<number, number>();
+  const updateOccupied = () => {
+    occupied.clear();
+    for (const [region, mass] of companion?.occupied ?? []) {
+      const id = graph.regionToHabitat.get(region)!;
+      occupied.set(id, (occupied.get(id) ?? 0) + mass);
+    }
+  };
+  if (companion) updateOccupied();
   const ids = [...stocks.keys()].sort((a,b) => a-b);
   for (const id of ids) {
     const start = ledger.length, stock = stocks.get(id)!;
-    metabolize(stock, id, tick, graph.habitats[id].capacity - stock.propagules,
+    metabolize(stock, id, tick, graph.habitats[id].capacity - stock.propagules - (occupied.get(id) ?? 0),
       previous.setup.maintenancePeriod ?? biology.maintenancePeriod, input);
     for (let i = start; i < ledger.length; i++) {
       const e = ledger[i];
       if (e.resource === 'fungalBiomass' || e.resource === 'detritivores') {
         const r = e.resource;
         const parent = world.members[id].find(region => (anchors.get(region)?.[r] ?? 0) > 0);
-        locate(world, anchors, id, r, e.to === null ? -e.amount : e.amount, parent);
+        locate(world, anchors, id, r, e.to === null ? -e.amount : e.amount, parent, companion?.occupied);
       }
     }
+  }
+
+  if (companion) {
+    companion.afterMetabolism(stocks, anchors, ledger.length, (id, account, amount) => {
+      locate(world, anchors, id, account, -amount);
+      stocks.get(id)![account] -= amount;
+    });
+    updateOccupied();
   }
 
   function convert(id: number, from: Living, to: 'propagules' | 'fungalBiomass' | 'detritus', process: string) {
@@ -163,7 +189,7 @@ export function stepMeta(world: DispersalWorld, previous: MetaState) {
           const cut = graph.boundaries[i], to = cut.from === id ? cut.to : cut.from;
           const dest = stocks.get(to);
           if (used.has(r + '/' + cut.id) || !organismPass(graph, cut, id, r, s.water > 0) ||
-            (dest ? biomass(dest) : 0) + (reserved.get(to) ?? 0) >= graph.habitats[to].capacity) continue;
+            (dest ? biomass(dest) : 0) + (reserved.get(to) ?? 0) + (occupied.get(to) ?? 0) >= graph.habitats[to].capacity) continue;
           if (r === 'propagules') {
             if (dest?.fungalBiomass || dest?.propagules) continue;
             if (!s.propagules) {
@@ -194,7 +220,7 @@ export function stepMeta(world: DispersalWorld, previous: MetaState) {
       dest[r]++;
       stocks.set(to, dest);
       const ports = world.ports.get(e.connector!)!;
-      locate(world, anchors, to, r, 1, graph.regionToHabitat.get(ports[0]) === to ? ports[0] : ports[1]);
+      locate(world, anchors, to, r, 1, graph.regionToHabitat.get(ports[0]) === to ? ports[0] : ports[1], companion?.occupied);
     }
   }
   for (const id of [...stocks.keys()].sort((a,b) => a-b)) {
@@ -247,6 +273,11 @@ export function saveMeta(world: DispersalWorld, state: MetaState) {
   return { ...checkpoint, integrity: frameDigest(checkpoint.topology,checkpoint.contract,checkpoint.tick,checkpoint.lotsUsed,checkpoint.stocks,checkpoint.anchors) };
 }
 export function restoreMeta(world: DispersalWorld, data: ReturnType<typeof saveMeta>): MetaState {
+  return restoreMetaWithMatter(world, data, 0);
+}
+
+/** Reconcile the net matter held by a separately audited companion against the shared budget. */
+export function restoreMetaWithMatter(world: DispersalWorld, data: ReturnType<typeof saveMeta>, companionNetMatter: number): MetaState {
   if (data.version !== 'E1-B2/1' || data.generator !== generatorVersion || data.topology !== world.graph.signature ||
     JSON.stringify(data.barriers) !== JSON.stringify(world.graph.barriers) || typeof data.enabled !== 'boolean' ||
     !natural(data.tick) || !natural(data.lotsUsed) || data.contract !== contract(data.setup, data.deposits, data.enabled)) throw new Error('Incompatible checkpoint');
@@ -273,7 +304,7 @@ export function restoreMeta(world: DispersalWorld, data: ReturnType<typeof saveM
   const source = setup.source, lot = source && cargo[source.kind], n = data.lotsUsed;
   const hours = source ? Math.floor(data.tick / source.period) * source.activeHours + Math.min(data.tick % source.period, source.activeHours) : 0;
   if (n > (source?.quota ?? 0) || n / (source?.rate ?? 1) > hours || total.water > start.water + n * (lot?.water ?? 0) ||
-      total.energy > start.energy + n * (lot?.energy ?? 0) || metaMatter.reduce((sum,r) => sum + total[r] - start[r], 0) !==
+      total.energy > start.energy + n * (lot?.energy ?? 0) || metaMatter.reduce((sum,r) => sum + total[r] - start[r], 0) + companionNetMatter !==
       n * ((lot?.detritus ?? 0) - (lot?.settling ?? 0))) throw new Error('Unbalanced external budget');
   if ((!start.detritivores && total.detritivores) || (!start.fungalBiomass && (total.fungalBiomass || total.propagules)) ||
       (!data.enabled && total.propagules)) throw new Error('Living accounts without founders');
