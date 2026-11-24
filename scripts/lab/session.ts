@@ -1,11 +1,14 @@
 import { foodBalances, foodLedgerDigest, stepFoodChain } from '../../src/ecology/chemical-food-chain.ts';
 import { preyMaintenance, regionHabitat, type FoodChainState } from '../../src/ecology/chemical-food-contract.ts';
-import { projectFoodChain, restoreFoodChain, saveFoodChain } from '../../src/ecology/chemical-food-snapshot.ts';
+import { projectFoodChain, readFoodChainSnapshot, restoreFoodChain, saveFoodChain } from '../../src/ecology/chemical-food-snapshot.ts';
+import { readChemicalSnapshot } from '../../src/ecology/chemical-snapshot.ts';
 import { changeDispersalBarrier, type DispersalWorld } from '../../src/ecology/dispersal-world.ts';
 import { channelLimit } from '../../src/ecology/transport.ts';
 import { createScenario, gate, hourInput, passage, rooms, rules, scenarioId, seed, source, sources } from './scenario.ts';
 
 const saveVersion = 'estirpe-lab/1';
+// A short lab run covers all six source pulses. Barrier projections cost more than a tick.
+export const replayBudget = { actions: 24, hours: 36, barriers: 8 } as const;
 
 type Action =
   | { kind: 'advance'; hours: 1 | 6 }
@@ -32,6 +35,12 @@ function parseAction(value: unknown): Action {
     }
   }
   throw new Error('Comando inválido.');
+}
+
+function checkReplayBudget(length: number, hours: number, barriers: number) {
+  if (length > replayBudget.actions || hours > replayBudget.hours || barriers > replayBudget.barriers) {
+    throw new Error(`El historial supera el presupuesto de reproducción (${replayBudget.actions} acciones, ${replayBudget.hours} h o ${replayBudget.barriers} maniobras de barrera).`);
+  }
 }
 
 export function totals(world: DispersalWorld, state: FoodChainState) {
@@ -104,6 +113,7 @@ export function createSession(opening = createScenario()) {
   }
 
   function save() {
+    checkReplayBudget(run.actions.length, run.state.chemical.tick, run.actions.filter(action => action.kind === 'barrier').length);
     return { version: saveVersion, scenario: scenarioId, seed, actions: run.actions.slice(),
       snapshot: saveFoodChain(run.world, sources, rules, run.state) };
   }
@@ -112,8 +122,19 @@ export function createSession(opening = createScenario()) {
     if (!isRecord(value) || value.version !== saveVersion || value.scenario !== scenarioId || value.seed !== seed || !Array.isArray(value.actions)) {
       throw new Error('Archivo incompatible con este escenario.');
     }
-    const replay = value.actions.map(parseAction).reduce(apply, reset());
-    const state = restoreFoodChain(replay.world, sources, rules, value.snapshot);
+    const snapshot = readFoodChainSnapshot(value.snapshot);
+    const { accounts: [savedHour] } = readChemicalSnapshot(snapshot.chemical);
+    checkReplayBudget(value.actions.length, savedHour, 0);
+    const actions = value.actions.map(parseAction);
+    let hours = 0, barriers = 0;
+    for (const action of actions) {
+      if (action.kind === 'advance') hours += action.hours;
+      else barriers++;
+    }
+    checkReplayBudget(actions.length, hours, barriers);
+    if (hours !== savedHour) throw new Error('El guardado y el registro de comandos divergen.');
+    const replay = actions.reduce(apply, reset());
+    const state = restoreFoodChain(replay.world, sources, rules, snapshot);
     if (saveFoodChain(replay.world, sources, rules, state).integrity !==
         saveFoodChain(replay.world, sources, rules, replay.state).integrity) {
       throw new Error('El guardado y el registro de comandos divergen.');

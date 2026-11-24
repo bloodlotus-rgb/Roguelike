@@ -1,7 +1,11 @@
 import { setImmediate } from 'node:timers/promises';
-import { beforeAll, describe, expect, it } from 'vitest';
-import { createScenario, gate, passage, rooms } from './scenario.ts';
-import { createSession } from './session.ts';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { createScenario, gate, passage, rooms, rules, sources } from './scenario.ts';
+import * as foodChain from '../../src/ecology/chemical-food-chain.ts';
+import { chemicalDigest } from '../../src/ecology/chemical-ledger.ts';
+import { saveFoodChain } from '../../src/ecology/chemical-food-snapshot.ts';
+import * as dispersal from '../../src/ecology/dispersal-world.ts';
+import { createSession, replayBudget } from './session.ts';
 
 let opening: ReturnType<typeof createScenario>;
 beforeAll(() => { opening = createScenario(); }, 60_000);
@@ -94,4 +98,73 @@ describe('Jenga ecology lab', () => {
     expect(session.view()).toEqual(before);
     expect(session.save()).toEqual(saved);
   }, 60_000);
+
+  it('checks snapshot structure, versions, and both digests before replay without changing the session', () => {
+    const session = createSession(opening);
+    const saved = session.save(), before = session.view();
+    const { integrity: _integrity, ...payload } = saved.snapshot;
+    const { integrity: _chemicalIntegrity, ...chemical } = payload.chemical;
+    const resign = (snapshot: Record<string, unknown>) => ({ ...snapshot, integrity: chemicalDigest(snapshot) });
+    const actions = [{ kind: 'advance', hours: 1 }];
+    const step = vi.spyOn(foodChain, 'stepFoodChain');
+    try {
+      const invalid = [
+        [null, /food-chain snapshot version/i],
+        [{ ...saved.snapshot, version: 'unknown' }, /food-chain snapshot version/i],
+        [{ ...saved.snapshot, integrity: 'tampered' }, /food-chain snapshot integrity/i],
+        [resign({ ...payload, fungus: [[0, null]] }), /food-chain snapshot structure/i],
+        [resign({ ...payload, chemical: { ...payload.chemical, version: 'unknown' } }), /chemical snapshot version/i],
+        [resign({ ...payload, chemical: { ...payload.chemical, integrity: 'tampered' } }), /chemical snapshot integrity/i],
+        [resign({ ...payload, chemical: resign({ ...chemical, accounts: [0, [[0]], [], []] }) }), /chemical snapshot structure/i],
+      ] as const;
+      for (const [snapshot, error] of invalid) {
+        expect(() => command(session, { kind: 'load', save: { ...saved, actions, snapshot } })).toThrow(error);
+      }
+      expect(step).not.toHaveBeenCalled();
+      expect(session.view()).toEqual(before);
+      expect(session.save()).toEqual(saved);
+    } finally {
+      step.mockRestore();
+    }
+  });
+
+  it('rejects excessive action, hour, and barrier budgets before any engine work', () => {
+    const session = createSession(opening);
+    const saved = session.save(), before = session.view();
+    const step = vi.spyOn(foodChain, 'stepFoodChain');
+    const change = vi.spyOn(dispersal, 'changeDispersalBarrier');
+    try {
+      const excessiveHistories = [
+        Array.from({ length: replayBudget.actions + 1 }, () => ({ kind: 'advance', hours: 1 })),
+        Array.from({ length: Math.floor(replayBudget.hours / 6) + 1 }, () => ({ kind: 'advance', hours: 6 })),
+        Array.from({ length: replayBudget.barriers + 1 }, (_, i) => ({
+          kind: 'barrier', connector: passage, state: i % 2 ? 'open' : 'closed',
+        })),
+      ];
+      for (const actions of excessiveHistories) {
+        expect(() => command(session, { kind: 'load', save: { ...saved, actions } })).toThrow(/presupuesto de reproducción/);
+      }
+      expect(step).not.toHaveBeenCalled();
+      expect(change).not.toHaveBeenCalled();
+      expect(session.view()).toEqual(before);
+      expect(session.save()).toEqual(saved);
+    } finally {
+      step.mockRestore();
+      change.mockRestore();
+    }
+  });
+
+  it('compares a structurally valid snapshot against the replay at the same hour and geometry', () => {
+    const session = createSession(opening);
+    const saved = session.save(), before = session.view();
+    const { initial, world } = opening;
+    const inventory = new Map(initial.chemical.inventory);
+    for (const [id, stock] of inventory) inventory.set(id, { ...stock, water: stock.water + 1 });
+    const different = { ...initial, chemical: { ...initial.chemical, inventory } };
+    const snapshot = saveFoodChain(world, sources, rules, different);
+    expect(() => command(session, { kind: 'load', save: { ...saved, snapshot } })).toThrow(/divergen/);
+    expect(session.view()).toEqual(before);
+    expect(session.save()).toEqual(saved);
+    expect(command(session, { kind: 'load', save: saved })).toEqual({ ...before, revision: before.revision + 1 });
+  });
 });
