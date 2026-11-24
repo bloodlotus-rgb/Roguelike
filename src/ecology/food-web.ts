@@ -23,9 +23,11 @@ const empty = () => ({ ...emptyMeta(), ...counts() });
 export interface Founder { region:string; connector:string; origin:string; group:Animal; count:number }
 export const diets = ['specialists','omnivorous-prey','generalist-predator','both-generalists'] as const;
 export type Diet = typeof diets[number];
+export type Movement = 'dispersal' | 'local-foraging';
 type Edible = 'prey' | 'detritivores' | 'fungalBiomass';
 export interface Web {
   diet: Diet;
+  movement: Movement;
   base: MetaState;
   residents: Map<string,Counts>;
   founders: readonly Founder[];
@@ -66,7 +68,8 @@ function founderBudget(world: DispersalWorld, setup: TrophicScenario, founders: 
   if (total+budget > parameters.inventoryLimit) throw new Error('External budget exceeded');
   return total;
 }
-export function foundWeb(world: DispersalWorld, setup: TrophicScenario, founders: readonly Founder[], deposits: readonly Deposit[] = [], diet:Diet='specialists') {
+export function foundWeb(world: DispersalWorld, setup: TrophicScenario, founders: readonly Founder[], deposits: readonly Deposit[] = [], diet:Diet='specialists', movement:Movement='dispersal') {
+  if (movement!=='dispersal' && movement!=='local-foraging') throw new Error('Invalid movement');
   if (!diets.includes(diet)) throw new Error('Invalid diet');
   founderBudget(world,setup,founders,deposits);
   const {state:base,ledger:initial} = foundMeta(world,setup,deposits);
@@ -81,7 +84,7 @@ export function foundWeb(world: DispersalWorld, setup: TrophicScenario, founders
     residents.set(f.region,t);
     ledger.push({kind:'source',process:'founders/'+f.origin,resource:f.group,from:null,to:id,amount:f.count,connector:f.connector});
   }
-  const state = {base,residents,diet,founders:Object.freeze(founders.map(f=>Object.freeze({...f})))};
+  const state = {base,residents,diet,movement,founders:Object.freeze(founders.map(f=>Object.freeze({...f})))};
   validate(world,state);
   return {state,ledger};
 }
@@ -157,6 +160,7 @@ export function stepWeb(world: DispersalWorld, previous: Web) {
     const regions=[...residents.keys()].sort();
     const incoming: {region:string; group:Animal}[]=[];
     const reserved=new Map<string,number>(), used=new Set<string>();
+    const expected=new Map<string,Counts>();
     for (const group of groups) {
       const profile=profiles[group];
       const fallback=previous.diet==='both-generalists' ||
@@ -201,18 +205,36 @@ export function stepWeb(world: DispersalWorld, previous: Web) {
           convert(id,group+'-birth',food,group,1);
           spend(id,group+'-birth');
         }
-        if (tick%profile.movePeriod || !s.energy || (residents.get(region)?.[group] ?? 0)<2) continue;
+        const local=residents.get(region)?.[group] ?? 0;
+        if (tick%profile.movePeriod || !s.energy || !local) continue;
+        const forage=previous.movement==='local-foraging';
+        const hungry=!foodAt(id);
+        if (!forage && local<2) continue;
         for (const i of world.graph.incident[id]) {
           const cut=world.graph.boundaries[i], to=cut.from===id ? cut.to : cut.from;
           const port=world.ports.get(cut.id)![cut.from===id ? 1 : 0];
           const key=group+'/'+cut.id;
+          const neighbor=residents.get(port)?.[group] ?? 0;
           if (used.has(key) || !pass(world,cut,id,group) || !stocks.get(to)?.water || !foodAt(to) ||
-            (residents.get(port)?.[group] ?? 0)+1 >= residents.get(region)![group] || room(port)<=(reserved.get(port) ?? 0)) continue;
+              room(port)<=(reserved.get(port) ?? 0)) continue;
+          // Local evidence only. Preserve a fed pair, allow a lone animal to reach a mate
+          // and allow any hungry resident to leave for a neighbor with compatible food.
+          const dispersal=neighbor+1<local;
+          if (forage) {
+            if ((expected.get(region)?.[group] ?? 0)>0) continue;
+            const findMate=local===1 && neighbor===1 && !(expected.get(port)?.[group]);
+            if (!hungry && !findMate && !(local>2 && dispersal)) continue;
+          } else if (!dispersal) continue;
           change(region,group,-1);
           spend(id,group+'-migration');
           log.push({kind:'transfer',process:group+'-migration',from:id,to,amount:1,resource:group,connector:cut.id});
           used.add(key);
           incoming.push({region:port,group});
+          if (forage) {
+            const pending=expected.get(port) ?? counts();
+            pending[group]++;
+            expected.set(port,pending);
+          }
           reserved.set(port,(reserved.get(port) ?? 0)+1);
           break;
         }
@@ -231,22 +253,25 @@ export function projectWeb(old:DispersalWorld,next:DispersalWorld,state:Web):Web
 
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function saveWeb(world:DispersalWorld,state:Web) {
-  const data={version:'E1-D/2',diet:state.diet,base:saveMeta(world,state.base),founders:structuredClone(state.founders),
+  const data={version:'E1-E/1',diet:state.diet,movement:state.movement,base:saveMeta(world,state.base),founders:structuredClone(state.founders),
     residents:[...state.residents.keys()].sort().map(r=>[r,{...state.residents.get(r)!}] as const)};
   return {...data,signature:digest([profiles,data])};
 }
-export function restoreWeb(world:DispersalWorld,saved:Omit<ReturnType<typeof saveWeb>,'diet'> & {diet?:Diet}):Web {
+export function restoreWeb(world:DispersalWorld,saved:Omit<ReturnType<typeof saveWeb>,'diet'|'movement'> & {diet?:Diet;movement?:Movement}):Web {
   const {signature,...data}=saved;
   const legacy=data.version==='E1-C/1';
   const rules=legacy ? {prey:profiles.prey} : profiles;
-  const diet=data.version==='E1-D/2' ? data.diet : 'specialists';
-  if (!diet || !diets.includes(diet) || (!legacy && data.version!=='E1-D/1' && data.version!=='E1-D/2') || digest([rules,data])!==signature) throw new Error('Invalid food web snapshot');
+  const extended=data.version==='E1-E/1';
+  const movement=extended ? data.movement : 'dispersal';
+  if (movement!=='dispersal' && movement!=='local-foraging') throw new Error('Invalid saved movement');
+  const diet=extended || data.version==='E1-D/2' ? data.diet : 'specialists';
+  if (!diet || !diets.includes(diet) || (!extended && !legacy && data.version!=='E1-D/1' && data.version!=='E1-D/2') || digest([rules,data])!==signature) throw new Error('Invalid food web snapshot');
   const initial=founderBudget(world,data.base.setup,data.founders,data.base.deposits);
   const residents=new Map(data.residents.map(([r,t])=>[r,legacy ? {...t,predator:0} : {...t}]));
   if (residents.size!==data.residents.length) throw new Error('Duplicate occupied region');
   const total=[...residents.values()].reduce((n,t)=>n+population(t),0);
   const base=restoreMetaWithMatter(world,data.base,total-initial);
-  const state={base,residents,diet,founders:Object.freeze(data.founders.map(f=>Object.freeze({...f})))};
+  const state={base,residents,diet,movement,founders:Object.freeze(data.founders.map(f=>Object.freeze({...f})))};
   validate(world,state);
   return state;
 }
