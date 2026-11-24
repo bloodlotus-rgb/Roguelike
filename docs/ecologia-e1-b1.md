@@ -2,6 +2,8 @@
 
 El laboratorio parte de un depósito fundador finito y sigue sus organismos y recursos hora por hora. Cada asiento identifica el hábitat, el proceso, el recurso y la cantidad. Los ingresos externos y los traslados entre hábitats también identifican el corte físico. E1-B1 reemplaza el crecimiento automático en su propio escenario. Los escenarios E1-A y E1-B0 se pueden volver a ejecutar con sus reglas y guardados originales.
 
+El ensayo histórico descrito aquí funda la colonia aguas abajo. La revisión del PR #59 compara ambos extremos y sigue los saldos hasta cada extinción. [Viabilidad y sensibilidad](ecologia-e1-b1-viabilidad.md)
+
 ## Cuenca, condiciones iniciales y aportes
 
 Para montar un escenario se declara la semilla del edificio, la cuenca exterior, la región fina aguas arriba y el ID de un cauce Jenga dirigido. El generador del ensayo elige el primer cauce en orden canónico cuya cabecera queda en una zona profunda. La existencia y la dirección del corte se verifican en el edificio. La conexión de esa cabecera con una cuenca externa y el material que trae son condiciones declaradas del experimento. Jenga no genera la cuenca exterior.

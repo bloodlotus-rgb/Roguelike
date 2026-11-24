@@ -27,6 +27,8 @@ export interface TrophicScenario {
   region: string;
   connector: string;
   founders: TrophicStock;
+  settlement?: 'upstream' | 'downstream';
+  maintenancePeriod?: number;
   source: { kind: keyof typeof cargo; rate: number; quota: number; activeHours: number; period: number } | null;
 }
 
@@ -44,10 +46,21 @@ export function inlet(graph: HabitatGraph, setup: TrophicScenario) {
   return graph.boundaries[index];
 }
 
-export function validateScenario(graph: HabitatGraph, setup: TrophicScenario) {
+export function colonyHome(graph: HabitatGraph, setup: TrophicScenario) {
   const cut = inlet(graph, setup);
+  return setup.settlement === 'upstream' ? cut.from : cut.to;
+}
+
+export function validateScenario(graph: HabitatGraph, setup: TrophicScenario) {
+  const home = colonyHome(graph, setup);
+  if (setup.settlement !== undefined && setup.settlement !== 'upstream' && setup.settlement !== 'downstream') {
+    throw new Error('Unknown settlement site');
+  }
+  if (setup.maintenancePeriod !== undefined && (!natural(setup.maintenancePeriod) || setup.maintenancePeriod < 1)) {
+    throw new Error('Invalid maintenance period');
+  }
   const f = setup.founders;
-  if (!accounts.every(r => natural(f[r])) || f.detritivores + f.fungalBiomass > graph.habitats[cut.to].capacity) {
+  if (!accounts.every(r => natural(f[r])) || f.detritivores + f.fungalBiomass > graph.habitats[home].capacity) {
     throw new Error('Invalid founding deposit');
   }
   let budget = accounts.reduce((sum, r) => sum + f[r], 0);
@@ -65,7 +78,12 @@ export function trophicSignature(setup: TrophicScenario) {
   const s = setup.source;
   const config = [setup.seed, setup.watershed, setup.region, setup.connector, accounts.map(r => setup.founders[r]),
     s && [s.kind, s.quota, s.rate, s.period, s.activeHours]];
-  return createHash('sha256').update(JSON.stringify([1, resourceSignature(null), biology, cargo, accounts, config])).digest('hex');
+  const contract: unknown[] = [1, resourceSignature(null), biology, cargo, accounts, config];
+  const period = setup.maintenancePeriod ?? biology.maintenancePeriod;
+  if (setup.settlement === 'upstream' || period !== biology.maintenancePeriod) {
+    contract.push([setup.settlement ?? 'downstream', period]);
+  }
+  return createHash('sha256').update(JSON.stringify(contract)).digest('hex');
 }
 
 /** Reproducible trial: an explicitly declared external basin at the first deep stream in physical cut order. */

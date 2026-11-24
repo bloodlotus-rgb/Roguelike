@@ -9,7 +9,7 @@ E1-A deriva hábitats de las superficies transitables y lleva cuentas separadas 
 
 E1-B0 optimiza el transporte horario y los cambios de compuerta. [Equivalencia con E1-A y mediciones de carga](docs/ecologia-e1-b0.md)
 
-El escenario E1-B1 simula colonias fúngicas y detritívoros inmóviles con aportes profundos trazables. [Contrato, pruebas y mediciones E1-B1](docs/ecologia-e1-b1.md)
+El escenario E1-B1 simula colonias fúngicas y detritívoros inmóviles con aportes profundos trazables. [Contrato E1-B1](docs/ecologia-e1-b1.md) · [Viabilidad anual y causas de extinción](docs/ecologia-e1-b1-viabilidad.md)
 
 ## Entorno y comprobación
 

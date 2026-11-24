@@ -1,6 +1,8 @@
+import { ColonyBudget } from '../../scripts/colony-budget';
+import { viabilityTrial } from '../../scripts/viability-trials';
 import { describe, expect, it } from 'vitest';
 import { type HabitatGraph, type Boundary } from './habitats';
-import { accounts, biology, emptyTrophicStock, type TrophicScenario, type TrophicStock } from './trophic-contract';
+import { accounts, biology, colonyHome, emptyTrophicStock, trophicSignature, type TrophicScenario, type TrophicStock } from './trophic-contract';
 import { auditTrophic, foundColony, projectColony, restoreColony, saveColony, stepTrophic } from './trophic';
 
 function channel(state: Boundary['state'] = 'open', seed = 'brook'): HabitatGraph {
@@ -134,4 +136,60 @@ describe('stationary trophic communities', () => {
     const empty = foundColony(graph, { ...setup, source: null }).state;
     expect(stepTrophic(graph, empty).state.stocks.size).toBe(0);
   });
+});
+
+
+it('measures simultaneous shortages immediately before each guild feeds, including tissue recycled by its predecessor', () => {
+  const graph = channel(), setup = config();
+  setup.source = null;
+  setup.founders = { ...emptyTrophicStock(), fungalBiomass: 4, detritivores: 2 };
+  const start = foundColony(graph, setup);
+  const budget = new ColonyBudget(1, 0, start.state, start.ledger);
+  let state = start.state;
+  for (let i = 0; i < 12; i++) {
+    const next = stepTrophic(graph, state);
+    budget.record(state, next.state, next.ledger);
+    state = next.state;
+  }
+  expect(budget.extinctions.map(e => [e.hour, e.group, e.rations.available.detritus, e.rations.deficit])).toEqual([
+    [6, 'fungalBiomass', 0, { water: 1, detritus: 1, energy: 1 }],
+    [6, 'detritivores', 4, { water: 1, detritus: 0, energy: 1 }],
+  ]);
+  expect(budget.window(state).home.detritus).toBe(6);
+});
+
+it('signs the physical settlement and maintenance schedule while reading the original downstream contract', () => {
+  const graph = channel(), setup = config();
+  expect(trophicSignature(setup)).toBe('7860ec782f48325df7fcb02b69f5bc7ead4d82cee706f0c6ab0a4fb2a6718e34');
+  expect(trophicSignature({ ...setup, settlement: 'downstream', maintenancePeriod: 6 })).toBe(trophicSignature(setup));
+  const alternative = { ...setup, settlement: 'upstream' as const, maintenancePeriod: 3 };
+  const saved = saveColony(graph, foundColony(graph, alternative).state);
+  expect(saved.stocks[0][0]).toBe(0);
+  expect(() => restoreColony(graph, { ...saved, setup: { ...alternative, maintenancePeriod: 6 } })).toThrow('contract');
+  expect(() => restoreColony(graph, { ...saved, setup: { ...alternative, settlement: 'downstream' } })).toThrow('contract');
+  expect(() => foundColony(graph, { ...alternative, maintenancePeriod: 0 })).toThrow('period');
+  const next = stepTrophic(graph, restoreColony(graph, JSON.parse(JSON.stringify(saved))));
+  expect(next).toEqual(stepTrophic(graph, foundColony(graph, alternative).state));
+  expect(projectColony(graph, channel('blocked'), next.state).stocks).toEqual(next.state.stocks);
+});
+
+it('sustains both guilds for every hour of a year with a paid inlet supply and the original metabolic rules', () => {
+  const graph = channel(), setup = viabilityTrial(graph, 'control');
+  const start = foundColony(graph, setup);
+  const budget = new ColonyBudget(colonyHome(graph, setup), 0, start.state, start.ledger);
+  let state = start.state;
+  for (let hour = 1; hour <= 8760; hour++) {
+    const next = stepTrophic(graph, state);
+    auditTrophic(state.stocks, next.state.stocks, next.ledger);
+    budget.record(state, next.state, next.ledger);
+    state = next.state;
+  }
+  const final = budget.window(state);
+  expect(final.minimum).toEqual({ fungalBiomass: 4, detritivores: 2 });
+  expect(final.maximum.fungalBiomass).toBeGreaterThan(4);
+  expect(final.maximum.detritivores).toBeGreaterThan(2);
+  expect(final.quotaExhaustedAt).toBe(8760);
+  expect(budget.extinctions).toEqual([]);
+  expect(final.cuts['brook-cut'].exports.energy).toBe(final.budget.exports.energy);
+  expect(stepTrophic(graph, state).ledger.filter(e => e.kind === 'source')).toEqual([]);
 });

@@ -1,7 +1,7 @@
 import { auditAccounts } from './audit.ts';
 import { generatorVersion, type HabitatGraph } from './habitats.ts';
 import { type Entry, projectInventory, transportStocks } from './resources.ts';
-import { accounts, biology as b, cargo, emptyTrophicStock, inlet, matter, natural, trophicSignature, validateScenario,
+import { accounts, biology as b, cargo, colonyHome, emptyTrophicStock, inlet, matter, natural, trophicSignature, validateScenario,
   type Account, type TrophicScenario, type TrophicStock } from './trophic-contract.ts';
 
 type Inventory = Map<number, TrophicStock>;
@@ -29,22 +29,23 @@ export function auditTrophic(before: Inventory, after: Inventory, ledger: Postin
 export function foundColony(graph: HabitatGraph, setup: TrophicScenario) {
   validateScenario(graph, setup);
   const cut = inlet(graph, setup);
+  const home = colonyHome(graph, setup);
   const stocks: Inventory = new Map();
   const ledger: Posting[] = [];
   for (const r of accounts) {
     const amount = setup.founders[r];
     if (amount) ledger.push({ kind: 'source', process: 'founding-deposit/' + setup.watershed,
-      resource: r, amount, from: null, to: cut.to, connector: cut.id });
+      resource: r, amount, from: null, to: home, connector: cut.id });
   }
   if (ledger.length) {
     if (cut.state === 'closed' || cut.state === 'blocked') throw new Error('Blocked founding deposit');
-    stocks.set(cut.to, { ...setup.founders });
+    stocks.set(home, { ...setup.founders });
   }
   const state: TrophicState = { tick: 0, lotsUsed: 0, topology: graph.signature, setup: freezeScenario(setup), stocks };
   return { state, ledger };
 }
 
-function metabolize(stock: TrophicStock, id: number, tick: number, capacity: number, ledger: Posting[]) {
+function metabolize(stock: TrophicStock, id: number, tick: number, capacity: number, maintenancePeriod: number, ledger: Posting[]) {
   function post(kind: 'sink' | 'conversion', process: string, resource: Account, delta: number) {
     if (!delta) return;
     stock[resource] += delta;
@@ -66,7 +67,7 @@ function metabolize(stock: TrophicStock, id: number, tick: number, capacity: num
       convert(group + '-mortality/' + limiting, group, 'detritus', dead);
     }
   }
-  if (tick % b.maintenancePeriod === 0) {
+  if (tick % maintenancePeriod === 0) {
     maintain('fungalBiomass', b.fungalUnitsPerRation);
     maintain('detritivores', b.animalsPerRation);
   }
@@ -127,7 +128,7 @@ export function stepTrophic(graph: HabitatGraph, previous: TrophicState) {
   const ledger: Posting[] = input;
   for (const id of [...stocks.keys()].sort((a, b) => a - b)) {
     const stock = stocks.get(id)!;
-    metabolize(stock, id, tick, graph.habitats[id].capacity, ledger);
+    metabolize(stock, id, tick, graph.habitats[id].capacity, setup.maintenancePeriod ?? b.maintenancePeriod, ledger);
     if (accounts.every(r => stock[r] === 0)) stocks.delete(id);
   }
   return { state: { ...previous, stocks, lotsUsed, tick }, ledger };
@@ -153,7 +154,7 @@ export function restoreColony(graph: HabitatGraph, data: ReturnType<typeof saveC
   if (trophicSignature(data.setup) !== data.contract || !natural(data.tick) || !natural(data.lotsUsed) ||
     data.lotsUsed > (data.setup.source?.quota ?? 0)) throw new Error('Invalid trophic contract or quota');
   const { source, founders } = data.setup;
-  const home = inlet(graph, data.setup).to;
+  const home = colonyHome(graph, data.setup);
   if (source) {
     const hours = Math.floor(data.tick / source.period) * source.activeHours + Math.min(data.tick % source.period, source.activeHours);
     if (Math.ceil(data.lotsUsed / source.rate) > hours) throw new Error('Quota exceeds elapsed delivery windows');
