@@ -12,7 +12,7 @@ for (const seed of seeds.length ? seeds : ['mansion']) {
   let world=trial.open;
   const setup=structuredClone(trial.setup);
   if (scenario==='scarce') setup.source=null;
-  const founders:Founder[]=groups.map(group=>({group,count:2,region:trial.source,connector:trial.bridge,origin:'historical lateral entry'}));
+  const founders:Founder[]=groups.map(group=>({group,count:group==='prey' ? 6 : 2,region:trial.source,connector:trial.bridge,origin:'historical lateral entry'}));
   const initial=foundWeb(world,setup,founders);
   auditWeb(world,null,initial.state,initial.ledger);
   let state=initial.state;
