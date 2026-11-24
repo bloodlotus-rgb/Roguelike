@@ -70,6 +70,11 @@ export interface FoodChainRules {
   readonly prey: AnimalRules & {
     readonly feeding: Feeding;
     readonly reproduction?: 'maintenance-budget';
+    readonly physiology?: {
+      readonly satiation?: true;
+      readonly adultMatter?: number;
+      readonly maintenanceMatterStep?: number;
+    };
   };
   readonly predator: AnimalRules;
 }
@@ -119,6 +124,11 @@ function animalRules(rule: AnimalRules) {
     quantum(movement.cost)], [positive(birth.interval), positive(birth.adultAge), offspring, birth.heat]];
 }
 
+export function preyMaintenance(rules: FoodChainRules['prey'], matter: number): bigint {
+  const step = rules.physiology?.maintenanceMatterStep;
+  return BigInt(rules.maintenance) + (step === undefined ? 0n : (BigInt(matter) - 1n) / BigInt(step));
+}
+
 export function foodRulesSignature(rules: FoodChainRules) {
   if (rules.fungus.feeding.residueEnergyPermille !== 0 || rules.prey.feeding.residueEnergyPermille !== 0) {
     throw new Error('Mineral residue cannot carry chemical energy');
@@ -136,6 +146,23 @@ export function foodRulesSignature(rules: FoodChainRules) {
   if (reproduction !== undefined) {
     if (reproduction !== 'maintenance-budget') throw new Error('Unknown prey reproduction policy');
     signature.push(['prey-reproduction', reproduction]);
+  }
+  const physiology = rules.prey.physiology;
+  if (physiology !== undefined) {
+    const {satiation, adultMatter, maintenanceMatterStep} = physiology;
+    if ((satiation !== undefined && satiation !== true) ||
+        (satiation === undefined && adultMatter === undefined && maintenanceMatterStep === undefined)) {
+      throw new Error('Invalid experimental prey physiology');
+    }
+    if (adultMatter !== undefined && positive(adultMatter) < rules.prey.birth.matter) {
+      throw new Error('Newborn exceeds experimental adult mass');
+    }
+    if (maintenanceMatterStep !== undefined) positive(maintenanceMatterStep);
+    const gap = BigInt(rules.prey.feeding.interval - 1);
+    if (BigInt(rules.prey.birth.reserve) < gap * preyMaintenance(rules.prey, rules.prey.birth.matter)) {
+      throw new Error('Newborn reserve cannot cover the first feeding gap');
+    }
+    signature.push(['prey-physiology', satiation ?? null, adultMatter ?? null, maintenanceMatterStep ?? null]);
   }
   return chemicalDigest(signature);
 }
@@ -183,6 +210,10 @@ export function validateFoodState(world: DispersalWorld, sources: readonly Chemi
   for (const [id, animal] of state.animals) {
     if (quantum(id) !== animal.id || id >= state.nextAnimalId || quantum(animal.bornAt) > state.chemical.tick ||
         (animal.kind !== 'prey' && animal.kind !== 'predator') || !animal.body.matter) throw new Error('Invalid animal record');
+    const adultMatter = rules.prey.physiology?.adultMatter;
+    if (animal.kind === 'prey' && adultMatter !== undefined && animal.body.matter > adultMatter) {
+      throw new Error('Prey exceeds experimental adult mass');
+    }
     regionHabitat(world, animal.region);
     checkLiving(animal.body, rules[animal.kind].reservePerMatter);
     const occupied = (occupancy.get(animal.region) ?? 0) + animal.body.matter;
