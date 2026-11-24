@@ -12,8 +12,9 @@ export interface FoodHourInput {
   readonly chemical: readonly ChemicalPosting[];
   readonly moves?: readonly { readonly animal: number; readonly connector: string }[];
   readonly pairs?: readonly (readonly [number, number])[];
+  readonly harvest?: { readonly habitat: number; readonly matter: number };
 }
-type Phase = 'move' | 'grow' | 'graze' | 'capture' | 'maintain' | 'regress' | 'die' | 'birth';
+type Phase = 'move' | 'grow' | 'graze' | 'capture' | 'maintain' | 'regress' | 'die' | 'birth' | 'harvest';
 type Account =
   | { readonly kind: 'stock'; readonly habitat: number; readonly stock: ChemicalInventory | undefined }
   | { readonly kind: 'fungus'; readonly habitat: number; readonly stock: LivingStock | undefined }
@@ -25,6 +26,7 @@ interface FoodPosting {
   readonly debits: readonly Account[];
   readonly credits: readonly Account[];
   readonly heat: { readonly habitat: number; readonly energy: number };
+  readonly exported?: LivingStock;
   readonly crossing?: { readonly connector: string; readonly from: number; readonly to: number; readonly cargo: LivingStock };
 }
 
@@ -88,7 +90,7 @@ function assimilate(body: LivingStock, food: LivingStock, rule: Omit<Feeding, 'b
 }
 
 function fungalGrowthRoom(body: LivingStock, food: LivingStock, rule: FoodChainRules['fungus'], space: number) {
-  if (rule.regulation !== 'growth-budget') return space;
+  if (rule.regulation !== 'growth-budget' && rule.regulation !== 'growth-budget-and-regression') return space;
   // The funded interval starts with maintenance this hour and ends before the next feeding.
   const duePerMatter = BigInt(rule.maintenance) * BigInt(rule.feeding.interval);
   if (BigInt(rule.reservePerMatter) < duePerMatter) return 0;
@@ -127,7 +129,8 @@ class Hour {
   stock(habitat: number) { return this.inventory.get(habitat) ?? empty; }
   space(region: string) { return regionCapacity(this.world, region) - (this.occupancy.get(region) ?? 0); }
 
-  post(phase: Phase, habitat: number, energy: number, credits: readonly Account[], crossing?: FoodPosting['crossing']) {
+  post(phase: Phase, habitat: number, energy: number, credits: readonly Account[],
+    {crossing, exported}: Pick<FoodPosting, 'crossing' | 'exported'> = {}) {
     quantum(energy);
     const debits = credits.map((entry): Account => {
       switch (entry.kind) {
@@ -136,8 +139,9 @@ class Hour {
         case 'animal': return {...entry, stock: this.animals.get(entry.id)};
       }
     });
+    const leaving = exported === undefined ? zero : balance(exported);
     assertBalance(debits.reduce((total, entry) => sum(total, accountBalance(entry)), zero),
-      credits.reduce((total, entry) => sum(total, accountBalance(entry)), heat(BigInt(energy))));
+      credits.reduce((total, entry) => sum(total, accountBalance(entry)), sum(heat(BigInt(energy)), leaving)));
     for (const entry of credits) {
       switch (entry.kind) {
         case 'stock':
@@ -168,7 +172,7 @@ class Hour {
       }
     }
     if (energy) this.heat.set(habitat, quantum((this.heat.get(habitat) ?? 0) + energy));
-    this.entries.push({id: this.entries.length, tick: this.tick, phase, debits, credits, heat: {habitat, energy}, crossing});
+    this.entries.push({id: this.entries.length, tick: this.tick, phase, debits, credits, heat: {habitat, energy}, crossing, ...(exported ? {exported} : {})});
   }
 
   move(requests: NonNullable<FoodHourInput['moves']>) {
@@ -208,7 +212,7 @@ class Hour {
     for (const {body, from, to, connector, destination, cost} of accepted) {
       const cargo = consumeReserve(body.body, cost);
       this.post('move', from, cost, [{kind: 'animal', id: body.id, stock: {...body, region: destination, body: cargo}}],
-        {connector, from, to, cargo});
+        {crossing:{connector, from, to, cargo}});
     }
   }
 
@@ -296,7 +300,8 @@ class Hour {
     for (const habitat of [...this.fungus.keys()].sort(numeric)) {
       const stock = this.fungus.get(habitat)!;
       const due = BigInt(rule.maintenance) * BigInt(stock.matter);
-      if (rule.regulation === 'partial-regression' && BigInt(stock.storedEnergy) < due &&
+      if ((rule.regulation === 'partial-regression' || rule.regulation === 'growth-budget-and-regression') &&
+          BigInt(stock.storedEnergy) < due &&
           rule.reservePerMatter >= rule.maintenance && stock.storedEnergy >= rule.maintenance) {
         this.regressFungus(habitat, stock, rule);
         continue;
@@ -307,6 +312,25 @@ class Hour {
       this.payMaintenance(regionHabitat(this.world, animal.region), animal.body, BigInt(this.rules[animal.kind].maintenance),
         body => ({kind: 'animal', id: animal.id, stock: body ? {...animal, body} : undefined}));
     }
+  }
+
+  harvest({habitat, matter}: NonNullable<FoodHourInput['harvest']>) {
+    if (this.rules.fungus.regulation !== 'growth-budget-and-regression') {
+      throw new Error('Fungal harvest requires the combined experimental regulation');
+    }
+    const current = this.fungus.get(quantum(habitat));
+    if (!current || !quantum(matter) || matter > current.matter) throw new Error('Invalid fungal harvest');
+
+    const retained = current.matter - matter;
+    const weights = [matter, retained];
+    // Both shares use the same mass weights and tie order. Reserve is part of chemical energy.
+    const [removedEnergy, keptEnergy] = apportion(current.chemicalEnergy, weights);
+    const [removedReserve, keptReserve] = apportion(current.storedEnergy, weights);
+    const exported = {matter, chemicalEnergy:removedEnergy, storedEnergy:removedReserve};
+    const remainder = {matter:retained, chemicalEnergy:keptEnergy, storedEnergy:keptReserve};
+    checkLiving(exported, this.rules.fungus.reservePerMatter);
+    this.post('harvest', habitat, 0, [{kind:'fungus', habitat, stock:retained ? remainder : undefined}], {exported});
+    return exported;
   }
 
   private regressFungus(habitat: number, stock: LivingStock, rule: FoodChainRules['fungus']) {
@@ -424,6 +448,7 @@ export function stepFoodChain(world: DispersalWorld, sources: readonly ChemicalS
   hour.capture();
   hour.maintain();
   hour.birth(input.pairs ?? []);
+  const harvest = input.harvest === undefined ? undefined : hour.harvest(input.harvest);
   const state = {...before, chemical: {...chemical.state, inventory: hour.inventory, heat: hour.heat},
     fungus: hour.fungus, animals: hour.animals, nextAnimalId: hour.nextAnimalId};
   validateFoodState(world, sources, rules, state);
@@ -438,7 +463,9 @@ export function stepFoodChain(world: DispersalWorld, sources: readonly ChemicalS
   const byHabitat = new Map<number, {opening: Balance; closing: Balance; imported: Balance; exported: Balance; dissipated: bigint}>();
   for (const id of [...new Set([...opening.keys(), ...closing.keys(), ...chemical.byHabitat.keys(), ...hour.heat.keys()])].sort(numeric)) {
     const start = opening.get(id) ?? zero, end = closing.get(id) ?? zero;
-    const imported = chemical.byHabitat.get(id)?.imported ?? zero, exported = chemical.byHabitat.get(id)?.exported ?? zero;
+    const imported = chemical.byHabitat.get(id)?.imported ?? zero;
+    const tissueExport = harvest && input.harvest?.habitat === id ? balance(harvest) : zero;
+    const exported = sum(chemical.byHabitat.get(id)?.exported ?? zero, tissueExport);
     const incoming = sum(chemical.internalIn.get(id) ?? zero, inAnimal.get(id) ?? zero);
     const outgoing = sum(chemical.internalOut.get(id) ?? zero, outAnimal.get(id) ?? zero);
     const dissipated = BigInt(hour.heat.get(id) ?? 0) - BigInt(before.chemical.heat.get(id) ?? 0);

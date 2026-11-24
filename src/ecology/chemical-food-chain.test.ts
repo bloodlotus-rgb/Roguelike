@@ -457,3 +457,52 @@ it('keeps the original fungal maintenance rule and rejects mixed or unknown regu
   const invalid = {...rules,fungus:{...rules.fungus,regulation:['growth-budget','partial-regression']}} as unknown as FoodChainRules;
   expect(() => foundFoodChain(world,[],invalid,founder)).toThrow(/Unknown fungal regulation/);
 });
+
+it('exports proportional fungal mass and chemical energy after maintenance, with reserve recorded separately', () => {
+  const w = fixture('closed'), base = configuration();
+  const rules = {...base,fungus:{...base.fungus,regulation:'growth-budget-and-regression' as const}};
+  const state = foundFoodChain(w,[],rules,{inventory:new Map([[0,stock(0,0,1)]]),
+    fungus:new Map([[0,body(4,11,7)]]),animals:[]});
+  const input = {chemical:[],harvest:{habitat:0,matter:1}};
+  const out = stepFoodChain(w,[],rules,state,input);
+  expect(out.entries.map(e=>e.phase)).toEqual(['maintain','harvest']);
+  expect(out.entries[1].exported).toEqual(body(1,2,1));
+  expect(out.state.fungus.get(0)).toEqual(body(3,5,2));
+  expect(out.audit.exported).toEqual({matter:1n,chemicalEnergy:2n,water:0n});
+  expect(out.byHabitat.get(0)?.exported).toEqual(out.audit.exported);
+  expect(out.audit.dissipated).toBe(4n);
+  expect(out.state.chemical.inventory.get(0)).toEqual(stock(0,0,1));
+  const checkpoint = saveFoodChain(w,[],rules,state);
+  const restored = restoreFoodChain(w,[],rules,JSON.parse(JSON.stringify(checkpoint)));
+  const replay = stepFoodChain(w,[],rules,restored,input);
+  expect(foodChain.serializeFoodLedger(replay)).toBe(foodChain.serializeFoodLedger(out));
+  expect(saveFoodChain(w,[],rules,replay.state)).toEqual(saveFoodChain(w,[],rules,out.state));
+  expect(() => stepFoodChain(w,[],rules,state,{...input,harvest:{habitat:0,matter:5}})).toThrow(/Invalid fungal harvest/);
+  expect(saveFoodChain(w,[],rules,state)).toEqual(checkpoint);
+});
+
+it('applies both experimental mechanisms and keeps all four rule contracts distinct', () => {
+  const w = fixture('closed'), base = configuration();
+  const foundation = {inventory:new Map([[0,stock(1,12,1)]]),fungus:new Map([[0,body(4,4,4)]]),animals:[]};
+  const regulation = [undefined,'growth-budget','partial-regression','growth-budget-and-regression'] as const;
+  const modes = regulation.map(mode=>({...base,fungus:{...base.fungus,regulation:mode,maintenance:2,reservePerMatter:2,
+    feeding:{...base.fungus.feeding,interval:2,retainedMatterPermille:1000,reservePermille:1000}}}));
+  const checkpoints = modes.map(rules=>saveFoodChain(w,[],rules,foundFoodChain(w,[],rules,foundation)));
+  for (const [i,saved] of checkpoints.entries()) {
+    for (const [j,rules] of modes.entries()) {
+      if (i===j) expect(saveFoodChain(w,[],rules,restoreFoodChain(w,[],rules,saved))).toEqual(saved);
+      else expect(() => restoreFoodChain(w,[],rules,saved)).toThrow(/contract/);
+    }
+  }
+  const rules = modes[3];
+  const first = step(w,rules,restoreFoodChain(w,[],rules,checkpoints[3]));
+  expect(first.entries[0].phase).toBe('regress');
+  expect(first.state.fungus.get(0)?.matter).toBe(2);
+  const second = step(w,rules,first.state);
+  expect(second.entries.map(e=>e.phase)).toEqual(['grow','maintain']);
+  expect(second.state.fungus.get(0)).toEqual(body(2,0,0));
+  const next = step(w,rules,second.state);
+  expect(next.entries[0].phase).toBe('die');
+  expect(() => stepFoodChain(w,[],modes[2],restoreFoodChain(w,[],modes[2],checkpoints[2]),
+    {chemical:[],harvest:{habitat:0,matter:1}})).toThrow(/experimental regulation/);
+});
