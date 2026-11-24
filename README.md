@@ -44,3 +44,5 @@ El diagnóstico escribe una línea JSON por semilla. Los módulos retirados sigu
 3. Revisar las causas de extinción y las tasas de E1-B1 antes de ampliar la red trófica. Conservar como pendientes la materialización vóxel y los umbrales monumentales inter-zona.
 
 Todas las etapas se trabajan en ramas y PR independientes. `main` nunca se actualiza directamente.
+
+La red trófica experimental incorpora presas y depredadores terrestres. [Reglas de presas](docs/ecologia-e1-c.md) · [Depredación](docs/ecologia-e1-d.md) · [Ensayos de viabilidad y carga](docs/ecologia-e1-validacion.md)
