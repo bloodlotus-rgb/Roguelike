@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { foundColony, saveColony, stepTrophic } from './trophic';
+import { foundMeta, saveMeta, stepMeta } from './metapopulation';
 import { expect,it } from 'vitest';
 import { indexWorld } from './dispersal-world';
 import { auditWeb,foundWeb,pass,projectWeb,restoreWeb,saveWeb,stepWeb } from './food-web';
@@ -61,4 +64,37 @@ it('charges each kill to living prey, recycles deaths and rejects narrow or floo
   expect(seen.has('predator-feeding')).toBe(true);
   expect(pass(world,{...world.graph.boundaries[0],kind:'duct'},0,'predator')).toBe(false);
   expect(pass(world,{...world.graph.boundaries[0],state:'flooded'},0,'predator')).toBe(false);
+});
+
+it('restores signed historical C/D snapshots and rejects a changed growth policy', () => {
+  const world=trial(), historic=foundWeb(world,setup,census).state;
+  const original=saveWeb(world,historic);
+  // Signatures produced by 7ce01e7 (C) and 477185fe (D) with the same physical fixture.
+  expect(original.signature).toBe('bec56d21ddb77dcf3dc084f484894f81fbbbd32d162f44f7919b2f5bc6d73656');
+  const legacy={...original, version:'E1-C/1', residents:original.residents.map(([r,t])=>[r,{prey:t.prey}]),
+    signature:'57790579b325a42c1cc190302b8c5499b144fb2a9af4dac1da66aa1ff17bd417'};
+  expect(restoreWeb(world,JSON.parse(JSON.stringify(legacy)))).toEqual(historic);
+  expect(restoreWeb(world,original)).toEqual(historic);
+  const experimental=saveWeb(world,foundWeb(world,setup,census,true).state);
+  expect(restoreWeb(world,experimental).growthPriority).toBe(true);
+  expect(()=>restoreWeb(world,{...experimental,version:original.version})).toThrow();
+  expect(()=>restoreWeb(world,{...original,version:experimental.version})).toThrow();
+  expect(()=>restoreWeb(world,{...experimental,signature:original.signature})).toThrow();
+});
+
+it('reproduces 240 historical B1/B2 hourly ledgers and their final snapshots', () => {
+  const world=trial();
+  let colony=foundColony(world.graph,setup).state, meta=foundMeta(world,setup).state;
+  const b1=createHash('sha256'), b2=createHash('sha256');
+  for(let tick=0;tick<240;tick++){
+    const c=stepTrophic(world.graph,colony), m=stepMeta(world,meta);
+    b1.update(JSON.stringify(c.ledger));
+    b2.update(JSON.stringify(m.ledger));
+    colony=c.state;
+    meta=m.state;
+  }
+  expect(b1.update(JSON.stringify(saveColony(world.graph,colony))).digest('hex'))
+    .toBe('7ec5d3fa66a7292fb6d51023d011e05e74c8ff16b34940d4bf84aefacf6eda31');
+  expect(b2.update(JSON.stringify(saveMeta(world,meta))).digest('hex'))
+    .toBe('d8216b43ab9f09ca4c33010e2701871fbb89b0030bd5b07614712edb46eed6a6');
 });

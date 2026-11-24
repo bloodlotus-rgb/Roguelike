@@ -45,7 +45,7 @@ export function foundColony(graph: HabitatGraph, setup: TrophicScenario) {
   return { state, ledger };
 }
 
-export function metabolize(stock: TrophicStock, id: number, tick: number, capacity: number, maintenancePeriod: number, ledger: Posting[]) {
+export function metabolize(stock: TrophicStock, id: number, tick: number, capacity: number, maintenancePeriod: number, ledger: Posting[], growthPriority = false) {
   function post(kind: 'sink' | 'conversion', process: string, resource: Account, delta: number) {
     if (!delta) return;
     stock[resource] += delta;
@@ -72,15 +72,21 @@ export function metabolize(stock: TrophicStock, id: number, tick: number, capaci
     maintain('detritivores', b.animalsPerRation);
   }
   if (stock.water && stock.fungalBiomass) {
-    const mineralized = Math.min(b.mineralizationRate, stock.detritus, Math.floor(stock.energy / b.mineralizationEnergy));
-    convert('fungal-mineralization', 'detritus', 'nutrients', mineralized);
-    post('sink', 'fungal-mineralization', 'energy', -mineralized * b.mineralizationEnergy);
-    if (tick % b.fungalGrowthPeriod === 0 && stock.detritus >= b.fungalGrowthFood && stock.nutrients >= b.fungalGrowthNutrients &&
-        stock.energy >= b.fungalGrowthEnergy && stock.fungalBiomass + stock.detritivores + b.fungalGrowthFood + b.fungalGrowthNutrients <= capacity) {
+    const mineralizationAmount = () => Math.min(b.mineralizationRate, stock.detritus, Math.floor(stock.energy / b.mineralizationEnergy));
+    const canGrow = () => tick % b.fungalGrowthPeriod === 0 && stock.detritus >= b.fungalGrowthFood &&
+      stock.nutrients >= b.fungalGrowthNutrients && stock.energy >= b.fungalGrowthEnergy &&
+      stock.fungalBiomass + stock.detritivores + b.fungalGrowthFood + b.fungalGrowthNutrients <= capacity;
+    const grow = () => {
       convert('fungal-growth', 'detritus', 'fungalBiomass', b.fungalGrowthFood);
       convert('fungal-growth', 'nutrients', 'fungalBiomass', b.fungalGrowthNutrients);
       post('sink', 'fungal-growth', 'energy', -b.fungalGrowthEnergy);
-    }
+    };
+    const growFirst = growthPriority && canGrow() && stock.detritus - mineralizationAmount() < b.fungalGrowthFood;
+    if (growFirst) grow();
+    const mineralized = mineralizationAmount();
+    convert('fungal-mineralization', 'detritus', 'nutrients', mineralized);
+    post('sink', 'fungal-mineralization', 'energy', -mineralized * b.mineralizationEnergy);
+    if (!growFirst && canGrow()) grow();
   }
   if (stock.water && stock.detritivores && tick % b.detritivoreBirthPeriod === 0 &&
       stock.detritus >= b.birthFood && stock.energy >= b.birthEnergy && stock.detritivores + stock.fungalBiomass < capacity) {

@@ -121,6 +121,7 @@ function locate(world: DispersalWorld, anchors: MetaState['anchors'], id: number
 }
 
 export interface CompanionPhase {
+  growthPriority?: boolean;
   occupied: Map<string, number>;
   afterMetabolism(stocks: MetaState['stocks'], anchors: ReadonlyMap<string,Tissue>, offset: number, debit: (id: number, account: Living, amount: number) => void): void;
 }
@@ -145,7 +146,7 @@ export function stepMeta(world: DispersalWorld, previous: MetaState, companion?:
   for (const id of ids) {
     const start = ledger.length, stock = stocks.get(id)!;
     metabolize(stock, id, tick, graph.habitats[id].capacity - stock.propagules - (occupied.get(id) ?? 0),
-      previous.setup.maintenancePeriod ?? biology.maintenancePeriod, input);
+      previous.setup.maintenancePeriod ?? biology.maintenancePeriod, input, companion?.growthPriority);
     for (let i = start; i < ledger.length; i++) {
       const e = ledger[i];
       if (e.resource === 'fungalBiomass' || e.resource === 'detritivores') {
