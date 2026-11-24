@@ -44,3 +44,7 @@ El diagnóstico escribe una línea JSON por semilla. Los módulos retirados sigu
 3. Revisar las causas de extinción y las tasas de E1-B1 antes de ampliar la red trófica. Conservar como pendientes la materialización vóxel y los umbrales monumentales inter-zona.
 
 Todas las etapas se trabajan en ramas y PR independientes. `main` nunca se actualiza directamente.
+
+### Laboratorio ecológico interactivo
+
+Con Node 24, ejecutá `npm ci` y `npm run lab`. Abrí [http://127.0.0.1:4173](http://127.0.0.1:4173) para explorar el escenario local. El [recorrido del laboratorio](docs/laboratorio-ecologico.md) incluye instrucciones, resultados y capturas.

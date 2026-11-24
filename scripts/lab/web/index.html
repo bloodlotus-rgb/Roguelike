@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Laboratorio ecológico · La Estirpe</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="shell masthead">
+    <div><p class="project">La Estirpe</p><h1>Laboratorio ecológico</h1></div>
+    <div class="files" aria-label="Sesión">
+      <button id="save" type="button">Guardar</button>
+      <button id="load" type="button">Cargar</button>
+      <button id="reset" type="button">Reiniciar</button>
+      <input id="file" type="file" accept=".json,application/json" hidden>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="clock" aria-label="Reloj ecológico">
+      <div><span class="eyebrow">Reloj ecológico</span><div class="time" id="hour">—</div></div>
+      <div class="run-state"><span id="mode">En pausa</span><span id="seed"></span></div>
+      <div class="steps">
+        <button type="button" id="step-1" data-step="1">Avanzar 1 h</button>
+        <button type="button" id="step-6" data-step="6" class="primary">Avanzar 6 h</button>
+      </div>
+    </section>
+    <p id="status" role="status">Cargando el escenario…</p>
+    <div class="workspace">
+      <section class="panel map-panel" aria-labelledby="map-title">
+        <div class="panel-heading"><h2 id="map-title">Sector de la mazmorra</h2><span>Vista esquemática · Jenga</span></div>
+        <div id="map" class="map"></div>
+        <div class="switches" id="switches"></div>
+      </section>
+      <aside class="panel inspect-panel" aria-labelledby="inspect-title">
+        <div class="panel-heading"><h2 id="inspect-title">Inspector</h2><span>Diagnóstico</span></div>
+        <div id="inspector"></div>
+      </aside>
+      <section class="panel journal-panel" aria-labelledby="journal-title">
+        <div class="panel-heading"><h2 id="journal-title">Diario</h2><span id="journal-range"></span></div>
+        <div id="journal" class="chronicle"></div>
+      </section>
+    </div>
+    <details class="panel experiment">
+      <summary>Recorrido de control e intervención</summary>
+      <p>Avanzá hasta h12 con el paso abierto y anotá el estado del micelio. Reiniciá, avanzá hasta h6 y cerrá el paso de detrito. Avanzá a h12, compará el diario y reabrí. En h13 debería verse el primer cruce tras la reapertura. La compuerta de hierro se puede accionar por separado.</p>
+    </details>
+  </main>
+</body>
+</html>
