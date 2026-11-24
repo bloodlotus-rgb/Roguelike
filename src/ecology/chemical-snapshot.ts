@@ -6,7 +6,7 @@ import { apportion, compareChemicalIds } from './chemical-transport.ts';
 
 const version = 'E1-Chemical-Transport/2';
 
-function epoch(world: DispersalWorld) {
+export function chemicalWorldEpoch(world: DispersalWorld) {
   return {
     seed: world.graph.seed, generator: generatorVersion, topology: world.graph.signature,
     barriers: world.graph.barriers.map(([id,state]): [string, typeof state] => [id,state])
@@ -19,7 +19,7 @@ type SerializedState = [number, [number, number, number, number, number][], [num
 export function saveChemical(world: DispersalWorld, sources: readonly ChemicalSupply[], state: ChemicalState) {
   if (state.topology !== world.graph.signature) throw new Error('Wrong chemical geometry epoch');
   const {rules, manifest} = validateChemicalState(world,sources,state);
-  const payload = { version, epoch: epoch(world), rules, manifest,
+  const payload = { version, epoch: chemicalWorldEpoch(world), rules, manifest,
     accounts: JSON.parse(serializeChemicalState(state)) as SerializedState };
   return { ...payload, integrity: digest(payload) };
 }

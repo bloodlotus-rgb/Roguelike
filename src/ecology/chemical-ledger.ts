@@ -2,7 +2,7 @@ import type { DispersalWorld } from './dispersal-world.ts';
 import { channelLimit } from './transport.ts';
 import { createHash } from 'node:crypto';
 import { conductance, flooded } from './parameters.ts';
-import { chemicalTransportRules, compareChemicalIds, planChemicalTransport } from './chemical-transport.ts';
+import { apportion, chemicalTransportRules, compareChemicalIds, planChemicalTransport } from './chemical-transport.ts';
 
 export type MatterQ = number;
 export type EnergyQ = number;
@@ -65,13 +65,14 @@ export type ChemicalPosting = ChemicalTransfer | Transaction & (
   | { kind: 'export'; port: ChemicalPort; destination: string; cargo: ChemicalInventory }
   | { kind: 'conversion'; habitat: number; debit: ChemicalInventory; credit: ChemicalInventory; heat: EnergyQ }
 );
-interface CutFlow {
+type CutFlow = {
   transactionId: string;
-  kind: 'source' | 'export';
   port: ChemicalPort;
   counterparty: string;
   cargo: ChemicalInventory;
-}
+} & ({kind: 'source'; supply: string; lots: number} | {kind: 'export'});
+
+type DetritusExports = 'declared' | 'proportional';
 
 function quantum(n: number): bigint {
   if (!Number.isSafeInteger(n) || n < 0) throw new Error('Invalid chemical quantum');
@@ -242,7 +243,7 @@ export function validateChemicalState(world: DispersalWorld, declarations: reado
 }
 
 function applyHour(world: DispersalWorld, declarations: readonly ChemicalSupply[],
-  before: ChemicalState, postings: readonly ChemicalPosting[], mode: ChemicalMode) {
+  before: ChemicalState, postings: readonly ChemicalPosting[], mode: ChemicalMode, exports: DetritusExports = 'declared') {
   const {supplies, contract} = validateChemicalState(world, declarations, before, mode);
   const tick = checked(quantum(before.tick) + 1n);
   const inventory = new Map(before.inventory), heat = new Map(before.heat), lotsUsed = new Map(before.lotsUsed);
@@ -284,14 +285,21 @@ function applyHour(world: DispersalWorld, declarations: readonly ChemicalSupply[
         inputs.set(id, add(inputs.get(id) ?? zero, total(cargo)));
         lotsUsed.set(source.id, (lotsUsed.get(source.id) ?? 0) + entry.lots);
         delivered.add(source.id);
-        cutFlows.push({ kind: 'source', transactionId: entry.transactionId, port: source.port, counterparty: source.origin, cargo });
+        cutFlows.push({ kind: 'source', transactionId: entry.transactionId, port: source.port, counterparty: source.origin,
+          supply: source.id, lots: entry.lots, cargo });
         break;
       }
       case 'export': {
         requireIdentifier(entry.destination);
         const cargo = total(entry.cargo), id = route(world, entry.port, entry.cargo);
         if (!cargo.matter && !cargo.water) throw new Error('Empty chemical export');
-        inventory.set(id, change(inventory.get(id) ?? empty, entry.cargo, empty));
+        const stock = inventory.get(id) ?? empty;
+        const withdrawn = entry.cargo.detritus.matter;
+        if (exports === 'proportional' && withdrawn && withdrawn <= stock.detritus.matter) {
+          const [energy] = apportion(stock.detritus.chemicalEnergy, [withdrawn, stock.detritus.matter - withdrawn]);
+          if (energy !== entry.cargo.detritus.chemicalEnergy) throw new Error('Detritus export requires proportional energy');
+        }
+        inventory.set(id, change(stock, entry.cargo, empty));
         outputs.set(id, add(outputs.get(id) ?? zero, cargo));
         cutFlows.push({ kind: 'export', transactionId: entry.transactionId, port: entry.port,
           counterparty: entry.destination, cargo: entry.cargo });
@@ -331,8 +339,8 @@ function applyHour(world: DispersalWorld, declarations: readonly ChemicalSupply[
 }
 
 export function applyChemicalHour(world: DispersalWorld, declarations: readonly ChemicalSupply[],
-  before: ChemicalState, postings: readonly ChemicalPosting[]) {
-  return applyHour(world, declarations, before, postings, 'transport');
+  before: ChemicalState, postings: readonly ChemicalPosting[], exports: DetritusExports = 'declared') {
+  return applyHour(world, declarations, before, postings, 'transport', exports);
 }
 
 export function applyChemicalAccountingHour(world: DispersalWorld, declarations: readonly ChemicalSupply[],
