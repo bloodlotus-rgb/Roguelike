@@ -45,7 +45,7 @@ export function foundColony(graph: HabitatGraph, setup: TrophicScenario) {
   return { state, ledger };
 }
 
-function metabolize(stock: TrophicStock, id: number, tick: number, capacity: number, maintenancePeriod: number, ledger: Posting[]) {
+export function metabolize(stock: TrophicStock, id: number, tick: number, capacity: number, maintenancePeriod: number, ledger: Posting[]) {
   function post(kind: 'sink' | 'conversion', process: string, resource: Account, delta: number) {
     if (!delta) return;
     stock[resource] += delta;
@@ -91,20 +91,19 @@ function metabolize(stock: TrophicStock, id: number, tick: number, capacity: num
   if (tick % b.evaporationPeriod === 0 && stock.water) post('sink', 'evaporation', 'water', -1);
 }
 
-export function stepTrophic(graph: HabitatGraph, previous: TrophicState) {
-  const tick = previous.tick + 1;
-  if (!natural(tick) || previous.topology !== graph.signature) throw new Error('Invalid clock or structural epoch');
-  const stocks: Inventory = new Map();
+export function advanceResources<S extends TrophicStock>(graph: HabitatGraph, previous: Omit<TrophicState, 'stocks'> & { stocks: Map<number, S> },
+  empty: () => S) {
+  const stocks: Map<number, S> = new Map();
   for (const [id, s] of previous.stocks) stocks.set(id, { ...s });
   const input: Entry[] = [];
-  const supplied: Inventory = new Map();
+  const supplied: Map<number, S> = new Map();
   const { setup } = previous;
   const source = setup.source;
   let lotsUsed = previous.lotsUsed;
   if (source && lotsUsed < source.quota && previous.tick % source.period < source.activeHours) {
     const cut = inlet(graph, setup);
     if (cut.state !== 'blocked' && cut.state !== 'closed') {
-      const stock = stocks.get(cut.from) ?? emptyTrophicStock();
+      const stock = stocks.get(cut.from) ?? empty();
       const lots = Math.min(source.rate, source.quota - lotsUsed);
       const lot = cargo[source.kind];
       for (const r of ['water', 'detritus', 'energy'] as const) {
@@ -124,7 +123,15 @@ export function stepTrophic(graph: HabitatGraph, previous: TrophicState) {
       lotsUsed += lots;
     }
   }
-  transportStocks(graph, previous.stocks, supplied, stocks, input, emptyTrophicStock);
+  transportStocks(graph, previous.stocks, supplied, stocks, input, empty);
+  return { stocks, input, lotsUsed };
+}
+
+export function stepTrophic(graph: HabitatGraph, previous: TrophicState) {
+  const tick = previous.tick + 1;
+  if (!natural(tick) || previous.topology !== graph.signature) throw new Error('Invalid clock or structural epoch');
+  const { setup } = previous;
+  const { stocks, input, lotsUsed } = advanceResources(graph, previous, emptyTrophicStock);
   const ledger: Posting[] = input;
   for (const id of [...stocks.keys()].sort((a, b) => a - b)) {
     const stock = stocks.get(id)!;

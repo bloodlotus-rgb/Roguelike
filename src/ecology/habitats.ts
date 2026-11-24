@@ -83,6 +83,13 @@ function findBridges(adjacent: Map<string, Edge[]>): Set<string> {
   return bridges;
 }
 
+export function regionGeometry(structure: Structure, id: string) {
+  const [zone, blockId, floor] = id.split('/').map(Number);
+  const block = structure.zones[zone].blocks[blockId];
+  return { zone, floor, morphology: block.def.kind === 'macro' ? block.def.id : block.def.kind,
+    cells: block.def.interior ? 1 : block.size[0] * block.size[1] };
+}
+
 /** Freeze one structural epoch. No fine adjacency or geometry is retained in the result. */
 export function deriveHabitats(structure: Structure, fine: SpatialGraph,
   states: ReadonlyMap<string, State> = new Map()): HabitatGraph {
@@ -113,16 +120,10 @@ export function deriveHabitats(structure: Structure, fine: SpatialGraph,
   const bridges = findBridges(eligible);
   const regionToHabitat = new Map<string, number>();
   const habitats: Habitat[] = [];
-  function geometry(id: string) {
-    const [zone, blockId, floor] = id.split('/').map(Number);
-    const block = structure.zones[zone].blocks[blockId];
-    return { zone, floor, morphology: block.def.kind === 'macro' ? block.def.id : block.def.kind,
-      cells: block.def.interior ? 1 : block.size[0] * block.size[1] };
-  }
   for (const start of ids) {
     if (regionToHabitat.has(start)) continue;
     const index = habitats.length;
-    const first = geometry(start);
+    const first = regionGeometry(structure, start);
     const kinds = new Set<string>([first.morphology]);
     const members = [start];
     regionToHabitat.set(start, index);
@@ -132,7 +133,7 @@ export function deriveHabitats(structure: Structure, fine: SpatialGraph,
       for (const edge of eligible.get(id)!) {
         const other = edge.from === id ? edge.to : edge.from;
         if (bridges.has(edge.id) || fixed.has(other) || regionToHabitat.has(other)) continue;
-        const next = geometry(other);
+        const next = regionGeometry(structure, other);
         if (cells + next.cells > parameters.maxMixedCells) continue;
         cells += next.cells;
         kinds.add(next.morphology);
