@@ -22,6 +22,7 @@ type Posting = Entry<typeof fields[number]>;
 const empty = () => ({ ...emptyMeta(), ...counts() });
 export interface Founder { region:string; connector:string; origin:string; group:Animal; count:number }
 export interface Web {
+  readonly myceliumRefuge: boolean;
   base: MetaState;
   residents: Map<string,Counts>;
   founders: readonly Founder[];
@@ -60,7 +61,7 @@ function founderBudget(world: DispersalWorld, setup: TrophicScenario, founders: 
   if (total+budget > parameters.inventoryLimit) throw new Error('External budget exceeded');
   return total;
 }
-export function foundWeb(world: DispersalWorld, setup: TrophicScenario, founders: readonly Founder[]) {
+export function foundWeb(world: DispersalWorld, setup: TrophicScenario, founders: readonly Founder[], myceliumRefuge = false) {
   founderBudget(world,setup,founders);
   const {state:base,ledger:initial} = foundMeta(world,setup);
   const residents = new Map<string,Counts>();
@@ -74,7 +75,7 @@ export function foundWeb(world: DispersalWorld, setup: TrophicScenario, founders
     residents.set(f.region,t);
     ledger.push({kind:'source',process:'founders/'+f.origin,resource:f.group,from:null,to:id,amount:f.count,connector:f.connector});
   }
-  const state = {base,residents,founders:Object.freeze(founders.map(f=>Object.freeze({...f})))};
+  const state = {base,residents,myceliumRefuge,founders:Object.freeze(founders.map(f=>Object.freeze({...f})))};
   validate(world,state);
   return {state,ledger};
 }
@@ -136,6 +137,9 @@ export function stepWeb(world: DispersalWorld, previous: Web) {
       const food=profile.diet;
       const preyRegion=(id:number) => world.members[id].find(r => (residents.get(r)?.prey ?? 0)>0);
       const foodAt=(id:number) => food==='prey' ? preyRegion(id)!==undefined : !!stocks.get(id)?.[food];
+      // Travel still observes the original habitat signal. Only ingestion debits tissue.
+      const canConsume=(id:number) => food==='fungalBiomass' && previous.myceliumRefuge
+        ? (stocks.get(id)?.fungalBiomass ?? 0)>1 : foodAt(id);
       const feed=(id:number) => {
         if (food==='prey') change(preyRegion(id)!,food,-1);
         else debit(id,food,1);
@@ -148,7 +152,7 @@ export function stepWeb(world: DispersalWorld, previous: Web) {
         stocks.set(id,s);
         if (tick%profile.mealPeriod===0) {
           for (let i=0;i<count;i++) {
-            if (s.water && s.energy && foodAt(id)) {
+            if (s.water && s.energy && canConsume(id)) {
               feed(id);
               s.nutrients++;
               convert(id,group+'-feeding',food,'nutrients',1);
@@ -161,7 +165,7 @@ export function stepWeb(world: DispersalWorld, previous: Web) {
             }
           }
         }
-        if (tick%profile.birthPeriod===0 && (residents.get(region)?.[group] ?? 0)>=2 && s.water && s.energy && foodAt(id) &&
+        if (tick%profile.birthPeriod===0 && (residents.get(region)?.[group] ?? 0)>=2 && s.water && s.energy && canConsume(id) &&
             room(region)>(reserved.get(region) ?? 0)) {
           feed(id);
           change(region,group,1);
@@ -198,7 +202,7 @@ export function projectWeb(old:DispersalWorld,next:DispersalWorld,state:Web):Web
 
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function saveWeb(world:DispersalWorld,state:Web) {
-  const data={version:'E1-D/1',base:saveMeta(world,state.base),founders:structuredClone(state.founders),
+  const data={version:state.myceliumRefuge ? 'E1-D/1-mycelium-refuge-1' : 'E1-D/1',base:saveMeta(world,state.base),founders:structuredClone(state.founders),
     residents:[...state.residents.keys()].sort().map(r=>[r,{...state.residents.get(r)!}] as const)};
   return {...data,signature:digest([profiles,data])};
 }
@@ -206,13 +210,14 @@ export function restoreWeb(world:DispersalWorld,saved:ReturnType<typeof saveWeb>
   const {signature,...data}=saved;
   const legacy=data.version==='E1-C/1';
   const rules=legacy ? {prey:profiles.prey} : profiles;
-  if ((!legacy && data.version!=='E1-D/1') || digest([rules,data])!==signature) throw new Error('Invalid food web snapshot');
+  const myceliumRefuge=data.version==='E1-D/1-mycelium-refuge-1';
+  if ((!legacy && !myceliumRefuge && data.version!=='E1-D/1') || digest([rules,data])!==signature) throw new Error('Invalid food web snapshot');
   const initial=founderBudget(world,data.base.setup,data.founders);
   const residents=new Map(data.residents.map(([r,t])=>[r,legacy ? {...t,predator:0} : {...t}]));
   if (residents.size!==data.residents.length) throw new Error('Duplicate occupied region');
   const total=[...residents.values()].reduce((n,t)=>n+population(t),0);
   const base=restoreMetaWithMatter(world,data.base,total-initial);
-  const state={base,residents,founders:Object.freeze(data.founders.map(f=>Object.freeze({...f})))};
+  const state={base,residents,myceliumRefuge,founders:Object.freeze(data.founders.map(f=>Object.freeze({...f})))};
   validate(world,state);
   return state;
 }

@@ -62,3 +62,69 @@ it('charges each kill to living prey, recycles deaths and rejects narrow or floo
   expect(pass(world,{...world.graph.boundaries[0],kind:'duct'},0,'predator')).toBe(false);
   expect(pass(world,{...world.graph.boundaries[0],state:'flooded'},0,'predator')).toBe(false);
 });
+
+function grazingTrial(tissue:number, water:number, refuge:boolean, prey=1) {
+  const world=trial();
+  const dryCargo={water,energy:200,detritus:0,nutrients:0,detritivores:0,fungalBiomass:tissue};
+  const scenario={...setup,founders:dryCargo,source:null,maintenancePeriod:24};
+  const founders=prey ? [{...census[0],count:prey}] : [];
+  return {world,state:foundWeb(world,scenario,founders,refuge).state};
+}
+
+it('retains the last fungal unit during grazing while unfed prey die',()=>{
+  for (const refuge of [false,true]) {
+    const run=grazingTrial(1,200,refuge);
+    for (let hour=1;hour<=12;hour++) {
+      const next=stepWeb(run.world,run.state);
+      auditWeb(run.world,run.state,next.state,next.ledger);
+      run.state=next.state;
+    }
+    expect(run.state.base.stocks.get(0)?.fungalBiomass).toBe(refuge ? 1 : 0);
+    expect(run.state.residents.get('home')?.prey ?? 0).toBe(refuge ? 0 : 1);
+    const saved=saveWeb(run.world,run.state);
+    expect(restoreWeb(run.world,JSON.parse(JSON.stringify(saved))).myceliumRefuge).toBe(refuge);
+    expect(()=>restoreWeb(run.world,{...saved,version:refuge ? 'E1-D/1' : 'E1-D/1-mycelium-refuge-1'})).toThrow();
+  }
+});
+
+it('leaves a sterile building sterile and allows the last established mycelium to die from scarcity',()=>{
+  for (const tissue of [0,1]) {
+    const run=grazingTrial(tissue,0,true,0);
+    let fungalDeaths=0;
+    for (let hour=1;hour<=48;hour++) {
+      const next=stepWeb(run.world,run.state);
+      auditWeb(run.world,run.state,next.state,next.ledger);
+      fungalDeaths+=next.ledger.filter(e=>e.resource==='fungalBiomass' && e.process==='fungalBiomass-mortality/water').length;
+      run.state=next.state;
+      if (!tissue || hour>=24) expect([...run.state.base.stocks.values()].every(s=>s.fungalBiomass===0 && s.propagules===0)).toBe(true);
+    }
+    expect(fungalDeaths).toBe(tissue);
+  }
+});
+
+it('uses the same grazing limit for births after two paid meals',()=>{
+  for (const refuge of [false,true]) {
+    const run=grazingTrial(3,200,refuge,2);
+    // Isolate the birth-hour transition with a fresh census, before metabolism is due.
+    const scenario={...run.state.base.setup,maintenancePeriod:96};
+    const before=foundWeb(run.world,scenario,run.state.founders,refuge).state;
+    before.base.tick=47;
+    const next=stepWeb(run.world,before);
+    auditWeb(run.world,before,next.state,next.ledger);
+    expect(next.ledger.some(e=>e.process==='prey-birth')).toBe(!refuge);
+    expect(next.state.base.stocks.get(0)?.fungalBiomass).toBe(refuge ? 1 : 0);
+  }
+});
+
+it('uses the historical E1-D/1 snapshot and trajectory by default',()=>{
+  const world=trial();
+  const implicit=foundWeb(world,setup,census).state;
+  const saved=saveWeb(world,implicit);
+  expect(saved.version).toBe('E1-D/1');
+  expect(restoreWeb(world,saved).myceliumRefuge).toBe(false);
+  expect(stepWeb(world,implicit)).toEqual(stepWeb(world,foundWeb(world,setup,census,false).state));
+  let state=implicit;
+  for (let hour=1;hour<=240;hour++) state=stepWeb(world,state).state;
+  // Emitted by saveWeb at 477185fe with this fixture.
+  expect(saveWeb(world,state).signature).toBe('4657aa0899efd8f4300949742324c8a0d87d2d9bb38399ef9b1f6a465ca6282e');
+});
