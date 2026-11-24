@@ -13,7 +13,7 @@ export interface FoodHourInput {
   readonly moves?: readonly { readonly animal: number; readonly connector: string }[];
   readonly pairs?: readonly (readonly [number, number])[];
 }
-type Phase = 'move' | 'grow' | 'graze' | 'capture' | 'maintain' | 'die' | 'birth';
+type Phase = 'move' | 'grow' | 'graze' | 'capture' | 'maintain' | 'regress' | 'die' | 'birth';
 type Account =
   | { readonly kind: 'stock'; readonly habitat: number; readonly stock: ChemicalInventory | undefined }
   | { readonly kind: 'fungus'; readonly habitat: number; readonly stock: LivingStock | undefined }
@@ -85,6 +85,16 @@ function assimilate(body: LivingStock, food: LivingStock, rule: Omit<Feeding, 'b
   return {body: {matter, chemicalEnergy: quantum(body.chemicalEnergy + reserve), storedEnergy: body.storedEnergy + reserve},
     residue: {matter: residueMatter, chemicalEnergy: residueEnergy},
     heat: food.chemicalEnergy - reserve - residueEnergy};
+}
+
+function fungalGrowthRoom(body: LivingStock, food: LivingStock, rule: FoodChainRules['fungus'], space: number) {
+  if (rule.regulation !== 'growth-budget') return space;
+  // The funded interval starts with maintenance this hour and ends before the next feeding.
+  const duePerMatter = BigInt(rule.maintenance) * BigInt(rule.feeding.interval);
+  if (BigInt(rule.reservePerMatter) < duePerMatter) return 0;
+  const available = BigInt(body.storedEnergy) + BigInt(fraction(food.chemicalEnergy, rule.feeding.reservePermille));
+  const fundableGrowth = available / duePerMatter - BigInt(body.matter);
+  return fundableGrowth <= 0n ? 0 : fundableGrowth >= BigInt(space) ? space : Number(fundableGrowth);
 }
 
 /** A single hour writes to private maps. An exception discards the entire draft. */
@@ -210,7 +220,8 @@ class Hour {
       const stock = this.stock(habitat), mass = Math.min(rule.feeding.biteMatter, stock.detritus.matter);
       if (!mass || !stock.water) continue;
       const [food, remainder] = splitLiving({...stock.detritus, storedEnergy: 0}, [mass, stock.detritus.matter - mass], 0);
-      const room = fungalCapacity(this.world, habitat) - body.matter;
+      const space = fungalCapacity(this.world, habitat) - body.matter;
+      const room = fungalGrowthRoom(body, food, rule, space);
       const result = assimilate(body, food, rule.feeding, rule.reservePerMatter, room);
       this.post('grow', habitat, result.heat, [{kind: 'fungus', habitat, stock: result.body},
         {kind: 'stock', habitat, stock: {...stock, detritus: organic(remainder),
@@ -281,15 +292,34 @@ class Hour {
   }
 
   maintain() {
+    const rule = this.rules.fungus;
     for (const habitat of [...this.fungus.keys()].sort(numeric)) {
       const stock = this.fungus.get(habitat)!;
-      this.payMaintenance(habitat, stock, BigInt(this.rules.fungus.maintenance) * BigInt(stock.matter),
-        body => ({kind: 'fungus', habitat, stock: body}));
+      const due = BigInt(rule.maintenance) * BigInt(stock.matter);
+      if (rule.regulation === 'partial-regression' && BigInt(stock.storedEnergy) < due &&
+          rule.reservePerMatter >= rule.maintenance && stock.storedEnergy >= rule.maintenance) {
+        this.regressFungus(habitat, stock, rule);
+        continue;
+      }
+      this.payMaintenance(habitat, stock, due, body => ({kind: 'fungus', habitat, stock: body}));
     }
     for (const animal of orderedAnimals(this.animals)) {
       this.payMaintenance(regionHabitat(this.world, animal.region), animal.body, BigInt(this.rules[animal.kind].maintenance),
         body => ({kind: 'animal', id: animal.id, stock: body ? {...animal, body} : undefined}));
     }
+  }
+
+  private regressFungus(habitat: number, stock: LivingStock, rule: FoodChainRules['fungus']) {
+    const retained = Number(BigInt(stock.storedEnergy) / BigInt(rule.maintenance));
+    const lost = stock.matter - retained;
+    const [livingEnergy, lostEnergy] = apportion(stock.chemicalEnergy - stock.storedEnergy, [retained, lost]);
+    const keptReserve = reserveRoom(retained, rule.reservePerMatter, BigInt(stock.storedEnergy));
+    const cost = retained * rule.maintenance;
+    const remaining = consumeReserve({matter: retained, chemicalEnergy: livingEnergy + keptReserve,
+      storedEnergy: keptReserve}, cost);
+    const residue = {matter: lost, chemicalEnergy: lostEnergy + (stock.storedEnergy - keptReserve)};
+    this.post('regress', habitat, cost, [{kind: 'fungus', habitat, stock: remaining},
+      {kind: 'stock', habitat, stock: addDetritus(this.stock(habitat), residue)}]);
   }
 
   private payMaintenance(habitat: number, body: LivingStock, due: bigint, entry: (body?: LivingStock) => Account) {

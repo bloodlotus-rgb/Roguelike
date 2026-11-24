@@ -63,7 +63,10 @@ export interface AnimalRules extends Metabolism {
     readonly energy: number; readonly reserve: number; readonly heat: number };
 }
 export interface FoodChainRules {
-  readonly fungus: Metabolism & { readonly feeding: Feeding };
+  readonly fungus: Metabolism & {
+    readonly feeding: Feeding;
+    readonly regulation?: 'growth-budget' | 'partial-regression';
+  };
   readonly prey: AnimalRules & { readonly feeding: Feeding };
   readonly predator: AnimalRules;
 }
@@ -117,9 +120,15 @@ export function foodRulesSignature(rules: FoodChainRules) {
   if (rules.fungus.feeding.residueEnergyPermille !== 0 || rules.prey.feeding.residueEnergyPermille !== 0) {
     throw new Error('Mineral residue cannot carry chemical energy');
   }
-  return chemicalDigest([foodChainVersion, metabolism(rules.fungus), feeding(rules.fungus.feeding),
+  const signature = [foodChainVersion, metabolism(rules.fungus), feeding(rules.fungus.feeding),
     positive(rules.fungus.feeding.biteMatter), animalRules(rules.prey), positive(rules.prey.feeding.biteMatter),
-    animalRules(rules.predator)]);
+    animalRules(rules.predator)];
+  const {regulation} = rules.fungus;
+  if (regulation === undefined) return chemicalDigest(signature);
+  if (regulation !== 'growth-budget' && regulation !== 'partial-regression') {
+    throw new Error('Unknown fungal regulation');
+  }
+  return chemicalDigest([...signature, regulation]);
 }
 
 export function regionHabitat(world: DispersalWorld, region: string) {
