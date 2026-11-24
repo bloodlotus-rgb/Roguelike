@@ -1,5 +1,6 @@
 import { sections, type State } from '../src/core/spatial.ts';
-import { buildDispersalWorld, dispersalRules, organismPass, type DispersalWorld } from '../src/ecology/dispersal-world.ts';
+import { changeDispersalBarrier, dispersalRules, indexWorld, organismPass, type DispersalWorld } from '../src/ecology/dispersal-world.ts';
+import { buildHabitatGraph } from '../src/ecology/habitats.ts';
 import { type Deposit } from '../src/ecology/metapopulation.ts';
 import { biology, inlet, type TrophicStock } from '../src/ecology/trophic-contract.ts';
 import { channelLimit } from '../src/ecology/transport.ts';
@@ -21,9 +22,8 @@ export function enclosure(base: DispersalWorld) {
   for (const [id, [a,b]] of base.ports) {
     if (id !== bridge.id && id !== stream.id && (sites.has(a) || sites.has(b))) overlay.set(id, 'blocked');
   }
-  const open = buildDispersalWorld(base.graph.seed, overlay);
-  overlay.set(bridge.id, 'blocked');
-  const closed = buildDispersalWorld(base.graph.seed, overlay);
+  const open = indexWorld(buildHabitatGraph(base.graph.seed, overlay), base.ports, base.capacities);
+  const closed = changeDispersalBarrier(open, bridge.id, 'blocked');
   return { open, closed, setup, bridge: bridge.id, source, target };
 }
 

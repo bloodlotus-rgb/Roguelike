@@ -11,6 +11,8 @@ E1-B0 optimiza el transporte horario y los cambios de compuerta. [Equivalencia c
 
 El escenario E1-B1 simula colonias fúngicas y detritívoros inmóviles con aportes profundos trazables. [Contrato E1-B1](docs/ecologia-e1-b1.md) · [Viabilidad anual y causas de extinción](docs/ecologia-e1-b1-viabilidad.md)
 
+E1-B2 registra el movimiento por cortes de propágulos e individuos, la extinción local y la recolonización. [Reglas, pruebas y mediciones E1-B2](docs/ecologia-e1-b2.md)
+
 ## Entorno y comprobación
 
 Con Node.js 24, ejecutá:
