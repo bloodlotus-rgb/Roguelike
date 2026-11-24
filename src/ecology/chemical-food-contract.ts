@@ -67,7 +67,10 @@ export interface FoodChainRules {
     readonly feeding: Feeding;
     readonly regulation?: 'growth-budget' | 'partial-regression' | 'growth-budget-and-regression';
   };
-  readonly prey: AnimalRules & { readonly feeding: Feeding };
+  readonly prey: AnimalRules & {
+    readonly feeding: Feeding;
+    readonly reproduction?: 'maintenance-budget';
+  };
   readonly predator: AnimalRules;
 }
 
@@ -120,16 +123,21 @@ export function foodRulesSignature(rules: FoodChainRules) {
   if (rules.fungus.feeding.residueEnergyPermille !== 0 || rules.prey.feeding.residueEnergyPermille !== 0) {
     throw new Error('Mineral residue cannot carry chemical energy');
   }
-  const signature = [foodChainVersion, metabolism(rules.fungus), feeding(rules.fungus.feeding),
+  const signature: unknown[] = [foodChainVersion, metabolism(rules.fungus), feeding(rules.fungus.feeding),
     positive(rules.fungus.feeding.biteMatter), animalRules(rules.prey), positive(rules.prey.feeding.biteMatter),
     animalRules(rules.predator)];
   const {regulation} = rules.fungus;
-  if (regulation === undefined) return chemicalDigest(signature);
-  if (regulation !== 'growth-budget' && regulation !== 'partial-regression' &&
-      regulation !== 'growth-budget-and-regression') {
-    throw new Error('Unknown fungal regulation');
+  if (regulation !== undefined) {
+    if (regulation !== 'growth-budget' && regulation !== 'partial-regression' &&
+        regulation !== 'growth-budget-and-regression') throw new Error('Unknown fungal regulation');
+    signature.push(regulation);
   }
-  return chemicalDigest([...signature, regulation]);
+  const {reproduction} = rules.prey;
+  if (reproduction !== undefined) {
+    if (reproduction !== 'maintenance-budget') throw new Error('Unknown prey reproduction policy');
+    signature.push(['prey-reproduction', reproduction]);
+  }
+  return chemicalDigest(signature);
 }
 
 export function regionHabitat(world: DispersalWorld, region: string) {

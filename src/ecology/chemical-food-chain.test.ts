@@ -506,3 +506,42 @@ it('applies both experimental mechanisms and keeps all four rule contracts disti
   expect(() => stepFoodChain(w,[],modes[2],restoreFoodChain(w,[],modes[2],checkpoints[2]),
     {chemical:[],harvest:{habitat:0,matter:1}})).toThrow(/experimental regulation/);
 });
+
+it('keeps both parents funded through the feeding gap and searches an asymmetric payment', () => {
+  const w = fixture('closed'), base = configuration();
+  const rules = {...base,prey:{...base.prey,reproduction:'maintenance-budget' as const,
+    feeding:{...base.prey.feeding,interval:4}}};
+  const founder = (reserveA: number, reserveB: number, r: FoodChainRules = rules) => foundFoodChain(w,[],r,
+    {inventory:new Map([[0,stock(0,0,1)]]),fungus:new Map([[0,body(1,7,7)]]),
+      animals:[animal(0,'prey','a',body(2,reserveA,reserveA)),animal(1,'prey','a',body(2,reserveB,reserveB))]});
+  const input = {pairs:[[0,1]] as const};
+  const permitted = founder(3,6); // The hour leaves 2 and 5 E before birth. Only the second parent can pay 3 E.
+  const out = step(w,rules,permitted,input);
+  expect(out.entries.map(e=>e.phase)).toContain('birth');
+  expect([out.state.animals.get(0)?.body.storedEnergy,out.state.animals.get(1)?.body.storedEnergy]).toEqual([2,2]);
+  expect(out.audit.opening.chemicalEnergy).toBe(out.audit.closing.chemicalEnergy+out.audit.dissipated);
+  const checkpoint = saveFoodChain(w,[],rules,permitted);
+  const replay = step(w,rules,restoreFoodChain(w,[],rules,JSON.parse(JSON.stringify(checkpoint))),input);
+  expect(foodChain.serializeFoodLedger(replay)).toBe(foodChain.serializeFoodLedger(out));
+  expect(saveFoodChain(w,[],rules,replay.state)).toEqual(saveFoodChain(w,[],rules,out.state));
+
+  const deficient = founder(3,5);
+  const rejected = step(w,rules,deficient,input);
+  expect(rejected).toEqual(step(w,rules,deficient));
+  const legacy = {...rules,prey:{...rules.prey,reproduction:undefined}};
+  expect(step(w,legacy,founder(3,5,legacy),input)
+    .entries.some(e=>e.phase==='birth')).toBe(true);
+  expect(() => restoreFoodChain(w,[],legacy,checkpoint)).toThrow(/contract/);
+});
+
+it('rejects a birth if a parent cannot store the required reserve after donating mass', () => {
+  const w = fixture('closed'), base = configuration();
+  const rules = {...base,prey:{...base.prey,reproduction:'maintenance-budget' as const,reservePerMatter:2,birth:{...base.prey.birth,matter:2,energy:1},
+    feeding:{...base.prey.feeding,interval:5}}};
+  const founded = foundFoodChain(w,[],rules,{inventory:new Map([[0,stock(0,0,1)]]),
+    fungus:new Map([[0,body(1,5,5)]]),animals:[animal(0,'prey','a',body(2,4,4)),animal(1,'prey','a',body(3,6,6))]});
+  // The pair has 3 + 5 E after maintenance and can pay 2 E while leaving 6 E total.
+  // Any 2 M transfer leaves a one-M parent whose cap is below the 3 E floor.
+  const result = step(w,rules,founded,{pairs:[[0,1]]});
+  expect(result.entries.some(e=>e.phase==='birth')).toBe(false);
+});

@@ -374,7 +374,10 @@ class Hour {
       if (this.space(first.region) < rule.birth.matter || !this.stock(habitat).water || !food ||
           this.tick % rule.birth.interval || this.tick - first.bornAt < rule.birth.adultAge ||
           this.tick - second.bornAt < rule.birth.adultAge) continue;
-      const parents = payBirth(first, second, rule);
+      // Feeding precedes maintenance, and birth follows maintenance. Only the intervening hours are due.
+      const reserveFloor = first.kind === 'prey' && this.rules.prey.reproduction === 'maintenance-budget'
+        ? BigInt(rule.maintenance) * BigInt(rule.feeding.interval - 1 - this.tick % rule.feeding.interval) : 0n;
+      const parents = payBirth(first, second, rule, reserveFloor);
       if (!parents) continue;
       const id = this.nextAnimalId;
       this.nextAnimalId = quantum(id + 1);
@@ -392,19 +395,21 @@ function addDetritus(stock: ChemicalInventory, residue: ChemicalInventory['detri
   return {...stock, detritus: {matter: quantum(stock.detritus.matter + residue.matter),
     chemicalEnergy: quantum(stock.detritus.chemicalEnergy + residue.chemicalEnergy)}};
 }
-function payBirth(first: ChemicalAnimal, second: ChemicalAnimal, rule: AnimalRules) {
+function payBirth(first: ChemicalAnimal, second: ChemicalAnimal, rule: AnimalRules, reserveFloor: bigint) {
   const {matter, energy, heat} = rule.birth;
   const cost = energy + heat;
   const a = first.body, b = second.body;
   const totalReserve = BigInt(a.storedEnergy) + BigInt(b.storedEnergy);
-  if (!a.storedEnergy || !b.storedEnergy || totalReserve < BigInt(cost)) return undefined;
+  if (!a.storedEnergy || !b.storedEnergy || BigInt(a.storedEnergy) < reserveFloor ||
+      BigInt(b.storedEnergy) < reserveFloor || totalReserve < BigInt(cost) + 2n * reserveFloor) return undefined;
+  const floor = Number(reserveFloor);
   const rate = BigInt(rule.reservePerMatter);
   const totalRemainingMatter = BigInt(a.matter) + BigInt(b.matter) - BigInt(matter);
   if (totalReserve - BigInt(cost) > totalRemainingMatter * rate) return undefined;
 
   // Each parent must retain a body with room for any reserve it cannot contribute.
   function availableMatter(body: LivingStock) {
-    const unspendable = BigInt(Math.max(0, body.storedEnergy - cost));
+    const unspendable = BigInt(Math.max(floor, body.storedEnergy - cost));
     const minimum = Number((unspendable + rate - 1n) / rate);
     return body.matter - Math.max(1, minimum);
   }
@@ -415,8 +420,9 @@ function payBirth(first: ChemicalAnimal, second: ChemicalAnimal, rule: AnimalRul
   const leftA = a.matter - firstMatter, leftB = b.matter - (matter - firstMatter);
 
   // Within that mass split, find the energy interval that fits both surviving bodies.
-  const minEnergy = Math.max(cost - b.storedEnergy, a.storedEnergy - reserveRoom(leftA, rule.reservePerMatter, BigInt(a.storedEnergy)));
-  const maxEnergy = Math.min(a.storedEnergy, cost - (b.storedEnergy - reserveRoom(leftB, rule.reservePerMatter, BigInt(b.storedEnergy))));
+  const availableA = a.storedEnergy - floor, availableB = b.storedEnergy - floor;
+  const minEnergy = Math.max(cost - availableB, a.storedEnergy - reserveRoom(leftA, rule.reservePerMatter, BigInt(a.storedEnergy)));
+  const maxEnergy = Math.min(availableA, cost - (b.storedEnergy - reserveRoom(leftB, rule.reservePerMatter, BigInt(b.storedEnergy))));
   if (minEnergy > maxEnergy) return undefined;
   const firstEnergy = Math.min(maxEnergy, Math.max(minEnergy, Math.ceil(cost / 2)));
   return [
