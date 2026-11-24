@@ -17,13 +17,28 @@ export function saveFoodChain(world: DispersalWorld, sources: readonly ChemicalS
   return {...payload, integrity: chemicalDigest(payload)};
 }
 
-export function restoreFoodChain(world: DispersalWorld, sources: readonly ChemicalSupply[], rules: FoodChainRules,
-  saved: unknown): FoodChainState {
+export function readFoodChainSnapshot(saved: unknown) {
   if (!saved || typeof saved !== 'object' || !('version' in saved) || saved.version !== version) {
     throw new Error('Unsupported food-chain snapshot version');
   }
   const {integrity, ...payload} = saved as ReturnType<typeof saveFoodChain>;
   if (integrity !== chemicalDigest(payload)) throw new Error('Food-chain snapshot integrity mismatch');
+  const quantity = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+  const body = (value: unknown) => Array.isArray(value) && value.length === 3 && value.every(quantity);
+  if (typeof payload.contract !== 'string' || typeof payload.geometry !== 'string' || !quantity(payload.nextAnimalId) ||
+      !Array.isArray(payload.fungus) || !payload.fungus.every(row => Array.isArray(row) && row.length === 2 &&
+        quantity(row[0]) && body(row[1])) ||
+      !Array.isArray(payload.animals) || !payload.animals.every(row => Array.isArray(row) && row.length === 5 &&
+        quantity(row[0]) && (row[1] === 'prey' || row[1] === 'predator') && typeof row[2] === 'string' &&
+        quantity(row[3]) && body(row[4]))) {
+    throw new Error('Invalid food-chain snapshot structure');
+  }
+  return { integrity, ...payload };
+}
+
+export function restoreFoodChain(world: DispersalWorld, sources: readonly ChemicalSupply[], rules: FoodChainRules,
+  saved: unknown): FoodChainState {
+  const { integrity, ...payload } = readFoodChainSnapshot(saved);
   const identity = foodWorldIdentity(world);
   if (payload.geometry !== identity.fine) throw new Error('Incompatible food-chain geometry epoch');
   const chemical = restoreChemical(world, sources, payload.chemical);

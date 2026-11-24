@@ -24,12 +24,33 @@ export function saveChemical(world: DispersalWorld, sources: readonly ChemicalSu
   return { ...payload, integrity: digest(payload) };
 }
 
-export function restoreChemical(world: DispersalWorld, sources: readonly ChemicalSupply[], saved: unknown): ChemicalState {
+export function readChemicalSnapshot(saved: unknown) {
   if (!saved || typeof saved !== 'object' || !('version' in saved) || saved.version !== version) {
     throw new Error('Unsupported chemical snapshot version');
   }
   const { integrity, ...payload } = saved as ReturnType<typeof saveChemical>;
   if (integrity !== digest(payload)) throw new Error('Chemical snapshot integrity mismatch');
+  const quantity = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+  const rowOf = (row: unknown, length: number): row is unknown[] => Array.isArray(row) && row.length === length;
+  const epoch = payload.epoch;
+  if (!epoch || typeof epoch.seed !== 'string' || typeof epoch.generator !== 'string' ||
+      typeof epoch.topology !== 'string' || typeof payload.rules !== 'string' || typeof payload.manifest !== 'string' ||
+      !Array.isArray(epoch.barriers) || !epoch.barriers.every(row => rowOf(row, 2) &&
+        typeof row[0] === 'string' && typeof row[1] === 'string' && ['open', 'closed', 'blocked', 'destroyed', 'flooded'].includes(row[1])) ||
+      !Array.isArray(payload.accounts) || payload.accounts.length !== 4) {
+    throw new Error('Invalid chemical snapshot structure');
+  }
+  const [tick, rows, heatRows, meterRows] = payload.accounts;
+  if (!quantity(tick) || !Array.isArray(rows) || !rows.every(row => rowOf(row, 5) && row.every(quantity)) ||
+      !Array.isArray(heatRows) || !heatRows.every(row => rowOf(row, 2) && row.every(quantity)) ||
+      !Array.isArray(meterRows) || !meterRows.every(row => rowOf(row, 2) && typeof row[0] === 'string' && quantity(row[1]))) {
+    throw new Error('Invalid chemical snapshot structure');
+  }
+  return { integrity, ...payload };
+}
+
+export function restoreChemical(world: DispersalWorld, sources: readonly ChemicalSupply[], saved: unknown): ChemicalState {
+  const { integrity, ...payload } = readChemicalSnapshot(saved);
   const [tick, rows, heatRows, meterRows] = payload.accounts;
   const inventory = new Map<number,ChemicalInventory>(rows.map(([id,m,e,n,w]) =>
     [id,{detritus:{matter:m,chemicalEnergy:e},mineralMatter:n,water:w}]));
