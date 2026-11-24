@@ -3,7 +3,7 @@ import { sections } from '../core/spatial.ts';
 import { applyChemicalHour, type ChemicalInventory, type ChemicalPosting,
   type ChemicalSupply } from './chemical-ledger.ts';
 import { apportion, compareChemicalIds } from './chemical-transport.ts';
-import { checkLiving, copyAnimal, fungalCapacity, permille, quantum, regionCapacity, regionHabitat, reserveCapacity, validateFoodState,
+import { checkLiving, copyAnimal, fungalCapacity, permille, preyMaintenance, quantum, regionCapacity, regionHabitat, reserveCapacity, validateFoodState,
   zeroLiving, type AnimalRules, type ChemicalAnimal, type Feeding, type FoodChainRules, type FoodChainState,
   type LivingStock } from './chemical-food-contract.ts';
 import type { DispersalWorld } from './dispersal-world.ts';
@@ -13,6 +13,17 @@ export interface FoodHourInput {
   readonly moves?: readonly { readonly animal: number; readonly connector: string }[];
   readonly pairs?: readonly (readonly [number, number])[];
   readonly harvest?: { readonly habitat: number; readonly matter: number };
+}
+interface FeedingDecision {
+  readonly animal: number;
+  readonly habitat: number;
+  readonly deficit: string;
+  readonly remainingDeficit: string;
+  readonly available: LivingStock;
+  readonly evaluated: number;
+  readonly tiedBest: number;
+  readonly bite: number;
+  readonly reason: 'sated' | 'no-food' | 'no-improvement' | 'budget-covered' | 'partial-budget';
 }
 type Phase = 'move' | 'grow' | 'graze' | 'capture' | 'maintain' | 'regress' | 'die' | 'birth' | 'harvest';
 type Account =
@@ -106,6 +117,7 @@ class Hour {
   readonly animals: Map<number, ChemicalAnimal>;
   readonly heat: Map<number, number>;
   readonly entries: FoodPosting[] = [];
+  readonly feedingDecisions: FeedingDecision[] = [];
   readonly occupancy: Map<string, number>;
   nextAnimalId: number;
 
@@ -240,14 +252,18 @@ class Hour {
     for (const animal of orderedAnimals(this.animals)) {
       if (animal.kind !== 'prey') continue;
       const habitat = regionHabitat(this.world, animal.region);
-      if (!this.fungus.has(habitat)) continue;
+      if (!this.fungus.has(habitat) && !rule.physiology?.satiation) continue;
       const group = claims.get(habitat) ?? [];
       group.push(animal);
       claims.set(habitat, group);
     }
     for (const habitat of [...claims.keys()].sort(numeric)) {
-      const stock = this.fungus.get(habitat)!;
+      const stock = this.fungus.get(habitat) ?? zeroLiving;
       const takers = claims.get(habitat)!;
+      if (rule.physiology?.satiation) {
+        for (const animal of takers) this.budgetedBite(habitat, animal);
+        continue;
+      }
       let matter = stock.matter;
       const allocations: number[] = [];
       for (let i = 0; i < takers.length && matter > 0; i++) {
@@ -263,6 +279,48 @@ class Hour {
         this.feed('graze', habitat, animal, food, {kind: 'fungus', habitat, stock: left.matter ? left : undefined});
       }
     }
+  }
+
+  private animalGrowthRoom(animal: ChemicalAnimal, releasedSpace = 0) {
+    const local = this.space(animal.region) + releasedSpace;
+    const adultMatter = this.rules.prey.physiology?.adultMatter;
+    return animal.kind === 'prey' && adultMatter !== undefined ? Math.min(local, adultMatter - animal.body.matter) : local;
+  }
+
+  private budgetedBite(habitat: number, animal: ChemicalAnimal) {
+    const rule = this.rules.prey;
+    const available = this.fungus.get(habitat) ?? zeroLiving;
+    const interval = BigInt(rule.feeding.interval);
+    function deficit(body: LivingStock) {
+      const short = interval * preyMaintenance(rule, body.matter) - BigInt(body.storedEnergy);
+      return short > 0n ? short : 0n;
+    }
+    const initial = deficit(animal.body);
+    let best = initial, evaluated = 1, tiedBest = 1;
+    let choice: { food: LivingStock; left: LivingStock } | undefined;
+    if (initial > 0n) {
+      const cap = Math.min(rule.feeding.biteMatter, available.matter);
+      const room = this.animalGrowthRoom(animal);
+      for (let matter = 1; matter <= cap; matter++) {
+        const [food, left] = splitLiving(available, [matter, available.matter - matter], this.rules.fungus.reservePerMatter);
+        const after = assimilate(animal.body, food, rule.feeding, rule.reservePerMatter, room);
+        const short = deficit(after.body);
+        evaluated++;
+        if (short === best) tiedBest++;
+        if (short < best) {
+          best = short;
+          choice = {food, left};
+          tiedBest = 1;
+        }
+        if (best === 0n) break;
+      }
+    }
+    this.feedingDecisions.push({animal:animal.id,habitat,deficit:String(initial),remainingDeficit:String(best),
+      available,evaluated,tiedBest,bite:choice?.food.matter??0,
+      reason:initial===0n?'sated':!available.matter?'no-food':!choice?'no-improvement':
+        best===0n?'budget-covered':'partial-budget'});
+    if (choice) this.feed('graze', habitat, animal, choice.food,
+      {kind:'fungus',habitat,stock:choice.left.matter?choice.left:undefined});
   }
 
   capture() {
@@ -287,7 +345,7 @@ class Hour {
     prey: Account, releasedSpace = 0) {
     const rule = this.rules[animal.kind];
     const result = assimilate(animal.body, food, rule.feeding, rule.reservePerMatter,
-      this.space(animal.region) + releasedSpace, phase === 'capture');
+      this.animalGrowthRoom(animal, releasedSpace), phase === 'capture');
     const stock = this.stock(habitat);
     const residue = phase === 'capture' ? addDetritus(stock, result.residue) :
       {...stock, mineralMatter: quantum(stock.mineralMatter + result.residue.matter)};
@@ -309,7 +367,7 @@ class Hour {
       this.payMaintenance(habitat, stock, due, body => ({kind: 'fungus', habitat, stock: body}));
     }
     for (const animal of orderedAnimals(this.animals)) {
-      this.payMaintenance(regionHabitat(this.world, animal.region), animal.body, BigInt(this.rules[animal.kind].maintenance),
+      this.payMaintenance(regionHabitat(this.world, animal.region), animal.body, animal.kind === 'prey' ? preyMaintenance(this.rules.prey, animal.body.matter) : BigInt(this.rules.predator.maintenance),
         body => ({kind: 'animal', id: animal.id, stock: body ? {...animal, body} : undefined}));
     }
   }
@@ -375,9 +433,11 @@ class Hour {
           this.tick % rule.birth.interval || this.tick - first.bornAt < rule.birth.adultAge ||
           this.tick - second.bornAt < rule.birth.adultAge) continue;
       // Feeding precedes maintenance, and birth follows maintenance. Only the intervening hours are due.
-      const reserveFloor = first.kind === 'prey' && this.rules.prey.reproduction === 'maintenance-budget'
-        ? BigInt(rule.maintenance) * BigInt(rule.feeding.interval - 1 - this.tick % rule.feeding.interval) : 0n;
-      const parents = payBirth(first, second, rule, reserveFloor);
+      const protectedPrey = first.kind === 'prey' && this.rules.prey.reproduction === 'maintenance-budget';
+      const gap = protectedPrey ? BigInt(rule.feeding.interval - 1 - this.tick % rule.feeding.interval) : 0n;
+      const parents = protectedPrey && this.rules.prey.physiology?.maintenanceMatterStep !== undefined
+        ? payBirth(first, second, rule, 0n, matter=>gap*preyMaintenance(this.rules.prey, matter))
+        : payBirth(first, second, rule, gap*BigInt(rule.maintenance));
       if (!parents) continue;
       const id = this.nextAnimalId;
       this.nextAnimalId = quantum(id + 1);
@@ -395,7 +455,7 @@ function addDetritus(stock: ChemicalInventory, residue: ChemicalInventory['detri
   return {...stock, detritus: {matter: quantum(stock.detritus.matter + residue.matter),
     chemicalEnergy: quantum(stock.detritus.chemicalEnergy + residue.chemicalEnergy)}};
 }
-function payBirth(first: ChemicalAnimal, second: ChemicalAnimal, rule: AnimalRules, reserveFloor: bigint) {
+function payBirth(first: ChemicalAnimal, second: ChemicalAnimal, rule: AnimalRules, reserveFloor: bigint, survivingFloor?: (matter: number) => bigint) {
   const {matter, energy, heat} = rule.birth;
   const cost = energy + heat;
   const a = first.body, b = second.body;
@@ -416,19 +476,36 @@ function payBirth(first: ChemicalAnimal, second: ChemicalAnimal, rule: AnimalRul
   const minMatter = Math.max(0, matter - availableMatter(b));
   const maxMatter = Math.min(matter, availableMatter(a));
   if (minMatter > maxMatter) return undefined;
-  const firstMatter = Math.min(maxMatter, Math.max(minMatter, Math.ceil(matter / 2)));
-  const leftA = a.matter - firstMatter, leftB = b.matter - (matter - firstMatter);
-
-  // Within that mass split, find the energy interval that fits both surviving bodies.
-  const availableA = a.storedEnergy - floor, availableB = b.storedEnergy - floor;
-  const minEnergy = Math.max(cost - availableB, a.storedEnergy - reserveRoom(leftA, rule.reservePerMatter, BigInt(a.storedEnergy)));
-  const maxEnergy = Math.min(availableA, cost - (b.storedEnergy - reserveRoom(leftB, rule.reservePerMatter, BigInt(b.storedEnergy))));
-  if (minEnergy > maxEnergy) return undefined;
-  const firstEnergy = Math.min(maxEnergy, Math.max(minEnergy, Math.ceil(cost / 2)));
-  return [
-    {...first, body: {...consumeReserve(a, firstEnergy), matter: leftA}},
-    {...second, body: {...consumeReserve(b, cost - firstEnergy), matter: leftB}},
-  ];
+  const preferred = Math.min(maxMatter, Math.max(minMatter, Math.ceil(matter / 2)));
+  function settle(firstMatter: number) {
+    const leftA = a.matter - firstMatter, leftB = b.matter - (matter - firstMatter);
+    const floorA = survivingFloor?.(leftA) ?? reserveFloor, floorB = survivingFloor?.(leftB) ?? reserveFloor;
+    const capA = reserveRoom(leftA, rule.reservePerMatter, BigInt(a.storedEnergy));
+    const capB = reserveRoom(leftB, rule.reservePerMatter, BigInt(b.storedEnergy));
+    if (floorA > BigInt(capA) || floorB > BigInt(capB)) return undefined;
+    const availableA = a.storedEnergy - Number(floorA), availableB = b.storedEnergy - Number(floorB);
+    const minEnergy = Math.max(cost - availableB, a.storedEnergy - capA);
+    const maxEnergy = Math.min(availableA, cost - (b.storedEnergy - capB));
+    if (minEnergy > maxEnergy) return undefined;
+    const firstEnergy = Math.min(maxEnergy, Math.max(minEnergy, Math.ceil(cost / 2)));
+    return [
+      {...first, body: {...consumeReserve(a, firstEnergy), matter: leftA}},
+      {...second, body: {...consumeReserve(b, cost - firstEnergy), matter: leftB}},
+    ];
+  }
+  const balanced = settle(preferred);
+  if (balanced || !survivingFloor) return balanced;
+  // With mass-dependent costs each surviving body has its own floor. Try feasible mass splits by distance.
+  for (let distance = 1; distance <= Math.max(maxMatter - preferred, preferred - minMatter); distance++) {
+    if (distance <= maxMatter - preferred) {
+      const parents = settle(preferred + distance);
+      if (parents) return parents;
+    }
+    if (distance <= preferred - minMatter) {
+      const parents = settle(preferred - distance);
+      if (parents) return parents;
+    }
+  }
 }
 
 export function foodBalances(world: DispersalWorld, state: FoodChainState) {
@@ -485,6 +562,7 @@ export function stepFoodChain(world: DispersalWorld, sources: readonly ChemicalS
   }), {opening: zero, closing: zero, imported: zero, exported: zero, dissipated: 0n});
   assertBalance(sum(audit.opening, audit.imported), sum(sum(audit.closing, audit.exported), heat(audit.dissipated)));
   return {state, entries: hour.entries, byHabitat, audit,
+    ...(rules.prey.physiology?.satiation ? {feedingDecisions:hour.feedingDecisions} : {}),
     cutFlows: {chemical: chemical.cutFlows, passive: chemical.transfers, animals: crossings}};
 }
 
@@ -498,7 +576,8 @@ export function serializeFoodLedger(report: ReturnType<typeof stepFoodChain>) {
     }
     return value;
   }
-  return JSON.stringify(canonical([report.entries, report.cutFlows]));
+  const journal = [report.entries, report.cutFlows, ...(report.feedingDecisions ? [report.feedingDecisions] : [])];
+  return JSON.stringify(canonical(journal));
 }
 
 export function foodLedgerDigest(report: ReturnType<typeof stepFoodChain>) {

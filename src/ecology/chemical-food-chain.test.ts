@@ -545,3 +545,53 @@ it('rejects a birth if a parent cannot store the required reserve after donating
   const result = step(w,rules,founded,{pairs:[[0,1]]});
   expect(result.entries.some(e=>e.phase==='birth')).toBe(false);
 });
+
+it('reuses the exact integer food split and keeps the smaller bite when two partial meals tie', () => {
+  const w = fixture('closed'), base = configuration();
+  const rules: FoodChainRules = {...base,prey:{...base.prey,physiology:{satiation:true},
+    feeding:{...base.prey.feeding,interval:3,biteMatter:2,reservePermille:1000},
+    birth:{...base.prey.birth,reserve:2}}};
+  const opening = foundFoodChain(w,[],rules,{inventory:new Map([[0,stock(0,0,1)]]),
+    fungus:new Map([[0,body(4,10,10)]]),animals:[animal(0,'prey','a',body(2,2,2))]});
+  const ready = step(w,rules,step(w,rules,opening).state).state;
+  const result = step(w,rules,ready);
+  expect(result.feedingDecisions).toMatchObject([{bite:1,deficit:'3',remainingDeficit:'2',evaluated:3,tiedBest:2,reason:'partial-budget'}]);
+  expect(result.state.animals.get(0)?.body).toEqual(body(2,0,0));
+  expect(result.audit.opening.chemicalEnergy).toBe(result.audit.closing.chemicalEnergy+result.audit.dissipated);
+  const saved = saveFoodChain(w,[],rules,ready);
+  const replay = step(w,rules,restoreFoodChain(w,[],rules,JSON.parse(JSON.stringify(saved))));
+  expect(foodChain.serializeFoodLedger(replay)).toBe(foodChain.serializeFoodLedger(result));
+  expect(() => restoreFoodChain(w,[],base,saved)).toThrow(/contract/);
+});
+
+it('caps adult growth, routes surplus to minerals and rejects an incompatible newborn profile', () => {
+  const w = fixture('closed'), base = configuration();
+  const rules: FoodChainRules = {...base,prey:{...base.prey,physiology:{adultMatter:4},
+    feeding:{...base.prey.feeding,biteMatter:4,retainedMatterPermille:500,reservePermille:1000}}};
+  const founder = {inventory:new Map([[0,stock(0,0,1)]]),fungus:new Map([[0,body(8,40,40)]]),
+    animals:[animal(0,'prey','a',body(3,2,2))]};
+  const result = step(w,rules,foundFoodChain(w,[],rules,founder));
+  expect(result.state.animals.get(0)?.body.matter).toBe(4);
+  expect(result.state.chemical.inventory.get(0)?.mineralMatter).toBe(3);
+  expect(() => foundFoodChain(w,[],{...rules,prey:{...rules.prey,birth:{...rules.prey.birth,matter:5}}},founder))
+    .toThrow(/adult mass/);
+  expect(() => foundFoodChain(w,[],{...rules,prey:{...rules.prey,feeding:{...rules.prey.feeding,interval:3}}},founder))
+    .toThrow(/first feeding gap/);
+});
+
+it('charges mass-based maintenance and uses each body after donation in the birth budget', () => {
+  const w = fixture('closed'), base = configuration();
+  const rules: FoodChainRules = {...base,prey:{...base.prey,reproduction:'maintenance-budget',physiology:{maintenanceMatterStep:2},
+    feeding:{...base.prey.feeding,interval:3},birth:{...base.prey.birth,reserve:2}}};
+  const founder = {inventory:new Map([[0,stock(0,0,1)]]),fungus:new Map([[0,body(1,10,10)]]),
+    animals:[animal(0,'prey','a',body(3,5,5)),animal(1,'prey','a',body(3,5,5))]};
+  const result = step(w,rules,foundFoodChain(w,[],rules,founder),{pairs:[[0,1]]});
+  expect(result.entries.filter(e=>e.phase==='maintain'&&e.debits[0].kind==='animal').map(e=>e.heat.energy)).toEqual([2,2]);
+  const birth = result.entries.find(e=>e.phase==='birth');
+  expect(birth?.heat.energy).toBe(1);
+  expect([...result.state.animals.values()].map(a=>a.body)).toEqual([body(2,1,1),body(3,2,2),body(1,2,2)]);
+  const lessReserve = {...founder,animals:[founder.animals[0],animal(1,'prey','a',body(3,4,4))]};
+  const opening = foundFoodChain(w,[],rules,lessReserve);
+  const rejection = step(w,rules,opening,{pairs:[[0,1]]});
+  expect(rejection).toEqual(step(w,rules,opening));
+});
