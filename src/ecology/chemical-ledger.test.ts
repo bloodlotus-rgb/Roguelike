@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { applyChemicalHour, auditChemicalLedger, chemicalDelivery, declareChemicalSupply, serializeChemicalState,
+import { applyChemicalAccountingHour as applyChemicalHour, auditChemicalAccountingLedger as auditChemicalLedger, chemicalDelivery, declareChemicalSupply, serializeChemicalState,
   type ChemicalInventory, type ChemicalPosting, type ChemicalState, type ChemicalSupply } from './chemical-ledger';
 import { buildDispersalWorld, indexWorld } from './dispersal-world';
 import type { Boundary } from './habitats';
