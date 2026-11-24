@@ -4,7 +4,7 @@ import { auditAccounts } from './audit.ts';
 import { organismPass, type DispersalWorld } from './dispersal-world.ts';
 import { type Boundary } from './habitats.ts';
 import { auditMetaTransfers, emptyMeta, foundMeta, metaAccounts, metaMatter, projectMeta, restoreMetaWithMatter, saveMeta, stepMeta,
-  type CompanionPhase, type MetaPosting, type MetaState } from './metapopulation.ts';
+  type CompanionPhase, type Deposit, type MetaPosting, type MetaState } from './metapopulation.ts';
 import { parameters } from './parameters.ts';
 import { type Entry } from './resources.ts';
 import { accounts, cargo, natural, type TrophicScenario } from './trophic-contract.ts';
@@ -44,13 +44,14 @@ function validate(world: DispersalWorld, state: Web) {
     }
   }
 }
-function founderBudget(world: DispersalWorld, setup: TrophicScenario, founders: readonly Founder[]) {
+function founderBudget(world: DispersalWorld, setup: TrophicScenario, founders: readonly Founder[], deposits: readonly Deposit[] = []) {
   const {source} = setup;
   let budget = accounts.reduce((n,r) => n+setup.founders[r],0);
   if (source) {
     const lot = cargo[source.kind];
     budget += source.quota*(lot.water+lot.detritus+lot.energy);
   }
+  for (const deposit of deposits) for (const r of accounts) budget+=deposit.stock[r];
   let total = 0;
   for (const f of founders) {
     if (!Object.hasOwn(profiles,f.group) || !natural(f.count) || !f.count || !f.origin?.trim() ||
@@ -60,9 +61,9 @@ function founderBudget(world: DispersalWorld, setup: TrophicScenario, founders: 
   if (total+budget > parameters.inventoryLimit) throw new Error('External budget exceeded');
   return total;
 }
-export function foundWeb(world: DispersalWorld, setup: TrophicScenario, founders: readonly Founder[]) {
-  founderBudget(world,setup,founders);
-  const {state:base,ledger:initial} = foundMeta(world,setup);
+export function foundWeb(world: DispersalWorld, setup: TrophicScenario, founders: readonly Founder[], deposits: readonly Deposit[] = []) {
+  founderBudget(world,setup,founders,deposits);
+  const {state:base,ledger:initial} = foundMeta(world,setup,deposits);
   const residents = new Map<string,Counts>();
   const ledger: Posting[] = [...initial];
   for (const f of founders) {
@@ -207,7 +208,7 @@ export function restoreWeb(world:DispersalWorld,saved:ReturnType<typeof saveWeb>
   const legacy=data.version==='E1-C/1';
   const rules=legacy ? {prey:profiles.prey} : profiles;
   if ((!legacy && data.version!=='E1-D/1') || digest([rules,data])!==signature) throw new Error('Invalid food web snapshot');
-  const initial=founderBudget(world,data.base.setup,data.founders);
+  const initial=founderBudget(world,data.base.setup,data.founders,data.base.deposits);
   const residents=new Map(data.residents.map(([r,t])=>[r,legacy ? {...t,predator:0} : {...t}]));
   if (residents.size!==data.residents.length) throw new Error('Duplicate occupied region');
   const total=[...residents.values()].reduce((n,t)=>n+population(t),0);

@@ -27,3 +27,4 @@ jobs:
       - run: npm run --silent jenga:report -- estirpe
       - run: npm run --silent ecology:report -- --ticks 48 estirpe
       - run: npm run --silent ecology:dispersal -- --case whole --ticks 24 estirpe
+      - run: npm run --silent ecology:web -- 240 reopen mansion
