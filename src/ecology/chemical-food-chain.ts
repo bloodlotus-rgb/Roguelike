@@ -1,8 +1,9 @@
+import { createHash } from 'node:crypto';
 import { sections } from '../core/spatial.ts';
-import { applyChemicalHour, chemicalDigest, type ChemicalInventory, type ChemicalPosting,
+import { applyChemicalHour, type ChemicalInventory, type ChemicalPosting,
   type ChemicalSupply } from './chemical-ledger.ts';
 import { apportion, compareChemicalIds } from './chemical-transport.ts';
-import { checkLiving, permille, quantum, regionCapacity, regionHabitat, reserveCapacity, validateFoodState,
+import { checkLiving, fungalCapacity, permille, quantum, regionCapacity, regionHabitat, reserveCapacity, validateFoodState,
   zeroLiving, type AnimalRules, type ChemicalAnimal, type Feeding, type FoodChainRules, type FoodChainState,
   type LivingStock } from './chemical-food-contract.ts';
 import type { DispersalWorld } from './dispersal-world.ts';
@@ -37,6 +38,9 @@ function reserveRoom(matter: number, rate: number, requested: bigint) {
 }
 
 export function splitLiving(stock: LivingStock, mass: readonly number[], reservePerMatter: number) {
+  checkLiving(stock, quantum(reservePerMatter));
+  const totalMass = mass.reduce((sum, part) => sum + BigInt(quantum(part)), 0n);
+  if (totalMass !== BigInt(stock.matter)) throw new Error('Living split does not conserve matter');
   const energy = apportion(stock.chemicalEnergy, mass);
   const capacity = energy.map((part, i) => reserveRoom(mass[i], reservePerMatter, BigInt(part)));
   const reserve = apportion(stock.storedEnergy, capacity);
@@ -93,8 +97,15 @@ class Hour {
   readonly occupancy: Map<string, number>;
   nextAnimalId: number;
 
-  constructor(readonly world: DispersalWorld, readonly rules: FoodChainRules, readonly before: FoodChainState,
-    readonly chemical: ReturnType<typeof applyChemicalHour>, occupancy: Map<string, number>) {
+  readonly world: DispersalWorld;
+  readonly rules: FoodChainRules;
+  readonly tick: number;
+
+  constructor(world: DispersalWorld, rules: FoodChainRules, before: FoodChainState,
+    chemical: ReturnType<typeof applyChemicalHour>, occupancy: Map<string, number>) {
+    this.world = world;
+    this.rules = rules;
+    this.tick = chemical.state.tick;
     this.inventory = new Map(chemical.state.inventory);
     this.heat = new Map(chemical.state.heat);
     this.fungus = new Map(before.fungus);
@@ -103,7 +114,6 @@ class Hour {
     this.occupancy = occupancy;
   }
 
-  get tick() { return this.chemical.state.tick; }
   stock(habitat: number) { return this.inventory.get(habitat) ?? empty; }
   space(region: string) { return regionCapacity(this.world, region) - (this.occupancy.get(region) ?? 0); }
 
@@ -200,7 +210,8 @@ class Hour {
       const stock = this.stock(habitat), mass = Math.min(rule.feeding.biteMatter, stock.detritus.matter);
       if (!mass || !stock.water) continue;
       const [food, remainder] = splitLiving({...stock.detritus, storedEnergy: 0}, [mass, stock.detritus.matter - mass], 0);
-      const result = assimilate(body, food, rule.feeding, rule.reservePerMatter, Number.MAX_SAFE_INTEGER);
+      const room = fungalCapacity(this.world, habitat) - body.matter;
+      const result = assimilate(body, food, rule.feeding, rule.reservePerMatter, room);
       this.post('grow', habitat, result.heat, [{kind: 'fungus', habitat, stock: result.body},
         {kind: 'stock', habitat, stock: {...stock, detritus: organic(remainder),
           mineralMatter: quantum(stock.mineralMatter + result.residue.matter)}}]);
@@ -329,16 +340,35 @@ function addDetritus(stock: ChemicalInventory, residue: ChemicalInventory['detri
 }
 function payBirth(first: ChemicalAnimal, second: ChemicalAnimal, rule: AnimalRules) {
   const {matter, energy, heat} = rule.birth;
-  const masses = apportion(matter, [1, 1]), energies = apportion(energy + heat, [1, 1]);
-  const parents: ChemicalAnimal[] = [];
-  for (const [i, parent] of [first, second].entries()) {
-    const remaining = parent.body.matter - masses[i];
-    const payment = energies[i];
-    if (remaining <= 0 || parent.body.storedEnergy < Math.max(1, payment) ||
-        BigInt(parent.body.storedEnergy - payment) > reserveCapacity(remaining, rule.reservePerMatter)) return undefined;
-    parents.push({...parent, body: {...consumeReserve(parent.body, payment), matter: remaining}});
+  const cost = energy + heat;
+  const a = first.body, b = second.body;
+  const totalReserve = BigInt(a.storedEnergy) + BigInt(b.storedEnergy);
+  if (!a.storedEnergy || !b.storedEnergy || totalReserve < BigInt(cost)) return undefined;
+  const rate = BigInt(rule.reservePerMatter);
+  const totalRemainingMatter = BigInt(a.matter) + BigInt(b.matter) - BigInt(matter);
+  if (totalReserve - BigInt(cost) > totalRemainingMatter * rate) return undefined;
+
+  // Each parent must retain a body with room for any reserve it cannot contribute.
+  function availableMatter(body: LivingStock) {
+    const unspendable = BigInt(Math.max(0, body.storedEnergy - cost));
+    const minimum = Number((unspendable + rate - 1n) / rate);
+    return body.matter - Math.max(1, minimum);
   }
-  return parents;
+  const minMatter = Math.max(0, matter - availableMatter(b));
+  const maxMatter = Math.min(matter, availableMatter(a));
+  if (minMatter > maxMatter) return undefined;
+  const firstMatter = Math.min(maxMatter, Math.max(minMatter, Math.ceil(matter / 2)));
+  const leftA = a.matter - firstMatter, leftB = b.matter - (matter - firstMatter);
+
+  // Within that mass split, find the energy interval that fits both surviving bodies.
+  const minEnergy = Math.max(cost - b.storedEnergy, a.storedEnergy - reserveRoom(leftA, rule.reservePerMatter, BigInt(a.storedEnergy)));
+  const maxEnergy = Math.min(a.storedEnergy, cost - (b.storedEnergy - reserveRoom(leftB, rule.reservePerMatter, BigInt(b.storedEnergy))));
+  if (minEnergy > maxEnergy) return undefined;
+  const firstEnergy = Math.min(maxEnergy, Math.max(minEnergy, Math.ceil(cost / 2)));
+  return [
+    {...first, body: {...consumeReserve(a, firstEnergy), matter: leftA}},
+    {...second, body: {...consumeReserve(b, cost - firstEnergy), matter: leftB}},
+  ];
 }
 
 export function foodBalances(world: DispersalWorld, state: FoodChainState) {
@@ -356,7 +386,7 @@ export function stepFoodChain(world: DispersalWorld, sources: readonly ChemicalS
   before: FoodChainState, input: FoodHourInput) {
   const occupancy = validateFoodState(world, sources, rules, before);
   if (input.chemical.some(posting => posting.kind === 'conversion')) throw new Error('Use food-chain processes for conversions');
-  const chemical = applyChemicalHour(world, sources, before.chemical, input.chemical);
+  const chemical = applyChemicalHour(world, sources, before.chemical, input.chemical, 'proportional');
   const hour = new Hour(world, rules, before, chemical, occupancy);
   hour.move(input.moves ?? []);
   hour.grow();
@@ -395,8 +425,8 @@ export function stepFoodChain(world: DispersalWorld, sources: readonly ChemicalS
     cutFlows: {chemical: chemical.cutFlows, passive: chemical.transfers, animals: crossings}};
 }
 
-/** Canonical journal comparison, independent of the key order of caller-supplied records. */
-export function foodLedgerDigest(report: ReturnType<typeof stepFoodChain>) {
+/** Canonical journal bytes, independent of the key order of caller-supplied records. */
+export function serializeFoodLedger(report: ReturnType<typeof stepFoodChain>) {
   function canonical(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(canonical);
     if (value && typeof value === 'object') {
@@ -405,5 +435,9 @@ export function foodLedgerDigest(report: ReturnType<typeof stepFoodChain>) {
     }
     return value;
   }
-  return chemicalDigest(canonical([report.entries, report.cutFlows]));
+  return JSON.stringify(canonical([report.entries, report.cutFlows]));
+}
+
+export function foodLedgerDigest(report: ReturnType<typeof stepFoodChain>) {
+  return createHash('sha256').update(serializeFoodLedger(report)).digest('hex');
 }

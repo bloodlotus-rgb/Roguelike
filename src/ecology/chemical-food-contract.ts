@@ -46,6 +46,7 @@ export interface FoodChainRules {
   readonly predator: AnimalRules;
 }
 
+export const foodChainVersion = 'E1-Chemical-FoodChain/2';
 export const permille = 1000;
 export const zeroLiving: LivingStock = Object.freeze({matter: 0, chemicalEnergy: 0, storedEnergy: 0});
 export function quantum(value: number) {
@@ -94,7 +95,7 @@ export function foodRulesSignature(rules: FoodChainRules) {
   if (rules.fungus.feeding.residueEnergyPermille !== 0 || rules.prey.feeding.residueEnergyPermille !== 0) {
     throw new Error('Mineral residue cannot carry chemical energy');
   }
-  return chemicalDigest(['E1-Chemical-FoodChain/1', metabolism(rules.fungus), feeding(rules.fungus.feeding),
+  return chemicalDigest([foodChainVersion, metabolism(rules.fungus), feeding(rules.fungus.feeding),
     positive(rules.fungus.feeding.biteMatter), animalRules(rules.prey), positive(rules.prey.feeding.biteMatter),
     animalRules(rules.predator)]);
 }
@@ -103,6 +104,10 @@ export function regionHabitat(world: DispersalWorld, region: string) {
   const habitat = world.graph.regionToHabitat.get(region);
   if (habitat === undefined || !world.graph.habitats[habitat]) throw new Error('Unknown animal region');
   return habitat;
+}
+
+export function fungalCapacity(world: DispersalWorld, habitat: number) {
+  return quantum(world.graph.habitats[habitat].capacity);
 }
 
 export function regionCapacity(world: DispersalWorld, region: string) {
@@ -120,6 +125,7 @@ export function validateFoodState(world: DispersalWorld, sources: readonly Chemi
   for (const [id, stock] of state.fungus) {
     if (!Number.isSafeInteger(id) || !world.graph.habitats[id] || !stock.matter) throw new Error('Invalid fungal account');
     checkLiving(stock, rules.fungus.reservePerMatter);
+    if (stock.matter > fungalCapacity(world, id)) throw new Error('Food-chain fungal capacity exceeded');
   }
   const occupancy = new Map<string, number>();
   for (const [id, animal] of state.animals) {

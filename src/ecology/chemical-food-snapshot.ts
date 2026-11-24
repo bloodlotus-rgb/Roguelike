@@ -1,12 +1,20 @@
 import { chemicalDigest, type ChemicalSupply } from './chemical-ledger.ts';
 import { projectChemicalState, restoreChemical, saveChemical } from './chemical-snapshot.ts';
-import { apportion } from './chemical-transport.ts';
+import { apportion, compareChemicalIds } from './chemical-transport.ts';
 import { splitLiving } from './chemical-food-chain.ts';
-import { quantum, validateFoodState, type AnimalKind, type ChemicalAnimal, type FoodChainRules, type FoodChainState,
+import { foodChainVersion as version, quantum, regionCapacity, validateFoodState, type AnimalKind, type ChemicalAnimal, type FoodChainRules, type FoodChainState,
   type LivingStock } from './chemical-food-contract.ts';
 import type { DispersalWorld } from './dispersal-world.ts';
 
-const version = 'E1-Chemical-FoodChain/1';
+function fineGeometry(world: DispersalWorld) {
+  const byId = ([a]: readonly [string, unknown], [b]: readonly [string, unknown]) => compareChemicalIds(a,b);
+  return chemicalDigest([
+    [...world.graph.regionToHabitat].sort(byId),
+    [...world.capacities].sort(byId),
+    [...world.ports].sort(byId),
+    [...(world.connectorKinds ?? new Map(world.graph.boundaries.map(cut => [cut.id, cut.kind])))].sort(byId),
+  ]);
+}
 type BodyRow = [number, number, number];
 function encodeBody(body: LivingStock): BodyRow {
   return [body.matter, body.chemicalEnergy, body.storedEnergy];
@@ -19,7 +27,7 @@ type AnimalRow = [number, AnimalKind, string, number, BodyRow];
 export function saveFoodChain(world: DispersalWorld, sources: readonly ChemicalSupply[], rules: FoodChainRules,
   state: FoodChainState) {
   validateFoodState(world, sources, rules, state);
-  const payload = {version, contract: state.contract, chemical: saveChemical(world, sources, state.chemical),
+  const payload = {version, contract: state.contract, geometry: fineGeometry(world), chemical: saveChemical(world, sources, state.chemical),
     fungus: [...state.fungus].sort(([a],[b]) => a - b).map(([id, body]): [number, BodyRow] => [id, encodeBody(body)]),
     animals: [...state.animals].sort(([a],[b]) => a - b)
       .map(([,animal]): AnimalRow => [animal.id, animal.kind, animal.region, animal.bornAt, encodeBody(animal.body)]),
@@ -34,6 +42,7 @@ export function restoreFoodChain(world: DispersalWorld, sources: readonly Chemic
   }
   const {integrity, ...payload} = saved as ReturnType<typeof saveFoodChain>;
   if (integrity !== chemicalDigest(payload)) throw new Error('Food-chain snapshot integrity mismatch');
+  if (payload.geometry !== fineGeometry(world)) throw new Error('Incompatible food-chain geometry epoch');
   const chemical = restoreChemical(world, sources, payload.chemical);
   const fungus = new Map(payload.fungus.map(([id, body]) => [id, decodeBody(body)]));
   const animals = new Map<number, ChemicalAnimal>(payload.animals.map(([id, kind, region, bornAt, row]) =>
@@ -55,13 +64,13 @@ export function projectFoodChain(oldWorld: DispersalWorld, newWorld: DispersalWo
     if (!state.fungus.has(before)) continue;
     const after = newWorld.graph.regionToHabitat.get(region)!;
     const destinations = overlaps.get(before) ?? new Map<number, number>();
-    destinations.set(after, (destinations.get(after) ?? 0) + 1);
+    destinations.set(after, quantum((destinations.get(after) ?? 0) + regionCapacity(oldWorld, region)));
     overlaps.set(before, destinations);
   }
   const fungus = new Map<number, LivingStock>();
   for (const [id, stock] of [...state.fungus].sort(([a],[b]) => a - b)) {
     const destinations = [...overlaps.get(id)!].sort(([a],[b]) => a - b);
-    const mass = apportion(stock.matter, destinations.map(([,count]) => count));
+    const mass = apportion(stock.matter, destinations.map(([,capacity]) => capacity));
     const shares = splitLiving(stock, mass, rules.fungus.reservePerMatter);
     destinations.forEach(([to], i) => {
       const share = shares[i];

@@ -1,8 +1,11 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
 import { chemicalDelivery, chemicalDigest, type ChemicalSupply } from './chemical-ledger.ts';
 import { planChemicalTransport } from './chemical-transport.ts';
 import { saveChemical } from './chemical-snapshot.ts';
-import { foodLedgerDigest, stepFoodChain } from './chemical-food-chain.ts';
+import * as foodChain from './chemical-food-chain.ts';
+import { foodLedgerDigest, splitLiving, stepFoodChain } from './chemical-food-chain.ts';
 import { foundFoodChain, type ChemicalAnimal, type FoodChainRules, type FoodChainState } from './chemical-food-contract.ts';
 import { projectFoodChain, restoreFoodChain, saveFoodChain } from './chemical-food-snapshot.ts';
 import { buildDispersalWorld, changeDispersalBarrier, indexWorld, type DispersalWorld } from './dispersal-world.ts';
@@ -212,4 +215,124 @@ it('awards one prey carcass to one hunter and never substitutes another habitatâ
   expect(out.state.animals.get(3)?.body).toEqual(body(1,3,1));
   expect(out.state.animals.has(1)).toBe(true);
   expect(out.state.animals.has(0)).toBe(false);
+});
+
+it('bounds fungal biomass through growth, foundation, projection and restore', () => {
+  const world = fixture('closed',false,1), defaults = configuration();
+  const rules = {...defaults, fungus:{...defaults.fungus,
+    feeding:{...defaults.fungus.feeding, retainedMatterPermille:1000}}};
+  const foundation = {inventory:new Map([[0,stock(1,3,1)]]), fungus:new Map([[0,body(1,3,3)]]), animals:[]};
+  const opening = foundFoodChain(world,[],rules,foundation);
+  const out = step(world,rules,opening);
+  expect(out.state.fungus.get(0)?.matter).toBe(1);
+  expect(out.state.chemical.inventory.get(0)?.mineralMatter).toBe(1);
+  expect(out.audit.closing.matter).toBe(out.audit.opening.matter);
+  expect(() => foundFoodChain(world,[],rules,{...foundation,fungus:new Map([[0,body(2,3,3)]])})).toThrow(/fungal capacity/);
+  const {integrity: _, ...snapshot} = saveFoodChain(world,[],rules,opening);
+  snapshot.fungus[0][1][0] = 2;
+  expect(() => restoreFoodChain(world,[],rules,{...snapshot,integrity:chemicalDigest(snapshot)})).toThrow(/fungal capacity/);
+
+  const partition = (mixed: boolean) => {
+    const base = fixture('open',mixed);
+    const graph = {...base.graph, habitats:base.graph.habitats.map((h,i) =>
+      ({...h,capacity: (mixed ? [4,1] : [3,1,1])[i]}))};
+    return indexWorld(graph,base.ports,new Map([['a',3],['b',1],['c',1]]),base.connectorKinds);
+  };
+  const merged = partition(true), split = partition(false);
+  const founder = foundFoodChain(merged,[],rules,{inventory:new Map(),fungus:new Map([[0,body(4,7,6)]]),animals:[]});
+  const projected = projectFoodChain(merged,split,[],rules,founder);
+  expect([...projected.fungus.values()].map(s => s.matter)).toEqual([3,1]);
+  expect(projectFoodChain(split,merged,[],rules,projected).fungus).toEqual(founder.fungus);
+});
+
+it('binds the food checkpoint to fine capacities even when the aggregated epoch is identical', () => {
+  const base = fixture('open',true);
+  const w = indexWorld(base.graph,base.ports,new Map([['a',10],['b',10],['c',20]]),base.connectorKinds);
+  const changed = indexWorld(base.graph,base.ports,new Map([['a',19],['b',1],['c',20]]),base.connectorKinds);
+  const rules = configuration();
+  const state = foundFoodChain(w,[],rules,{inventory:new Map(),fungus:new Map(),animals:[animal(0,'prey','c',body(2,4,4))]});
+  const saved = saveFoodChain(w,[],rules,state);
+  expect(() => restoreFoodChain(changed,[],rules,saved)).toThrow(/epoch/);
+  const reordered = indexWorld(base.graph,new Map([...base.ports].reverse()),new Map([...w.capacities].reverse()),base.connectorKinds);
+  expect(restoreFoodChain(reordered,[],rules,saved)).toEqual(state);
+  expect(() => restoreFoodChain(w,[],rules,{...saved,version:'E1-Chemical-FoodChain/1'})).toThrow(/version/);
+});
+
+it('imports the food engine and checkpoint directly with Node 24 strip-only TypeScript support', async () => {
+  const engine = new URL('./chemical-food-chain.ts',import.meta.url).href;
+  const snapshot = new URL('./chemical-food-snapshot.ts',import.meta.url).href;
+  await expect(promisify(execFile)(process.execPath, ['--input-type=module','-e',
+    `await import(${JSON.stringify(engine)}); await import(${JSON.stringify(snapshot)});`],
+    {env:{...process.env,NODE_OPTIONS:''}})).resolves.toMatchObject({stderr:''});
+});
+
+it('exports the proportional energy of each detritus withdrawal from the current homogeneous stock', () => {
+  const w = fixture(), rules = configuration();
+  const initial = foundFoodChain(w,[],rules,{inventory:new Map([0,1,2].map(i => [i,stock(2,10)])),
+    fungus:new Map(),animals:[]});
+  const checkpoint = saveFoodChain(w,[],rules,initial);
+  const posting = {kind:'export',transactionId:'out',tick:1,process:'withdrawal',destination:'outside',
+    port:{connector:'ab',fromRegion:'a',toRegion:'b'},cargo:stock(1,10)} as const;
+  expect(() => stepFoodChain(w,[],rules,initial,{chemical:[posting]})).toThrow(/proportional/);
+  expect(saveFoodChain(w,[],rules,initial)).toEqual(checkpoint);
+  const report = stepFoodChain(w,[],rules,initial,{chemical:[{...posting,cargo:stock(1,5)}]});
+  expect(report.state.chemical.inventory.get(0)?.detritus).toEqual({matter:1,chemicalEnergy:5});
+  const odd = foundFoodChain(w,[],rules,{inventory:new Map([0,1,2].map(i => [i,stock(2,9)])),
+    fungus:new Map(),animals:[]});
+  const final = stepFoodChain(w,[],rules,odd,{chemical:[{...posting,cargo:stock(1,5)},
+    {...posting,transactionId:'out-next',cargo:stock(1,4)}]});
+  expect(final.audit.exported.chemicalEnergy).toBe(9n);
+});
+
+it('identifies the actual source and lot count even when two sources have the same cargo and port', () => {
+  const w = fixture(), rules = configuration();
+  const template = {origin:'basin',port:{connector:'ab',fromRegion:'a',toRegion:'b'},
+    perLot:stock(1,2),rate:2,periodHours:1,activeHours:1,quotaLots:2};
+  const sources = [{...template,id:'A'}, {...template,id:'B'}];
+  const initial = foundFoodChain(w,sources,rules,{inventory:new Map(),fungus:new Map(),animals:[]});
+  const reports = sources.map(source => stepFoodChain(w,sources,rules,initial,
+    {chemical:[chemicalDelivery(w,source,initial.chemical,'delivery')!]}));
+  expect(reports.map(report => report.cutFlows.chemical[0])).toMatchObject(
+    [{kind:'source',supply:'A',lots:2},{kind:'source',supply:'B',lots:2}]);
+  expect(foodLedgerDigest(reports[0])).not.toBe(foodLedgerDigest(reports[1]));
+});
+
+it('rejects splitLiving allocations that create or drop matter or use invalid quanta', () => {
+  expect(() => splitLiving(body(1,2,2),[2,2],10)).toThrow();
+  expect(() => splitLiving(body(1,0,0),[],10)).toThrow();
+  expect(() => splitLiving(body(1,2,2),[-1,2],10)).toThrow();
+  expect(() => splitLiving(body(1,2,3),[1],10)).toThrow();
+  expect(() => splitLiving(body(1,2,2),[1],-1)).toThrow();
+  expect(splitLiving(body(2,5,2),[1,0,1],1)).toEqual([body(1,3,1),body(0,0,0),body(1,2,1)]);
+});
+
+it('pays births with a feasible split of both matter and reserve before breaking ties by ID', () => {
+  const w = fixture('closed'), base = configuration();
+  const rules = {...base,prey:{...base.prey,feeding:{...base.prey.feeding,interval:3}}};
+  const parents = [animal(0,'prey','a',body(1,5,5)),animal(1,'prey','a',body(3,5,5))];
+  const fund = (animals: readonly ChemicalAnimal[], config: FoodChainRules) => foundFoodChain(w,[],config,
+    {inventory:new Map([[0,stock(0,0,1)]]),fungus:new Map([[0,body(1,5,5)]]),animals});
+  for (const animals of [parents,parents.map(parent => ({...parent,id:1-parent.id}))]) {
+    const report = step(w,rules,fund(animals,rules),{pairs:[[0,1]]});
+    expect(report.state.animals.get(2)?.body).toEqual(body(1,2,1));
+    expect(report.audit.closing.matter).toBe(report.audit.opening.matter);
+  }
+  const tight = {...rules,prey:{...rules.prey,reservePerMatter:4}};
+  const report = step(w,tight,fund([animal(0,'prey','a',body(3,2,2)),
+    animal(1,'prey','a',body(2,8,8))],tight),{pairs:[[0,1]]});
+  expect(report.state.animals.get(2)?.body).toEqual(body(1,2,1));
+  expect(report.state.animals.get(0)?.body).toEqual(body(2,0,0));
+  expect(report.state.animals.get(1)?.body).toEqual(body(2,5,5));
+});
+
+it('serializes the food journal canonically across save and restore', () => {
+  const w = fixture('closed'), rules = configuration();
+  const initial = foundFoodChain(w,[],rules,{inventory:new Map(),fungus:new Map(),
+    animals:[animal(0,'predator','a',{storedEnergy:4,chemicalEnergy:4,matter:1})]});
+  const restored = restoreFoodChain(w,[],rules,saveFoodChain(w,[],rules,initial));
+  const continuous = step(w,rules,initial), replay = step(w,rules,restored);
+  const serialize: (report: typeof continuous) => string = Reflect.get(foodChain,'serializeFoodLedger');
+  expect(serialize).toBeTypeOf('function');
+  expect(serialize(continuous)).toBe(serialize(replay));
+  expect(JSON.parse(serialize(replay))[0][0]).toMatchObject({phase:'maintain'});
 });
